@@ -296,7 +296,7 @@ evidence:
     run: .venv/bin/helmraiser status --json > "$HELMRAISER_EVIDENCE_DIR/status.json" && .venv/bin/helmraiser --help > "$HELMRAISER_EVIDENCE_DIR/help.txt"
     artifacts: ["status.json", "help.txt"]
     criteria: status.json parses and has keys queued_count, running, awaiting_count, spend; help.txt lists the commands.
-tags: [v2, docs]
+tags: [docs]
 ---
 ## Goal
 Add a "Status contract" section to README.md documenting the `status.json` fields
@@ -1429,7 +1429,7 @@ has Approve and Reject buttons. See its README for installation, settings and IP
 
 ## Status contract
 
-`helmraiser status` reports the v2 ledger state and refreshes `status.json`. The file is
+`helmraiser status` reports the ledger state and refreshes `status.json`. The file is
 written atomically to `$XDG_RUNTIME_DIR/helmraiser/status.json` when
 `XDG_RUNTIME_DIR` names an existing directory, or to
 `$HELMRAISER_DATA_DIR/status.json` otherwise. The work loop also refreshes it at each

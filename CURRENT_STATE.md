@@ -3,7 +3,7 @@
 _Updated 2026-11-14._ What is built and true now. Planned and in-flight work is in
 [TASKS.md](TASKS.md).
 
-## What v2 is
+## What Helmraiser is
 
 Helmraiser is a governed, pi-only loop for unattended, eval-backed tasks:
 `add → intake → queue → work → approve | reject | rework`. Deterministic `verify`

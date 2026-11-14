@@ -1,0 +1,124 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "helmraiser"
+version = "0.2.0"
+description = "Governed, unattended task runner for pi coding-agent sessions"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.12"
+authors = [
+    {name = "Zsolt Borsos", email = "zsoltborsos@users.noreply.github.com"}
+]
+keywords = [
+    "ai",
+    "agents",
+    "orchestration",
+    "cli",
+    "automation",
+    "coding",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Build Tools",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "typer>=0.9.0",           # CLI framework
+    "rich>=13.0.0",           # Terminal UI
+    "pyyaml>=6.0",            # YAML config support
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "pytest-asyncio>=0.21.0",
+    "build>=1.0.0",
+    "setuptools>=61.0",
+    "wheel>=0.40.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+    "types-PyYAML>=6.0.0",
+    "pre-commit>=3.0.0",
+]
+
+[project.scripts]
+helmraiser = "helmraiser.cli.app:app"
+
+[project.urls]
+Homepage = "https://github.com/zsoltborsos/helmraiser"
+Documentation = "https://github.com/zsoltborsos/helmraiser#readme"
+Repository = "https://github.com/zsoltborsos/helmraiser.git"
+Issues = "https://github.com/zsoltborsos/helmraiser/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["helmraiser*"]
+
+[tool.black]
+# Process sandboxes block the Unix socket used by Black's multiprocessing pool.
+workers = 1
+line-length = 100
+target-version = ["py312"]
+include = '\.pyi?$'
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "UP",  # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by black)
+    "B008",  # do not perform function calls in argument defaults
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["helmraiser"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+disallow_incomplete_defs = false
+check_untyped_defs = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"
+# A full run leaves ~110K files under /tmp; keep only failed tests' directories so
+# parallel sessions do not exhaust the tmpfs inodes (2026-10-27).
+tmp_path_retention_policy = "failed"
+addopts = [
+    "-v",
+    "--tb=short",
+    "--cov=helmraiser",
+    "--cov-report=term-missing",
+    "--cov-fail-under=70",
+]

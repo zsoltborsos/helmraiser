@@ -1,0 +1,19 @@
+{
+  "_comment": "Tried-and-working setup (November 2026) on an OpenAI Codex subscription and OpenCode Go; adapt to your own pi providers.",
+  "profiles": {
+    "intake": {"model": "openai-codex/gpt-6-astra", "thinking": "high"},
+    "plan": {"model": "openai-codex/gpt-6.1-sol", "thinking": "high"},
+    "implement": {"model": "openai-codex/gpt-6.1-sol", "thinking": "high"},
+    "fallback": {"model": "openai-codex/gpt-6.1-sol", "thinking": "xhigh"},
+    "review": {"model": "openai-codex/gpt-6-astra", "thinking": "high"},
+    "scout": {"model": "opencode-go/deepseek-v4.1-flash", "thinking": "high"},
+    "judge": {"model": "openai-codex/gpt-6-astra", "thinking": "high"}
+  },
+  "routing": {
+    "scout": {"model": "openai-codex/gpt-6.1-sol:high"}
+  },
+  "subscriptions": {
+    "opencode-go": {"warn_at": 0.6, "stop_at": 0.7},
+    "openai-codex": {}
+  }
+}

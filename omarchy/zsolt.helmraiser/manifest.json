@@ -1,0 +1,27 @@
+{
+  "schemaVersion": 1,
+  "id": "zsolt.helmraiser",
+  "name": "Helmraiser",
+  "version": "0.1.0",
+  "author": "Zsolt Borsos",
+  "description": "Helmraiser's queue, running runs and approvals in the bar, read from status.json.",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Helmraiser",
+    "description": "Running and awaiting-approval counts, with a panel to approve or reject runs.",
+    "category": "AI",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "refreshIntervalSec": 30,
+      "helmraiserBin": "helmraiser"
+    },
+    "schema": [
+      { "key": "refreshIntervalSec", "type": "integer", "label": "Refresh interval (seconds)", "min": 5, "max": 3600, "step": 5, "defaultValue": 30, "description": "How often the widget runs `helmraiser status --json`." },
+      { "key": "helmraiserBin", "type": "string", "label": "Helmraiser command", "defaultValue": "helmraiser", "description": "Name or absolute path of the helmraiser executable, resolved through a login shell's PATH." }
+    ]
+  }
+}

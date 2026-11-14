@@ -1,0 +1,61 @@
+# Per-project defaults for Helmraiser runs. Copy to <repo>/.helmraiser/project.toml.
+#
+# A run's worktree is a fresh checkout: it has no .venv, and the primary
+# checkout's editable install points at the primary `src`, so verify commands
+# run there would test the wrong code. `setup` runs once in the worktree right
+# after it is created (default timeout 600 s; a failure fails the run with
+# `setup: …`). `env` is applied to every pi session and every verify/evidence
+# command; values may reference $HELMRAISER_WORKTREE and $HELMRAISER_RUN_ID.
+# A task's own `setup:` / `env:` win over these (env merges key by key).
+# Worktrees default outside the repo: <worktree_root>/<repo-name>-<path-hash>/,
+# with adjacent <run>.json metadata. Global config.json's worktree_root defaults
+# to $HELMRAISER_DATA_DIR/worktrees (~/.helmraiser/worktrees); configured roots expand
+# $VARS and ~, and relative roots resolve from the current working directory.
+# Optional worktree_dir bypasses that root and suffix, expands environment
+# variables and resolves relative paths from the repository. Use an override
+# when the package store must share the repo's filesystem (pnpm hard links).
+
+[defaults]
+setup = "python3 -m venv .venv && .venv/bin/pip install -q -e '.[dev]'"
+# worktree_dir = "/data/helmraiser-worktrees/my-project"
+# Create worktrees from this local branch instead of the primary checkout's branch.
+# base = "programme/x"
+# Push the run branch and open a pull request instead of merging locally.
+# delivery = "pr"
+# Reject tasks that use policy: auto, even when intake is passed --allow-auto.
+# require_approval = true
+
+# Setup inside srt can write the worktree, /tmp and Helmraiser's private per-project
+# npm/pip cache under <data-dir>/setup-cache/<project-slug>. Cache variables are
+# defaulted only when absent; explicit/inherited values win. No automatic caches
+# for host setup or isolation: none, and none for pi/verify/evidence.
+# Extra write roots do not grant additional read permission. Network is unchanged.
+[setup]
+write = []
+allowed_domains = ["pypi.org", "files.pythonhosted.org"]
+# npm: allowed_domains = ["registry.npmjs.org"]
+# pnpm is not managed: set npm_config_store_dir below and list that directory here.
+# The store must be on the worktree's filesystem (Helmraiser does not validate this).
+# write = ["$npm_config_store_dir"]
+# allowed_domains = ["registry.npmjs.org"]
+# Unconfined escape hatch; uncomment only with require_approval = true above:
+# sandbox = "host"
+
+# Additional process-sandbox read denials. Relative paths apply to both the
+# primary checkout and run worktree; absolute and ~ paths are used as specified.
+# [sandbox]
+# deny_read = ["secrets", "~/private"]
+
+# Scout exclusions are repository-relative path prefixes, not globs.
+# [scout]
+# exclude = ["projects/legacy"]
+
+[defaults.env]
+PYTHONDONTWRITEBYTECODE = "1"
+# pnpm, if /data also holds the worktrees:
+# npm_config_store_dir = "/data/.pnpm-store"
+
+# Optional: override model profiles; a task's own models: takes precedence.
+# [models]
+# implement = "opencode-go/deepseek-v4.1-flash:medium"
+# fallback = "openai-codex/gpt-6.1-sol:high"

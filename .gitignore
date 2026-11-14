@@ -1,0 +1,100 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyInstaller
+*.manifest
+*.spec
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.pytest_cache/
+
+# Environments
+.env
+.env.local
+.env.*
+!.env.example
+.venv/
+venv/
+ENV/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Project specific
+# All Helmraiser operational state, artifacts, and linked worktrees are local-only.
+/.helmraiser/
+*.log
+*.db
+*.sqlite
+*.jsonl
+.internal/
+.mypy_cache/
+.ruff_cache/
+.helmraiser-context/*/self-eval*.json
+.helmraiser-context/*/delivery-result.json
+.helmraiser-context/*/*-prompt.md
+evals/screenshots/*.png
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local demo and scratch artifacts
+/demo-project/
+/package-lock.json
+/temp_context.py
+
+# Temporary files
+*.tmp
+*.bak
+worktree-*
+
+*.log
+
+# Claude Code agent worktrees
+.claude/

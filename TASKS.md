@@ -7,10 +7,10 @@ and what comes next.
 
 ## Release
 
-1. **Switch the owner's daily use** from the predecessor install: stop its worker, import
-   its ledger and config into `~/.helmraiser`, rename each project's task directory and
-   config, update skills, widget, agent instructions and Logbook entries that name the
-   old tool, start the Helmraiser worker, keep the old install for rollback until runs land.
+1. **Retire the predecessor install** after a week of landed runs (switched 2026-11-14):
+   drop its harness name from Logbook's list, remove its worker service and command stub,
+   archive its repository, and back up then delete its data directory. FunkyOctopus's port
+   is tracked in that project.
 2. **Go public.**
 
 ## Next

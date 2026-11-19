@@ -2341,7 +2341,9 @@ RETRYABLE_FAILURES = ("blocked:", "verify_exhausted", "verify_failed", "budget:"
 
 def rework(
     run: str = typer.Argument(..., help="Run id (or unique prefix)"),
-    note: str | None = typer.Option(None, "--note", help="Approver's feedback to the implementer"),
+    note: str | None = typer.Option(
+        None, "--note", help="Approver's feedback to the implementer; - reads stdin"
+    ),
     rebase: bool = typer.Option(
         False,
         "--rebase",
@@ -2355,6 +2357,7 @@ def rework(
 
     The same run branch is kept and the task file is re-read, as ``retry`` does.
     """
+    note = _resolve_note(note, as_json=as_json)
     if note is None and not rebase:
         _fail("--note or --rebase is required", as_json=as_json, code=EXIT_VALIDATION)
     if note is not None and not note.strip():
@@ -2853,7 +2856,7 @@ def record_landed(
         help="Required: the commit that delivered the work; it must be in the base",
     ),
     note: str | None = typer.Option(
-        None, "--note", help="Required: why the run is recorded as landed"
+        None, "--note", help="Required: why the run is recorded as landed; - reads stdin"
     ),
     as_json: bool = typer.Option(False, "--json", help="Machine-readable output"),
     data_dir: Path | None = typer.Option(None, "--data-dir", help="Override HELMRAISER_DATA_DIR"),
@@ -2862,6 +2865,7 @@ def record_landed(
     branch outside Helmraiser, which releases the tasks that depend on it.
     ``--commit`` must already be in the run's base branch; no ref moves. Helmraiser does
     not verify or review it. The branch is kept, and a clean worktree is removed."""
+    note = _resolve_note(note, as_json=as_json)
     if commit is None or not commit.strip():
         _fail(
             "--commit is required: the commit that delivered the run's work",

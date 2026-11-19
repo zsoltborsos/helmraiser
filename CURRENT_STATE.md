@@ -12,7 +12,7 @@ iterations and escalation to a fallback model. Evidence and an independent,
 read-only advisory review precede policy-controlled delivery. The central ledger
 (`~/.helmraiser/helmraiser.db`) records the run state, usage and outcomes.
 Independent review receives all approved/declined scope decisions, their paths and owner notes, oldest first.
-`approve` (including `--decline`) and `reject` accept `--note -` to read a non-empty note from stdin, removing one trailing newline.
+`approve` (including `--decline`), `reject`, `rework` and `record-landed` accept `--note -` to read a non-empty note from stdin, removing one trailing newline.
 Parsed, non-uncertain reviews with severe or minor findings receive bounded in-run feedback; review-driven fallback escalation remains severe-only.
 
 Rework resumes the same worktree with feedback and additional bounded allowances,

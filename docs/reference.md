@@ -157,6 +157,8 @@ helmraiser retry <run> --adopt-base # record a host rebase onto the run's base b
 helmraiser record-landed <run> --commit <rev> --note "…"  # a failed run whose branch was merged by hand: record it landed, release its dependents
 ```
 
+For `approve` (including `--decline`), `reject`, `rework` and `record-landed`, `--note -` reads the note from stdin, removes one trailing newline and rejects empty or whitespace-only input.
+
 `add --title` writes a new draft to `<repo>/.helmraiser/tasks/<slug>.md`. On a terminal, `intake`
 without `--yes` or `--check` opens the merged task in `$VISUAL`/`$EDITOR`; the saved result is validated
 and queued, and closing without saving cancels. Without a terminal, or with `--json`, it

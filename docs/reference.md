@@ -676,10 +676,11 @@ whole nested dictionaries.
   share preserves partial work in a commit and escalates. Helmraiser also escalates when
   the iterations run out. The fallback gets a fresh session, the failure history and
   half the iterations. If those also run out, the run fails with `verify_exhausted`.
-  After verify passes, severe review findings are fed back to the model that wrote the
-  code for a half-size fix round. If they remain, Helmraiser escalates once to a different
-  fallback model. Set `review_feedback_rounds` to `0` in config to disable review
-  feedback.
+  After verify passes, parsed, non-uncertain reviews with any findings—including
+  minor-only `pass` reviews—are fed back to the current implement model for half-size
+  fix rounds. `review_feedback_rounds` bounds these rounds (default `1`); set it to `0`
+  to disable review feedback. Only remaining severe findings can trigger review-driven
+  escalation once to a different fallback model.
 - **Helmraiser's own commits.** Changes pi leaves uncommitted are committed as
   `helmraiser: iteration 2 of <task>` (also `review feedback …` and `partial work of …`).
   When most of the last 20 non-merge subjects at the run's base commit are Conventional
@@ -1898,7 +1899,7 @@ failure. Notes do not change declared paths or acceptance commands; the task fil
 The reviewer gets every rework note of the run, oldest first, under `## Owner's rework
 requests`, as amending the task brief and acceptance block. Approved plans remain available. The implement model starts a
 fresh escalation ladder, followed by fallback only within the remaining allowance.
-Normal verify → evidence → review and severe-findings feedback run again. Success
+Normal verify → evidence → review and review-findings feedback run again. Success
 returns to merge approval, **even under the original `auto` policy**; only a subsequent
 `approve` performs delivery. Failure follows the usual failure path.
 

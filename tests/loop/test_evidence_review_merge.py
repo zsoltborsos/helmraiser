@@ -636,7 +636,9 @@ class TestMergeTable:
 # ── governed run: evidence → review → merge ──────────────────────────
 
 
-async def test_evidence_and_review_flow(make_task, make_run, ledger: Ledger, data_dir: Path, config):
+async def test_evidence_and_review_flow(
+    make_task, make_run, ledger: Ledger, data_dir: Path, config
+):
     # Check one evidence/review/merge sequence, independently of automatic feedback.
     config["review_feedback_rounds"] = 0
     task: TaskSpec = make_task(evidence=EVIDENCE)

@@ -191,6 +191,15 @@ def _fail(
     raise typer.Exit(code=code)
 
 
+def _resolve_note(note: str | None, *, as_json: bool) -> str | None:
+    if note != "-":
+        return note
+    text = sys.stdin.read().removesuffix("\n")
+    if not text.strip():
+        _fail("note read from stdin was empty", as_json=as_json, code=EXIT_VALIDATION)
+    return text
+
+
 def _load(path: Path, config: dict[str, Any], *, as_json: bool) -> TaskSpec:
     if not path.is_file():
         _fail(f"task file not found: {path}", as_json=as_json, code=EXIT_ERROR)
@@ -2060,7 +2069,7 @@ def approve(
         None,
         "--note",
         help="Recorded with the decision; a plan or scope approval or decline's note reaches "
-        "the implementer",
+        "the implementer; - reads stdin",
     ),
     paths: str | None = typer.Option(
         None,
@@ -2079,6 +2088,7 @@ def approve(
     scope request, hand the run back to the worker to resume at the implement stage.
     A scope approval first adds the approved paths to the task file's ``paths:``.
     With --decline --note, decline a scope request and resume without adding paths."""
+    note = _resolve_note(note, as_json=as_json)
     config = load_config()
     base = _data_dir(data_dir)
     ledger = _ledger(data_dir)
@@ -2268,12 +2278,15 @@ def _approve_scope(
 
 def reject(
     run: str = typer.Argument(..., help="Run id (or unique prefix)"),
-    note: str | None = typer.Option(None, "--note", help="Recorded with the rejection"),
+    note: str | None = typer.Option(
+        None, "--note", help="Recorded with the rejection; - reads stdin"
+    ),
     as_json: bool = typer.Option(False, "--json", help="Machine-readable output"),
     data_dir: Path | None = typer.Option(None, "--data-dir", help="Override HELMRAISER_DATA_DIR"),
 ) -> None:
     """Reject a run that awaits approval or waits for the worker to resume it: worktree
     and metadata removed, branch kept, run marked failed."""
+    note = _resolve_note(note, as_json=as_json)
     config = load_config()
     base = _data_dir(data_dir)
     ledger = _ledger(data_dir)

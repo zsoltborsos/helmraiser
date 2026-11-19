@@ -191,6 +191,21 @@ without an approval stamp, even if the check fails. `--check --propose` is also 
 `--check --yes` queues and approves only after a successful check; on check failure it
 leaves the file and ledger unchanged.
 
+For a newly queued task with `paths:`, `intake --yes` (with or without `--check`)
+appends the tracked related tests it detects, up to 20 tests. If it finds more than
+20, it adds none and reports the total with an advisory to review the missing scope.
+Check-only reports `Would add related tests to paths:` without changing scope or
+addition metadata. Already-queued tasks (in either the file or ledger), active runs,
+`--propose`, editor-based intake, and tasks without `paths:` are not auto-expanded.
+Successful additions are listed in human output and recorded in
+`intake.related_tests_added` in the file and queued snapshot. Queueing and check-only
+JSON include `related_tests_added` (this invocation's actual additions),
+`related_tests_would_add` (eligible preview paths), and `related_tests_count` (total
+candidates detected). Lists are empty when no addition or preview occurred. Scope
+additions use a minimal text edit: unrelated fields, comments and body stay unchanged;
+intake still updates status, approval metadata, accepted proposal fields and an explicit
+`--origin`.
+
 The check runs verify commands, then evidence commands, serially with each step's own
 timeout and explicit sandbox setting. It uses the same preflight machinery as scout:
 a throwaway worktree of the project's committed HEAD (not dirty working-copy content),
@@ -206,8 +221,8 @@ directory-only declarations and targets mentioned only in commands do not qualif
 To review a proposal before queueing, use `intake --propose`: it asks the intake model as
 today, writes the proposed acceptance block into the task file with `status: draft` (no
 approval stamp) and registers it as a draft, without queueing. Read the file, adjust it if
-needed, then `intake <file> --check --yes` checks and queues it exactly as written — the model is not asked
-again, so what was reviewed is what runs.
+needed, then `intake <file> --check --yes` checks and queues it with any detected
+related-test scope additions — the acceptance model is not asked again.
 
 Every command takes `--json` and `--data-dir` (default `$HELMRAISER_DATA_DIR`, else
 `~/.helmraiser`). Exit codes are 0 for ok, 1 for an error, 2 for a validation failure and
@@ -342,10 +357,18 @@ Intake also adds one note listing tracked files and directories named in the bod
 that `paths` does not cover. Fenced code blocks count; URLs do not. There is no body
 note when `paths` is omitted or the project is not a git repository. The note is
 advisory and does not change the declared paths.
-Intake also adds an advisory note listing up to ten tracked tests outside `paths`
-that import or are named after in-scope JS/TS or Python source files, suggesting
-that the owner add them if the change may need to update them without changing
-the declared paths.
+Intake detects tracked tests outside `paths` that import or are named after in-scope
+JS/TS or Python source files. New queueing through `--yes` appends all candidates
+when there are at most 20; above that cap, none are added and a bounded advisory
+lists the first ten names and the remaining count. Other intake modes remain
+advisory, except check-only previews eligible additions. The detector can miss
+indirect, inventory, golden and fixture tests; authors still need to grep for them.
+Added test files participate in the scheduler's disjoint-paths check and the
+`task-paths` scope gate just like owner-declared paths. Shared tests can therefore
+serialize previously disjoint tasks, and the gate permits the whole test file.
+Implementer scope prompts mark recorded additions as permitted scope, not required
+edits: update only what the requested behavior forces, keeping assertions at least
+as strict. Custom verify path guards and the SCOPE request mechanism are unchanged.
 
 For ordered tasks, set owner-controlled dependencies in frontmatter:
 

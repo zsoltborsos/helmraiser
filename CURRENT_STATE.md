@@ -21,6 +21,7 @@ Open PR-delivered runs can be reworked and approved back onto the same PR, with 
 
 A fresh install has no models and refuses model work until the required roles are configured.
 `intake --check` preflights verify/evidence on committed HEAD without ledger writes; `--check --yes` queues only after green/expected-red results.
+New `intake --yes` queueing adds detected related tests to `paths:` (all up to 20, none above); check-only previews them, and recorded additions are marked as permitted test scope.
 
 Without `lb` on PATH, Logbook is treated as not in use: runs and landing proceed silently, directives and reports omit its context, and doctor labels it optional.
 

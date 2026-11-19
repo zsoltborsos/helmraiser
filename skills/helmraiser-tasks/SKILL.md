@@ -36,9 +36,13 @@ and [Task files](../../docs/reference.md#task-files).
 ## 3. Declare the complete scope
 
 Put every file the change needs in `paths:`, including tests elsewhere that
-assert the changed behaviour; grep for those tests before queueing. Before
-approving a scope request, widen any independent path guards in the task's
-verify commands too. Helmraiser's scope approval does not rewrite custom guards,
+assert the changed behaviour. For new queueing, `intake --yes` adds related tests
+it can find (all when there are at most 20; none above that cap); `--check` alone
+previews additions. Still grep for inventory, golden and fixture tests the detector
+cannot find. Added tests are permitted scope, not required edits: update only what
+the change forces and keep assertions at least as strict. Shared added tests can
+serialize siblings. Before approving a scope request, widen any independent path
+guards in verify commands too: neither intake nor scope approval rewrites them,
 and omitted tests can stop an otherwise valid change.
 See [Task files](../../docs/reference.md#task-files) and [Policies](../../docs/reference.md#policies).
 

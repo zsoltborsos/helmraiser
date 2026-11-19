@@ -1809,7 +1809,7 @@ class TestRelatedTestsOutsidePaths:
             COMPLETE.replace("policy: review\n", f"policy: review\npaths: [{self.SOURCE}]\n"),
         )
 
-    @pytest.mark.parametrize("mode", ["yes", "propose", "editor"])
+    @pytest.mark.parametrize("mode", ["propose", "editor"])
     def test_note_surfaces_without_changing_declared_paths(
         self, task, data_dir, ledger, monkeypatch, mode
     ):
@@ -1849,6 +1849,231 @@ class TestRelatedTestsOutsidePaths:
         (row,) = ledger.list_tasks()
         assert parse_task(row["snapshot"], task, {}).paths == (self.SOURCE,)
 
+    @pytest.mark.parametrize("check", [False, True])
+    @pytest.mark.parametrize("as_json", [False, True])
+    @pytest.mark.parametrize("newline", ["\n", "\r\n"])
+    def test_yes_adds_and_preserves_text(
+        self, task, data_dir, ledger, monkeypatch, check, as_json, newline
+    ):
+        use_adapter(monkeypatch, None)
+        TestIntakeCheck.preflight(monkeypatch, "green")
+        text = (
+            task.read_text()
+            .replace(f"paths: [{self.SOURCE}]", f'paths: ["./{self.SOURCE}", {self.SOURCE}] # keep')
+            .replace("title: Fix the widget", 'title: "Fix the widget" # keep title')
+        )
+        text += "\n  Body with trailing spaces.  \n\n---\n\n"
+        text = text.replace("\n", newline)
+        task.write_bytes(text.encode())
+        result = invoke(
+            "intake",
+            str(task),
+            "--yes",
+            *(["--check"] if check else []),
+            *(["--json"] if as_json else []),
+            data_dir=data_dir,
+        )
+        assert result.exit_code == 0, result.output
+        document = task.read_bytes().decode()
+        fm = parse_frontmatter(document)["frontmatter"]
+        stamp = yaml.safe_dump({"intake": fm["intake"]}, sort_keys=False).replace("\n", newline)
+        expected = (
+            text.replace("status: draft", "status: queued")
+            .replace(f"{self.SOURCE}] # keep", f"{self.SOURCE}, tests/other.test.tsx] # keep")
+            .replace(f"---{newline}## Goal", f"{stamp}---{newline}## Goal")
+        )
+        assert document == expected
+        assert fm["intake"]["related_tests_added"] == ["tests/other.test.tsx"]
+        (row,) = ledger.list_tasks()
+        assert row["snapshot"] == document
+        if as_json:
+            payload = json.loads(result.output)
+            assert payload["related_tests_added"] == ["tests/other.test.tsx"]
+            assert payload["related_tests_would_add"] == []
+            assert payload["related_tests_count"] == 1
+            assert self.NOTE not in payload["notes"]
+        else:
+            assert "Added related tests to paths: tests/other.test.tsx" in result.output
+            assert "add them to paths if" not in result.output
+        # A repeat keeps the metadata and cannot append a second copy.
+        repeat = invoke("intake", str(task), "--yes", "--json", data_dir=data_dir)
+        assert repeat.exit_code == 0, repeat.output
+        assert json.loads(repeat.output)["related_tests_added"] == []
+        saved = parse_task(task.read_text(), task, {})
+        assert saved.paths.count("tests/other.test.tsx") == 1
+        assert saved.extra["intake"]["related_tests_added"] == ["tests/other.test.tsx"]
+
+    @pytest.mark.parametrize("as_json", [False, True])
+    @pytest.mark.parametrize("count", [1, 20, 21])
+    def test_check_only_preview(self, task, data_dir, monkeypatch, as_json, count):
+        use_adapter(monkeypatch, None)
+        TestIntakeCheck.preflight(monkeypatch, "green")
+        TestIntakeCheck.no_ledger(monkeypatch)
+        names = [f"tests/other{n}.test.tsx" for n in range(count)]
+        monkeypatch.setattr(commands, "related_tests_outside_scope", lambda *a: names)
+        original = task.read_bytes()
+        result = invoke(
+            "intake",
+            str(task),
+            "--check",
+            *(["--json"] if as_json else []),
+            data_dir=data_dir,
+        )
+        assert result.exit_code == 0, result.output
+        assert task.read_bytes() == original
+        assert not data_dir.exists()
+        if as_json:
+            payload = json.loads(result.output)
+            assert payload["related_tests_added"] == []
+            assert payload["related_tests_would_add"] == (names if count <= 20 else [])
+            assert payload["related_tests_count"] == count
+            notes = " ".join(payload["notes"])
+        else:
+            notes = result.output
+        if count <= 20:
+            assert "Would add related tests to paths:" in notes
+        else:
+            assert "21 total; none automatically added: limit is 20" in notes
+            assert "add them to paths if" in notes
+
+    def test_final_scope_warnings_and_metadata_merge(self, task, data_dir, monkeypatch):
+        use_adapter(monkeypatch, None)
+        task.write_text(
+            task.read_text()
+            .replace("    run: pytest -q", "    run: pytest tests/other.test.tsx")
+            .replace(
+                "status: draft\n",
+                "status: draft\nintake:\n  related_tests_added: [tests/old.py, tests/old.py]\n",
+            )
+            + "\nUpdate tests/other.test.tsx only if necessary.\n"
+        )
+        result = invoke("intake", str(task), "--yes", "--json", data_dir=data_dir)
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert not any("outside paths" in note for note in payload["notes"])
+        assert parse_task(task.read_text(), task, {}).extra["intake"]["related_tests_added"] == [
+            "tests/old.py",
+            "tests/other.test.tsx",
+        ]
+
+    @pytest.mark.parametrize("count", [20, 21])
+    def test_all_or_none_cap(self, task, data_dir, ledger, monkeypatch, count):
+        use_adapter(monkeypatch, None)
+        repo = task.parent.parent
+        # Use the real detector, including its sorting and tracked-file rules.
+        for n in range(count - 1):
+            (repo / f"tests/extra{n}.test.tsx").write_text(
+                "import { IconSymbol } from '../src/widgets/icon-symbol';\n"
+            )
+        subprocess.run(["git", "-C", str(repo), "add", "tests/"], check=True)
+        result = invoke("intake", str(task), "--yes", "--json", data_dir=data_dir)
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert payload["related_tests_count"] == count
+        saved = parse_task(task.read_text(), task, {})
+        if count == 20:
+            assert len(payload["related_tests_added"]) == 20
+            assert saved.paths == (self.SOURCE, *payload["related_tests_added"])
+        else:
+            assert payload["related_tests_added"] == []
+            assert saved.paths == (self.SOURCE,)
+            assert "21 total; none automatically added: limit is 20" in " ".join(payload["notes"])
+            assert "related_tests_added" not in saved.extra["intake"]
+        assert ledger.list_tasks()[0]["snapshot"] == task.read_text()
+
+    @pytest.mark.parametrize("scope", ["absent", "unmatched", "covered"])
+    def test_no_additions(self, task, data_dir, monkeypatch, scope):
+        use_adapter(monkeypatch, None)
+        paths = {
+            "absent": "",
+            "unmatched": "paths: [missing.ts]\n",
+            "covered": f"paths: [{self.SOURCE}, tests/]\n",
+        }[scope]
+        task.write_text(task.read_text().replace(f"paths: [{self.SOURCE}]\n", paths))
+        result = invoke("intake", str(task), "--yes", "--json", data_dir=data_dir)
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert payload["related_tests_added"] == []
+        assert payload["related_tests_count"] == 0
+        fm = parse_frontmatter(task.read_text())["frontmatter"]
+        assert "related_tests_added" not in fm["intake"]
+        if scope == "absent":
+            assert "paths" not in fm
+
+    @pytest.mark.parametrize("queued_in", ["file", "ledger", "both"])
+    def test_existing_queued_scope_unchanged(self, task, data_dir, ledger, monkeypatch, queued_in):
+        use_adapter(monkeypatch, None)
+        if queued_in != "file":
+            spec = parse_task(task.read_text(), task, {})
+            ledger.upsert_task(replace(spec, status="queued"), task.read_text())
+        if queued_in != "ledger":
+            task.write_text(task.read_text().replace("status: draft", "status: queued"))
+        result = invoke("intake", str(task), "--yes", "--json", data_dir=data_dir)
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output)["related_tests_added"] == []
+        assert parse_task(task.read_text(), task, {}).paths == (self.SOURCE,)
+        assert parse_task(ledger.list_tasks()[0]["snapshot"], task, {}).paths == (self.SOURCE,)
+
+    @pytest.mark.parametrize("refusal", ["check", "active", "registration", "caps"])
+    def test_refusal_leaves_original_scope(self, task, data_dir, ledger, monkeypatch, refusal):
+        from tests.ledger.test_db import run_row
+
+        use_adapter(monkeypatch, None)
+        original = task.read_bytes()
+        spec = parse_task(task.read_text(), task, {})
+        ledger.upsert_task(spec, original.decode())
+        snapshot = ledger.get_task(spec.task_id)
+        if refusal == "check":
+            TestIntakeCheck.preflight(monkeypatch, "fail")
+            TestIntakeCheck.no_ledger(monkeypatch)
+        elif refusal == "active":
+            ledger.create_run(run_row("holder", spec.task_id, str(spec.project)))
+        elif refusal == "caps":
+            monkeypatch.setattr(commands, "never_startable", lambda *a: {"reason": "over cap"})
+            monkeypatch.setattr(commands, "never_startable_text", lambda *a: "will never start")
+            monkeypatch.setattr(commands, "caps_enforcement", lambda *a: (True, "test"))
+        else:
+
+            def refuse(*args, **kwargs):
+                raise commands.TaskActive("raced with registration")
+
+            monkeypatch.setattr(Ledger, "upsert_task", refuse)
+        result = invoke(
+            "intake",
+            str(task),
+            "--yes",
+            "--json",
+            *(["--check"] if refusal == "check" else []),
+            data_dir=data_dir,
+        )
+        assert result.exit_code == 2, result.output
+        assert task.read_bytes() == original
+        assert ledger.get_task(spec.task_id) == snapshot
+        assert json.loads(result.output).get("related_tests_added", []) == []
+
+    def test_added_test_serializes_sibling(
+        self, task, data_dir, ledger, monkeypatch, isolated_config
+    ):
+        from helmraiser.task.loader import render_task
+        from tests.ledger.test_db import make_spec, run_row
+
+        use_adapter(monkeypatch, None)
+        isolated_config["max_runs_per_project"] = 2
+        sibling = make_spec(
+            task.parent.parent, "sibling", paths=("tests/other.test.tsx",), status="running"
+        )
+        ledger.upsert_task(sibling, render_task(sibling))
+        ledger.create_run(run_row("holder", sibling.task_id, str(sibling.project)))
+        result = invoke("intake", str(task), "--yes", "--json", data_dir=data_dir)
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output)["related_tests_added"] == ["tests/other.test.tsx"]
+        result = invoke("queue", "next", "--json", data_dir=data_dir)
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert payload["task"] is None
+        assert payload["held"][0]["reason"] == "paths_overlap"
+        assert payload["held"][0]["other_task_id"] == "sibling"
+
     def test_add_does_not_scan_related_tests(self, task, data_dir, ledger, monkeypatch):
         def unexpected(*args, **kwargs):
             pytest.fail("add must not scan related tests")
@@ -1872,10 +2097,12 @@ class TestRelatedTestsOutsidePaths:
         use_adapter(monkeypatch, adapter)
         result = invoke("intake", str(task), "--yes", "--json", data_dir=data_dir)
         assert result.exit_code == 0, result.output
-        assert json.loads(result.output)["notes"].count(self.NOTE) == 1
-        assert parse_task(task.read_text(), task, {}).paths == (self.SOURCE,)
+        assert self.NOTE not in json.loads(result.output)["notes"]
+        assert json.loads(result.output)["related_tests_added"] == ["tests/other.test.tsx"]
+        assert parse_task(task.read_text(), task, {}).paths == (self.SOURCE, "tests/other.test.tsx")
         (row,) = ledger.list_tasks()
-        assert parse_task(row["snapshot"], task, {}).paths == (self.SOURCE,)
+        assert row["snapshot"] == task.read_text()
+        assert parse_task(row["snapshot"], task, {}).paths == (self.SOURCE, "tests/other.test.tsx")
         assert len(adapter.calls) == 1
 
 

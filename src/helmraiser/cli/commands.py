@@ -71,6 +71,7 @@ from helmraiser.code_snapshot import (
 from helmraiser.config import load_config, missing_models
 from helmraiser.isolation import Isolation, ProcessIsolation, for_level
 from helmraiser.ledger.db import (
+    TERMINAL_RUN_STATUSES,
     Ledger,
     ProjectScope,
     RunUnavailable,
@@ -89,6 +90,7 @@ from helmraiser.loop.intake import (
     _intake_model_overrides,
     check_acceptance,
     get_intake_adapter,
+    render_intake_update,
     run_intake,
 )
 from helmraiser.loop.prompts import REBASE_NOTE, initial_prompt
@@ -137,6 +139,13 @@ from helmraiser.task.model import (
 from helmraiser.task.paths import add_paths_to_frontmatter
 from helmraiser.task.project import load_project_defaults, worktree_manager
 from helmraiser.task.schema import validate_task
+from helmraiser.task.structural import (
+    RELATED_TESTS_AUTO_ADD_LIMIT,
+    body_outside_paths_warnings,
+    outside_paths_warnings,
+    related_tests_outside_scope,
+    related_tests_warnings,
+)
 from helmraiser.utils.markdown import serialize_frontmatter
 
 console = Console()
@@ -360,6 +369,9 @@ def intake(
     requested_origin = _parse_origin_option(origin, as_json=as_json) if origin is not None else None
     config = load_config()
     spec = _load(file.expanduser(), config, as_json=as_json)
+    original_text = spec.source_path.read_bytes().decode("utf-8")
+    original_spec = parse_task(original_text, spec.source_path, config)
+    spec = original_spec
     if requested_origin is not None:
         spec = replace(spec, origin=requested_origin)
     requires_approval = load_project_defaults(spec.project).require_approval
@@ -384,6 +396,7 @@ def intake(
             data_dir=_data_dir(data_dir),
             allow_auto=allow_auto and not requires_approval,
             approve=not (propose or check_only),
+            collect_scope_warnings=not (yes or check_only),
         )
     except ValueError as exc:
         _fail(str(exc), as_json=as_json, code=EXIT_ERROR)
@@ -397,6 +410,26 @@ def intake(
             code=EXIT_VALIDATION,
             errors=outcome.errors,
         )
+
+    related_output: dict[str, Any] = {
+        "related_tests_added": [],
+        "related_tests_would_add": [],
+        "related_tests_count": 0,
+    }
+    if check_only:
+        candidates = related_tests_outside_scope(outcome.spec.paths, outcome.spec.project)
+        related_output["related_tests_count"] = len(candidates)
+        outcome.notes += outside_paths_warnings(outcome.spec)
+        outcome.notes += body_outside_paths_warnings(outcome.spec)
+        if (
+            candidates
+            and len(candidates) <= RELATED_TESTS_AUTO_ADD_LIMIT
+            and spec.status != "queued"
+        ):
+            related_output["related_tests_would_add"] = candidates
+            outcome.notes.append("Would add related tests to paths: " + ", ".join(candidates))
+        else:
+            outcome.notes += related_tests_warnings(outcome.spec, candidates)
 
     checked: dict[str, Any] | None = None
     if check:
@@ -417,6 +450,9 @@ def intake(
             if checked.get("error"):
                 typer.echo(checked["error"])
         if not passed or check_only:
+            if not as_json:
+                for note in outcome.notes:
+                    console.print(note, markup=False, highlight=False)
             if as_json:
                 typer.echo(
                     json.dumps(
@@ -429,6 +465,7 @@ def intake(
                             "task": render_task(outcome.spec),
                             "notes": outcome.notes,
                             "check": checked,
+                            **related_output,
                             **({"error": "acceptance check failed"} if not passed else {}),
                         }
                     )
@@ -526,11 +563,64 @@ def intake(
                 check=checked,
             )
         outcome.notes.append(_never_startable_warning(never))
-    write_task(outcome.spec, outcome.spec.source_path)
+    additions: list[str] = []
+    document: str | None = None
+    if yes:
+        existing = ledger.get_task(outcome.spec.task_id)
+        active = any(
+            run["status"] not in TERMINAL_RUN_STATUSES
+            for run in ledger.list_runs(task_id=outcome.spec.task_id)
+        )
+        candidates = related_tests_outside_scope(outcome.spec.paths, outcome.spec.project)
+        related_output["related_tests_count"] = len(candidates)
+        if (
+            candidates
+            and len(candidates) <= RELATED_TESTS_AUTO_ADD_LIMIT
+            and original_spec.status != "queued"
+            and (existing is None or existing["status"] != "queued")
+            and not active
+        ):
+            additions = candidates
+            stamp = dict(outcome.spec.extra["intake"])
+            recorded = stamp.get("related_tests_added")
+            previous = (
+                [p for p in recorded if isinstance(p, str)] if isinstance(recorded, list) else []
+            )
+            stamp["related_tests_added"] = list(dict.fromkeys([*previous, *additions]))
+            outcome.spec = replace(
+                outcome.spec,
+                paths=(*(outcome.spec.paths or ()), *additions),
+                extra={**outcome.spec.extra, "intake": stamp},
+            )
+            errors = validate_task(outcome.spec)
+            if errors:
+                _fail(
+                    "augmented task is not valid",
+                    as_json=as_json,
+                    code=EXIT_VALIDATION,
+                    errors=errors,
+                )
+            try:
+                document = render_intake_update(
+                    original_text, original_spec, outcome.spec, additions, config
+                )
+            except ValueError as exc:
+                _fail(str(exc), as_json=as_json, code=EXIT_VALIDATION, check=checked)
+        else:
+            outcome.notes += related_tests_warnings(outcome.spec, candidates)
+        outcome.notes += outside_paths_warnings(outcome.spec)
+        outcome.notes += body_outside_paths_warnings(outcome.spec)
+    if document is None:
+        document = render_task(outcome.spec)
+    outcome.spec.source_path.write_bytes(document.encode("utf-8"))
     try:
-        key = ledger.upsert_task(outcome.spec, outcome.spec.source_path.read_text(encoding="utf-8"))
+        key = ledger.upsert_task(outcome.spec, document)
     except TaskActive as exc:
+        outcome.spec.source_path.write_bytes(original_text.encode("utf-8"))
         _fail(str(exc), as_json=as_json, code=EXIT_VALIDATION, check=checked)
+    related_output["related_tests_added"] = additions
+    if additions:
+        outcome.notes.append("Added related tests to paths: " + ", ".join(additions))
     if as_json:
         typer.echo(
             json.dumps(
@@ -541,6 +631,7 @@ def intake(
                     "path": str(outcome.spec.source_path),
                     "proposal": outcome.proposal,
                     "notes": outcome.notes,
+                    **related_output,
                     **({"check": checked} if checked is not None else {}),
                 }
             )

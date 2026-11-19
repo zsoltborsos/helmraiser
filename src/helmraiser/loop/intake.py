@@ -280,7 +280,9 @@ def render_intake_update(
         raise ValueError("intake requires block-mapping frontmatter")
     entries: dict[str, tuple[int, int]] = {}
 
-    def content_end(value: yaml.Node) -> int:
+    def content_end(value: yaml.Node, ancestors: frozenset[int] = frozenset()) -> int:
+        if id(value) in ancestors:
+            raise ValueError("intake cannot safely edit recursive YAML aliases")
         if isinstance(value, yaml.ScalarNode) or getattr(value, "flow_style", False):
             return value.end_mark.index
         children = (
@@ -288,7 +290,10 @@ def render_intake_update(
             if isinstance(value, yaml.MappingNode)
             else value.value
         )
-        return max((content_end(child) for child in children), default=value.end_mark.index)
+        return max(
+            (content_end(child, ancestors | {id(value)}) for child in children),
+            default=value.end_mark.index,
+        )
 
     for key, value in node.value:
         if (
@@ -436,6 +441,7 @@ def run_intake(
     data_dir: Path,
     allow_auto: bool,
     approve: bool = True,
+    collect_scope_warnings: bool = True,
 ) -> IntakeOutcome:
     """Merge the model's proposal (if any) into ``spec`` and validate it as queued.
 
@@ -510,7 +516,8 @@ def run_intake(
         merged = parse_task(serialize_frontmatter(frontmatter, spec.body), spec.source_path, config)
     except TaskLoadError as exc:
         return IntakeOutcome(spec, proposal, notes, [str(exc)])
-    notes += outside_paths_warnings(merged)
-    notes += body_outside_paths_warnings(merged)
-    notes += related_tests_warnings(merged)
+    if collect_scope_warnings:
+        notes += outside_paths_warnings(merged)
+        notes += body_outside_paths_warnings(merged)
+        notes += related_tests_warnings(merged)
     return IntakeOutcome(merged, proposal, notes, validate_task(replace(merged, status="queued")))

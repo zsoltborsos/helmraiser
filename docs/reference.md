@@ -204,9 +204,10 @@ Successful additions are listed in human output and recorded in
 JSON include `related_tests_added` (this invocation's actual additions),
 `related_tests_would_add` (preview paths, conditional on ledger eligibility as explained
 in `notes`), and `related_tests_count` (total
-candidates detected). Lists are empty when no addition or preview occurred. Scope
-additions use a minimal text edit: unrelated fields, comments and body stay unchanged;
-intake still updates status, approval metadata, accepted proposal fields and an explicit
+candidates detected). Lists are empty when no addition or preview occurred.
+Intake serializes the augmented task through the normal task renderer for both the
+file and queued snapshot; original YAML formatting and comments are not preserved.
+It still updates status, approval metadata, accepted proposal fields and an explicit
 `--origin`.
 
 The check runs verify commands, then evidence commands, serially with each step's own

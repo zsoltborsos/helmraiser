@@ -90,7 +90,6 @@ from helmraiser.loop.intake import (
     _intake_model_overrides,
     check_acceptance,
     get_intake_adapter,
-    render_intake_update,
     run_intake,
 )
 from helmraiser.loop.prompts import REBASE_NOTE, initial_prompt
@@ -370,8 +369,6 @@ def intake(
     config = load_config()
     spec = _load(file.expanduser(), config, as_json=as_json)
     original_text = spec.source_path.read_bytes().decode("utf-8")
-    original_spec = parse_task(original_text, spec.source_path, config)
-    spec = original_spec
     if requested_origin is not None:
         spec = replace(spec, origin=requested_origin)
     requires_approval = load_project_defaults(spec.project).require_approval
@@ -568,7 +565,6 @@ def intake(
             )
         outcome.notes.append(_never_startable_warning(never))
     additions: list[str] = []
-    document: str | None = None
     if yes:
         existing = ledger.get_task(outcome.spec.task_id)
         active = any(
@@ -580,7 +576,7 @@ def intake(
         if (
             candidates
             and len(candidates) <= RELATED_TESTS_AUTO_ADD_LIMIT
-            and original_spec.status != "queued"
+            and spec.status != "queued"
             and (existing is None or existing["status"] != "queued")
             and not active
         ):
@@ -604,18 +600,11 @@ def intake(
                     code=EXIT_VALIDATION,
                     errors=errors,
                 )
-            try:
-                document = render_intake_update(
-                    original_text, original_spec, outcome.spec, additions, config
-                )
-            except ValueError as exc:
-                _fail(str(exc), as_json=as_json, code=EXIT_VALIDATION, check=checked)
         else:
             outcome.notes += related_tests_warnings(outcome.spec, candidates)
         outcome.notes += outside_paths_warnings(outcome.spec)
         outcome.notes += body_outside_paths_warnings(outcome.spec)
-    if document is None:
-        document = render_task(outcome.spec)
+    document = render_task(outcome.spec)
     outcome.spec.source_path.write_bytes(document.encode("utf-8"))
     try:
         key = ledger.upsert_task(outcome.spec, document)

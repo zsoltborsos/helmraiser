@@ -1648,104 +1648,6 @@ class TestBodyOutsidePaths:
         assert parse_task(task.read_text(), task, {}).paths == ("src/a.py",)
 
 
-class TestMinimalIntakeUpdate:
-    @pytest.mark.parametrize("newline", ["\n", "\r\n"])
-    @pytest.mark.parametrize(
-        "paths",
-        [
-            'paths: ["./src/a.py", src/a.py, src/a.py] # owner scope\n',
-            'paths: # owner scope\n  - "./src/a.py" # spelling\n  - src/a.py\n  - src/a.py\n',
-        ],
-    )
-    def test_complete_text(self, tmp_project, isolated_config, paths, newline):
-        text = (
-            f'---\nid: fix-widget\ntitle: "Fix the widget" # owner title\nproject: {tmp_project}\n'
-            "status: draft\n# keep this comment\n"
-            + paths
-            + "policy: review\nverify: [{name: tests, run: pytest -q}]\n"
-            "---\n\n  Body whitespace.  \n\n---\n\n"
-        ).replace("\n", newline)
-        path = tmp_project / "task.md"
-        original = parse_task(text, path, isolated_config)
-        accepted = replace(
-            original,
-            status="queued",
-            paths=(*original.paths, "tests/test_a.py"),
-            extra={"intake": {"related_tests_added": ["tests/test_a.py"]}},
-        )
-        result = intake_logic.render_intake_update(
-            text,
-            original,
-            accepted,
-            ["tests/test_a.py"],
-            isolated_config,
-        )
-        expected = text.replace("status: draft", "status: queued")
-        if paths.startswith("paths: ["):
-            expected = expected.replace(
-                "src/a.py] # owner scope", "src/a.py, tests/test_a.py] # owner scope"
-            )
-        else:
-            expected = expected.replace(
-                f"  - src/a.py{newline}policy:",
-                f"  - src/a.py{newline}  - tests/test_a.py{newline}policy:",
-            )
-        expected = expected.replace(
-            f"---{newline}{newline}  Body",
-            f"intake:{newline}  related_tests_added:{newline}  - tests/test_a.py{newline}"
-            f"---{newline}{newline}  Body",
-        )
-        assert result == expected
-
-    def test_proposal_and_origin(self, tmp_project, isolated_config):
-        from helmraiser.task.model import TaskOrigin, VerifyStep
-
-        text = DRAFT.format(project=tmp_project).replace(
-            "status: draft\n", "status: draft\npaths: [src/a.py]\n"
-        )
-        original = parse_task(text, tmp_project / "task.md", isolated_config)
-        accepted = replace(
-            original,
-            verify=(VerifyStep("tests", "pytest -q"),),
-            policy="review",
-            origin=TaskOrigin(kind="claude-code", session="owner-session"),
-            paths=("src/a.py", "tests/test_a.py"),
-        )
-        result = intake_logic.render_intake_update(
-            text,
-            original,
-            accepted,
-            ["tests/test_a.py"],
-            isolated_config,
-        )
-        assert result == text.replace(
-            "paths: [src/a.py]\n",
-            "paths: [src/a.py, tests/test_a.py]\n"
-            "origin:\n  kind: claude-code\n  session: owner-session\n"
-            "policy: review\nverify:\n- name: tests\n  run: pytest -q\n  timeout: 300\n",
-        )
-
-    @pytest.mark.parametrize(
-        "header",
-        [
-            "paths: &scope [src/a.py]\ntags: *scope\n",
-            "paths: [src/a.py]\nstatus: draft\nstatus: draft\n",
-        ],
-    )
-    def test_refuses_unsafe_edits(self, tmp_project, isolated_config, header):
-        text = DRAFT.format(project=tmp_project).replace("status: draft\n", header)
-        original = parse_task(text, tmp_project / "task.md", isolated_config)
-        accepted = replace(original, paths=("src/a.py", "tests/test_a.py"))
-        with pytest.raises(ValueError):
-            intake_logic.render_intake_update(
-                text,
-                original,
-                accepted,
-                ["tests/test_a.py"],
-                isolated_config,
-            )
-
-
 def test_related_test_metadata_and_prompt(tmp_project, isolated_config, data_dir):
     from helmraiser.loop.prompts import initial_prompt, paths_block
     from helmraiser.task.loader import render_task
@@ -1851,20 +1753,12 @@ class TestRelatedTestsOutsidePaths:
 
     @pytest.mark.parametrize("check", [False, True])
     @pytest.mark.parametrize("as_json", [False, True])
-    @pytest.mark.parametrize("newline", ["\n", "\r\n"])
-    def test_yes_adds_and_preserves_text(
-        self, task, data_dir, ledger, monkeypatch, check, as_json, newline
-    ):
+    def test_yes_adds_and_renders_task(self, task, data_dir, ledger, monkeypatch, check, as_json):
+        from helmraiser.task.loader import render_task
+
         use_adapter(monkeypatch, None)
         TestIntakeCheck.preflight(monkeypatch, "green")
-        text = (
-            task.read_text()
-            .replace(f"paths: [{self.SOURCE}]", f'paths: ["./{self.SOURCE}", {self.SOURCE}] # keep')
-            .replace("title: Fix the widget", 'title: "Fix the widget" # keep title')
-        )
-        text += "\n  Body with trailing spaces.  \n\n---\n\n"
-        text = text.replace("\n", newline)
-        task.write_bytes(text.encode())
+        original = parse_task(task.read_text(), task, {})
         result = invoke(
             "intake",
             str(task),
@@ -1876,13 +1770,14 @@ class TestRelatedTestsOutsidePaths:
         assert result.exit_code == 0, result.output
         document = task.read_bytes().decode()
         fm = parse_frontmatter(document)["frontmatter"]
-        stamp = yaml.safe_dump({"intake": fm["intake"]}, sort_keys=False).replace("\n", newline)
-        expected = (
-            text.replace("status: draft", "status: queued")
-            .replace(f"{self.SOURCE}] # keep", f"{self.SOURCE}, tests/other.test.tsx] # keep")
-            .replace(f"---{newline}## Goal", f"{stamp}---{newline}## Goal")
+        saved = parse_task(document, task, {})
+        assert saved == replace(
+            original,
+            status="queued",
+            paths=(self.SOURCE, "tests/other.test.tsx"),
+            extra={"intake": fm["intake"]},
         )
-        assert document == expected
+        assert document == render_task(saved)
         assert fm["intake"]["related_tests_added"] == ["tests/other.test.tsx"]
         (row,) = ledger.list_tasks()
         assert row["snapshot"] == document

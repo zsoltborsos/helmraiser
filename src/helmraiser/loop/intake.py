@@ -29,7 +29,6 @@ from helmraiser.pi.protocol import PiAdapter, PiEvent, PiRequest
 from helmraiser.project_notes import project_notes_for_body, project_notes_section
 from helmraiser.task.loader import TaskLoadError, parse_task, profile_models, spec_to_frontmatter
 from helmraiser.task.model import ISOLATIONS, ModelSpec, TaskSpec, VerifyStep
-from helmraiser.task.paths import add_paths_to_frontmatter
 from helmraiser.task.project import load_project_defaults
 from helmraiser.task.schema import validate_task
 from helmraiser.task.structural import (
@@ -252,92 +251,6 @@ class IntakeOutcome:
     proposal: dict[str, Any] | None
     notes: list[str]
     errors: list[str]
-
-
-def render_intake_update(
-    text: str,
-    original: TaskSpec,
-    accepted: TaskSpec,
-    added_paths: list[str],
-    config: dict[str, Any],
-) -> str:
-    """Edit only intake-changed entries and appended paths; preserve all other text.
-
-    Unsupported YAML layouts fail closed, never falling back to serialization.
-    Node positions locate entries; leaf ends avoid consuming following comments.
-    """
-    if added_paths:
-        text = add_paths_to_frontmatter(text, added_paths)
-    lines = text.splitlines(keepends=True)
-    if not lines or lines[0].rstrip("\r\n") != "---":
-        raise ValueError("the task file has no frontmatter")
-    closing = next((i for i in range(1, len(lines)) if lines[i].rstrip("\r\n") == "---"), None)
-    if closing is None:
-        raise ValueError("the task file has no closing frontmatter delimiter")
-    header = "".join(lines[1:closing])
-    node = yaml.compose(header)
-    if not isinstance(node, yaml.MappingNode) or node.flow_style:
-        raise ValueError("intake requires block-mapping frontmatter")
-    entries: dict[str, tuple[int, int]] = {}
-
-    def content_end(value: yaml.Node, ancestors: frozenset[int] = frozenset()) -> int:
-        if id(value) in ancestors:
-            raise ValueError("intake cannot safely edit recursive YAML aliases")
-        if isinstance(value, yaml.ScalarNode) or getattr(value, "flow_style", False):
-            return value.end_mark.index
-        children = (
-            [item for pair in value.value for item in pair]
-            if isinstance(value, yaml.MappingNode)
-            else value.value
-        )
-        return max(
-            (content_end(child, ancestors | {id(value)}) for child in children),
-            default=value.end_mark.index,
-        )
-
-    for key, value in node.value:
-        if (
-            not isinstance(key, yaml.ScalarNode)
-            or key.start_mark.column != 0
-            or key.value in entries
-            or key.value == "<<"
-        ):
-            raise ValueError("intake cannot safely edit this frontmatter layout")
-        end = content_end(value)
-        if end and header[end - 1] != "\n":
-            newline_at = header.find("\n", end)
-            end = len(header) if newline_at == -1 else newline_at + 1
-        entries[key.value] = (key.start_mark.index, end)
-
-    before = spec_to_frontmatter(original)
-    after = spec_to_frontmatter(accepted)
-    changed = {key for key in before.keys() | after.keys() if before.get(key) != after.get(key)}
-    changed.discard("paths")  # The shared scope editor is the only paths writer.
-    if "verify" in changed and "quality_gates" in entries:
-        changed.add("quality_gates")
-    newline = "\r\n" if lines[0].endswith("\r\n") else "\n"
-    edits: list[tuple[int, int, str]] = []
-    inserted: list[str] = []
-    for key in sorted(changed):
-        replacement = (
-            yaml.safe_dump({key: after[key]}, sort_keys=False, allow_unicode=True).replace(
-                "\n", newline
-            )
-            if key in after
-            else ""
-        )
-        if key in entries:
-            start, end = entries[key]
-            edits.append((start, end, replacement))
-        else:
-            inserted.append(replacement)
-    for start, end, replacement in sorted(edits, reverse=True):
-        header = header[:start] + replacement + header[end:]
-    result = lines[0] + header + "".join(inserted) + "".join(lines[closing:])
-    reparsed = parse_task(result, accepted.source_path, config)
-    if spec_to_frontmatter(reparsed) != after or reparsed.body != accepted.body:
-        raise ValueError("intake update does not match the accepted task; file left unchanged")
-    return result
 
 
 async def _noop_event(_event: PiEvent) -> None:

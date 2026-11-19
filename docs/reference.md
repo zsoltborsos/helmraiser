@@ -195,12 +195,15 @@ For a newly queued task with `paths:`, `intake --yes` (with or without `--check`
 appends the tracked related tests it detects, up to 20 tests. If it finds more than
 20, it adds none and reports the total with an advisory to review the missing scope.
 Check-only reports `Would add related tests to paths:` without changing scope or
-addition metadata. Already-queued tasks (in either the file or ledger), active runs,
+addition metadata. Its preview is conditional: check-only does not inspect ledger
+state, and additions require a task that is neither queued nor active in the ledger.
+Already-queued tasks (in either the file or ledger), active runs,
 `--propose`, editor-based intake, and tasks without `paths:` are not auto-expanded.
 Successful additions are listed in human output and recorded in
 `intake.related_tests_added` in the file and queued snapshot. Queueing and check-only
 JSON include `related_tests_added` (this invocation's actual additions),
-`related_tests_would_add` (eligible preview paths), and `related_tests_count` (total
+`related_tests_would_add` (preview paths, conditional on ledger eligibility as explained
+in `notes`), and `related_tests_count` (total
 candidates detected). Lists are empty when no addition or preview occurred. Scope
 additions use a minimal text edit: unrelated fields, comments and body stay unchanged;
 intake still updates status, approval metadata, accepted proposal fields and an explicit

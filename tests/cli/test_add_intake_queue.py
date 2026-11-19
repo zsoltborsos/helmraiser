@@ -1936,6 +1936,51 @@ class TestRelatedTestsOutsidePaths:
             assert "21 total; none automatically added: limit is 20" in notes
             assert "add them to paths if" in notes
 
+    @pytest.mark.parametrize("as_json", [False, True])
+    @pytest.mark.parametrize("ledger_status", ["queued", "running"])
+    def test_check_preview_is_conditional_on_unchecked_ledger_state(
+        self, task, data_dir, ledger, monkeypatch, as_json, ledger_status
+    ):
+        from tests.ledger.test_db import run_row
+
+        use_adapter(monkeypatch, None)
+        TestIntakeCheck.preflight(monkeypatch, "green")
+        original = task.read_bytes()
+        spec = parse_task(original.decode(), task, {})
+        ledger.upsert_task(replace(spec, status=ledger_status), original.decode())
+        if ledger_status == "running":
+            ledger.create_run(run_row("holder", spec.task_id, str(spec.project)))
+        snapshot = ledger.get_task(spec.task_id)
+        with monkeypatch.context() as check_only:
+            TestIntakeCheck.no_ledger(check_only)
+            result = invoke(
+                "intake",
+                str(task),
+                "--check",
+                *(["--json"] if as_json else []),
+                data_dir=data_dir,
+            )
+        assert result.exit_code == 0, result.output
+        assert task.read_bytes() == original
+        assert ledger.get_task(spec.task_id) == snapshot
+        if as_json:
+            payload = json.loads(result.output)
+            assert payload["related_tests_would_add"] == ["tests/other.test.tsx"]
+            assert payload["related_tests_added"] == []
+            notes = " ".join(payload["notes"])
+        else:
+            notes = " ".join(result.output.split())
+        assert "Would add related tests to paths:" in notes
+        assert "additions require a task that is neither queued nor active in the ledger" in notes
+        assert "check-only does not inspect ledger state" in notes
+        actual = invoke("intake", str(task), "--yes", "--json", data_dir=data_dir)
+        assert actual.exit_code == (0 if ledger_status == "queued" else 2), actual.output
+        assert json.loads(actual.output).get("related_tests_added", []) == []
+        assert parse_task(task.read_text(), task, {}).paths == (self.SOURCE,)
+        assert parse_task(ledger.get_task(spec.task_id)["snapshot"], task, {}).paths == (
+            self.SOURCE,
+        )
+
     def test_final_scope_warnings_and_metadata_merge(self, task, data_dir, monkeypatch):
         use_adapter(monkeypatch, None)
         task.write_text(

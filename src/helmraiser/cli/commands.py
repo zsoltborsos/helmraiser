@@ -428,6 +428,10 @@ def intake(
         ):
             related_output["related_tests_would_add"] = candidates
             outcome.notes.append("Would add related tests to paths: " + ", ".join(candidates))
+            outcome.notes.append(
+                "Preview only: additions require a task that is neither queued nor active "
+                "in the ledger; check-only does not inspect ledger state."
+            )
         else:
             outcome.notes += related_tests_warnings(outcome.spec, candidates)
 

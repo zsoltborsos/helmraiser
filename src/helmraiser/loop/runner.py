@@ -810,7 +810,7 @@ class GovernedRun:
             and self.verdict is not None
             and self.verdict.parsed
             and self.verdict.verdict != "uncertain"
-            and self.verdict.severe
+            and self.verdict.findings
         ):
             completed = await self._run_review_round(
                 review_feedback_prompt(self.verdict.findings),

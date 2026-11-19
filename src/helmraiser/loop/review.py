@@ -316,9 +316,11 @@ def build_review_prompt(
                 "",
                 f"### Decision {number}: {scope.decision.capitalize()}",
                 "",
-                "Paths: " + ", ".join(f"`{path}`" for path in scope.paths)
-                if scope.paths
-                else "Paths unavailable in the ledger",
+                (
+                    "Paths: " + ", ".join(f"`{path}`" for path in scope.paths)
+                    if scope.paths
+                    else "Paths unavailable in the ledger"
+                ),
             ]
             if scope.note is not None:
                 note_bytes = scope.note.encode("utf-8")

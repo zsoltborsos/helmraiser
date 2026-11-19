@@ -209,6 +209,13 @@ def _inline_junit_summary(
 
 
 @dataclass
+class ScopeDecision:
+    decision: str
+    paths: tuple[str, ...]
+    note: str | None
+
+
+@dataclass
 class Verdict:
     verdict: str  # pass | concerns | uncertain
     findings: list[dict[str, Any]] = field(default_factory=list)
@@ -267,9 +274,10 @@ def build_review_prompt(
     plan: str | None = None,
     plan_approved: bool = True,
     plan_approval_note: str | None = None,
+    scope_decisions: Sequence[ScopeDecision] = (),
     rework_notes: Sequence[str] = (),
 ) -> str:
-    """``rework_notes``: the owner's rework notes on this run, oldest first."""
+    """``scope_decisions`` and ``rework_notes`` arrive oldest first for this run."""
     parts = [f"# Review: {task.title}"]
     if task.paths is not None:
         parts += ["", paths_block(task).rstrip(), "", "Check the diff against the allowed paths."]
@@ -293,6 +301,36 @@ def build_review_prompt(
         ]
         if cut:
             parts += ["", f"[Owner's approval note cut after {OWNER_NOTE_INLINE_LIMIT} bytes.]"]
+    if scope_decisions:
+        parts += [
+            "",
+            "## Owner's scope decisions",
+            "",
+            "These decisions were made by the owner after the task was written. "
+            "They override the task brief and acceptance block where they conflict. "
+            "Judge the implementation against these decisions; do not report following "
+            "them as a finding.",
+        ]
+        for number, scope in enumerate(scope_decisions, start=1):
+            parts += [
+                "",
+                f"### Decision {number}: {scope.decision.capitalize()}",
+                "",
+                "Paths: " + ", ".join(f"`{path}`" for path in scope.paths)
+                if scope.paths
+                else "Paths unavailable in the ledger",
+            ]
+            if scope.note is not None:
+                note_bytes = scope.note.encode("utf-8")
+                parts.append("")
+                if len(note_bytes) > OWNER_NOTE_INLINE_LIMIT:
+                    parts += [
+                        note_bytes[:OWNER_NOTE_INLINE_LIMIT].decode("utf-8", errors="ignore"),
+                        "",
+                        f"[Scope decision note cut after {OWNER_NOTE_INLINE_LIMIT} bytes.]",
+                    ]
+                else:
+                    parts.append(scope.note)
     if rework_notes:
         parts += [
             "",

@@ -2,7 +2,12 @@
 
 import pytest
 
-from helmraiser.loop.review import EVIDENCE_INLINE_LIMIT, VERDICT_INSTRUCTION, build_review_prompt
+from helmraiser.loop.review import (
+    EVIDENCE_INLINE_LIMIT,
+    VERDICT_INSTRUCTION,
+    ScopeDecision,
+    build_review_prompt,
+)
 from helmraiser.loop.runner import GovernedRun
 from tests.mocks.scripted_pi_adapter import PiScript, ScriptedPiAdapter
 
@@ -41,6 +46,7 @@ def test_owner_note_precedes_task_when_plan_is_cut(make_task, tmp_path):
     assert "[Plan cut after 8192 bytes.]" in prompt
 
 
+@pytest.mark.parametrize("scope_options", [{}, {"scope_decisions": ()}])
 @pytest.mark.parametrize(
     "note_options", [{}, {"plan_approval_note": None}, {"plan_approval_note": ""}]
 )
@@ -49,7 +55,9 @@ def test_owner_note_precedes_task_when_plan_is_cut(make_task, tmp_path):
     [(None, True), ("Approved steps\n", True), ("Unapproved steps\n", False), ("x" * 9000, True)],
     ids=["absent", "approved", "unapproved", "cut"],
 )
-def test_review_prompt_without_note_is_unchanged(make_task, tmp_path, note_options, plan, approved):
+def test_review_prompt_without_note_is_unchanged(
+    make_task, tmp_path, scope_options, note_options, plan, approved
+):
     plan_section = ""
     if plan is not None:
         if approved:
@@ -73,9 +81,36 @@ def test_review_prompt_without_note_is_unchanged(make_task, tmp_path, note_optio
         "(evidence directory is empty)\n\n" + VERDICT_INSTRUCTION
     )
     assert (
-        _prompt(make_task(), tmp_path, plan=plan, plan_approved=approved, **note_options)
+        _prompt(
+            make_task(),
+            tmp_path,
+            plan=plan,
+            plan_approved=approved,
+            **note_options,
+            **scope_options,
+        )
         == expected
     )
+
+
+def test_owner_context_sections_coexist_before_task(make_task, tmp_path):
+    approval_note = "  Revised plan: café  \n"
+    scope_note = "  Allow the fixture change.  \n"
+    rework_note = "  Keep the public interface.  \n"
+    prompt = _prompt(
+        make_task(),
+        tmp_path,
+        plan_approval_note=approval_note,
+        scope_decisions=[ScopeDecision("approved", ("tests/old_test.txt",), scope_note)],
+        rework_notes=[rework_note],
+    )
+    section = prompt.split("## Task", 1)[0]
+    assert approval_note in section and scope_note in section and rework_note in section
+    assert section.index("## Owner's decisions on approval") < section.index(approval_note)
+    assert section.index(approval_note) < section.index("## Owner's scope decisions")
+    assert section.index("## Owner's scope decisions") < section.index(scope_note)
+    assert section.index(scope_note) < section.index("## Owner's rework requests")
+    assert section.index("## Owner's rework requests") < section.index(rework_note)
 
 
 def test_owner_note_does_not_require_plan_text(make_task, tmp_path):

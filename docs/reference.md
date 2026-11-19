@@ -855,7 +855,12 @@ The run resumes in the requesting implement session (the fallback's when it aske
 keeping its branch's commits. Its first implement prompt starts
 `Scope request declined (<paths>): <note>` (paths joined by `, `), tells it not to edit
 the declined files, to find another way inside the allowed paths and to read the task
-file again. The note does not go to the reviewer. `log` shows the decline in the timeline.
+file again. The reviewer receives every approved or declined scope decision, oldest first,
+under `## Owner's scope decisions`, including the actual approved subset or declined paths
+and the owner's note, if given. These decisions override the task brief and acceptance
+block where they conflict; following them is not a finding. Each note is limited to
+16 KiB of UTF-8 text, with an explicit cut marker when truncated. `log` shows the decline
+in the timeline.
 If the implementer asks for the same or any other paths again, it parks as a normal new
 scope request with a new pending approval; the earlier row stays `declined`. No declined
 paths are remembered to refuse later requests automatically.

@@ -11,6 +11,7 @@ commands decide done; failures return to the same implementer session, with boun
 iterations and escalation to a fallback model. Evidence and an independent,
 read-only advisory review precede policy-controlled delivery. The central ledger
 (`~/.helmraiser/helmraiser.db`) records the run state, usage and outcomes.
+Independent review receives all approved/declined scope decisions, their paths and owner notes, oldest first.
 
 Rework resumes the same worktree with feedback and additional bounded allowances,
 then verifies and reviews again. `rework --rebase` lets the implementer resolve a

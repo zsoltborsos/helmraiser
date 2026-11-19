@@ -569,7 +569,7 @@ def test_related_tests_warnings(related_tests_repo):
     assert related_tests_warnings(replace(spec, paths=("missing.ts",))) == []
 
 
-@pytest.mark.parametrize("count", [10, 11, 13])
+@pytest.mark.parametrize("count", [10, 11, 13, 20, 21])
 def test_related_tests_warnings_limit(tmp_path, monkeypatch, count):
     names = [f"widget-{n:02}.test.ts" for n in range(count)]
     monkeypatch.setattr(
@@ -581,10 +581,17 @@ def test_related_tests_warnings_limit(tmp_path, monkeypatch, count):
         {},
     )
     remainder = f" and {count - 10} more" if count > 10 else ""
-    assert related_tests_warnings(spec) == [
+    expected = [
         f"tests outside paths exercise in-scope files: {', '.join(names[:10])}{remainder}"
-        " — add them to paths if the change may need to update them"
+        + (f" ({count} total; none automatically added: limit is 20)" if count > 20 else "")
+        + " — add them to paths if the change may need to update them"
     ]
+    assert related_tests_warnings(spec) == expected
+    monkeypatch.setattr(
+        "helmraiser.task.structural.related_tests_outside_scope",
+        lambda *args: pytest.fail("must reuse supplied candidates"),
+    )
+    assert related_tests_warnings(spec, names) == expected
 
 
 def test_related_tests_python_init_import(related_tests_repo):

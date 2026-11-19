@@ -248,9 +248,13 @@ def body_outside_paths_warnings(task: TaskSpec) -> list[str]:
     ]
 
 
-def related_tests_warnings(task: TaskSpec) -> list[str]:
-    """One bounded advisory about related tests, without expanding declared paths."""
-    outside = related_tests_outside_scope(task.paths, task.project)
+RELATED_TESTS_AUTO_ADD_LIMIT = 20
+
+
+def related_tests_warnings(task: TaskSpec, outside: list[str] | None = None) -> list[str]:
+    """One bounded advisory, optionally reusing already detected candidates."""
+    if outside is None:
+        outside = related_tests_outside_scope(task.paths, task.project)
     if not outside:
         return []
     names = ", ".join(outside[:10])
@@ -258,7 +262,13 @@ def related_tests_warnings(task: TaskSpec) -> list[str]:
         names += f" and {len(outside) - 10} more"
     return [
         f"tests outside paths exercise in-scope files: {names}"
-        " — add them to paths if the change may need to update them"
+        + (
+            f" ({len(outside)} total; none automatically added: limit is "
+            f"{RELATED_TESTS_AUTO_ADD_LIMIT})"
+            if len(outside) > RELATED_TESTS_AUTO_ADD_LIMIT
+            else ""
+        )
+        + " — add them to paths if the change may need to update them"
     ]
 
 

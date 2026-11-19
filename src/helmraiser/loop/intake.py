@@ -410,7 +410,14 @@ def run_intake(
 
     if approve:
         frontmatter["status"] = "queued"
+        previous_intake = spec.extra.get("intake")
+        related = (
+            previous_intake.get("related_tests_added")
+            if isinstance(previous_intake, dict)
+            else None
+        )
         frontmatter["intake"] = {
+            **({"related_tests_added": related} if isinstance(related, list) else {}),
             **({"model": model.render()} if model is not None else {}),
             "approved_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
         }

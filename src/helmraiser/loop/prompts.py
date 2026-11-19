@@ -14,11 +14,21 @@ REBASE_NOTE = "Rebase the run branch onto the current base branch."
 def paths_block(task: TaskSpec) -> str:
     if task.paths is None:
         return ""
-    return (
-        "## Allowed paths\n\n"
-        + "\n".join(f"- `{pattern}`" for pattern in task.paths)
-        + "\n\nChanges outside these globs fail before verify. Restore/remove forbidden "
-        "changes; do not broaden the declaration.\n\n"
+    intake = task.extra.get("intake")
+    recorded = intake.get("related_tests_added") if isinstance(intake, dict) else None
+    related = (
+        {path for path in recorded if isinstance(path, str) and path in task.paths}
+        if isinstance(recorded, list)
+        else set()
+    )
+    return "## Allowed paths\n\n" + "\n".join(
+        f"- `{pattern}`" + (" (related test, added by intake)" if pattern in related else "")
+        for pattern in task.paths
+    ) + "\n\nChanges outside these globs fail before verify. Restore/remove forbidden " "changes; do not broaden the declaration.\n\n" + (
+        "These tests are permitted scope, not required edits. Update them only where "
+        "the requested behavior forces a change, keeping each assertion at least as strict.\n\n"
+        if related
+        else ""
     )
 
 

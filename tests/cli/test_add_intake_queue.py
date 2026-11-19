@@ -1648,6 +1648,47 @@ class TestBodyOutsidePaths:
         assert parse_task(task.read_text(), task, {}).paths == ("src/a.py",)
 
 
+def test_related_test_metadata_and_prompt(tmp_project, isolated_config, data_dir):
+    from helmraiser.loop.prompts import initial_prompt, paths_block
+    from helmraiser.task.loader import render_task
+
+    path = tmp_project / "task.md"
+    spec = parse_task(
+        COMPLETE.format(project=tmp_project).replace(
+            "status: draft\n",
+            "status: draft\npaths: [src/a.py, tests/test_a.py]\n"
+            "intake:\n  related_tests_added: [tests/test_a.py, tests/stale.py]\n",
+        ),
+        path,
+        isolated_config,
+    )
+    outcome = intake_logic.run_intake(
+        spec,
+        config=isolated_config,
+        adapter=None,
+        model=None,
+        data_dir=data_dir,
+        allow_auto=False,
+    )
+    roundtrip = parse_task(render_task(outcome.spec), path, isolated_config)
+    assert roundtrip.extra["intake"]["related_tests_added"] == [
+        "tests/test_a.py",
+        "tests/stale.py",
+    ]
+    prompt = initial_prompt(roundtrip)
+    assert "- `tests/test_a.py` (related test, added by intake)" in prompt
+    assert "- `src/a.py`\n" in prompt
+    assert "tests/stale.py" not in prompt
+    assert "permitted scope, not required edits" in prompt
+    assert "keeping each assertion at least as strict" in prompt
+    ordinary = replace(spec, extra={})
+    assert paths_block(ordinary) == (
+        "## Allowed paths\n\n- `src/a.py`\n- `tests/test_a.py`\n\n"
+        "Changes outside these globs fail before verify. Restore/remove forbidden "
+        "changes; do not broaden the declaration.\n\n"
+    )
+
+
 class TestRelatedTestsOutsidePaths:
     SOURCE = "src/widgets/icon-symbol.tsx"
     NOTE = (

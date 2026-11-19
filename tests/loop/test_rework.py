@@ -102,6 +102,8 @@ async def test_rework_resumes_same_pipeline_twice(
     policy,
     delivery,
 ):
+    # Park the original minor finding for owner rework, not automatic feedback.
+    config["review_feedback_rounds"] = 0
     task = make_task(
         policy=policy,
         delivery=delivery,

@@ -7,6 +7,7 @@ from typer.testing import CliRunner
 
 from helmraiser.cli import app
 from helmraiser.loop.report import build_report, render_report
+from helmraiser.loop.review import ScopeDecision
 from helmraiser.loop.runner import GovernedRun, parse_scope_request
 from helmraiser.pi.adapter import session_id_for
 from helmraiser.task.paths import add_paths_to_frontmatter
@@ -27,6 +28,11 @@ def git(path, *args):
 
 def events(ledger, run, kind):
     return [e["payload"] for e in ledger.events(run.run_id) if e["type"] == kind]
+
+
+def review_scope_section(adapter):
+    prompt = adapter.calls_for("review")[0].prompt
+    return prompt.split("## Owner's scope decisions\n", 1)[1].split("## Task", 1)[0]
 
 
 def approve_scope(ledger, run, task, paths, note=None, *, decline=False):
@@ -167,6 +173,10 @@ async def test_approved_scope_resumes_in_the_same_session_and_lands(
         ("merge", "pending"),
     ]
     assert outcome.iterations == 2
+    section = review_scope_section(adapter)
+    assert "### Decision 1: Approved" in section
+    assert "`tests/old_test.txt`" in section and "Keep the old fixture" in section
+    assert "docs/notes.md" not in section
 
 
 async def test_scope_request_with_out_of_scope_edits_fails(make_task, make_run, ledger):
@@ -270,6 +280,10 @@ async def test_declined_scope_resumes_in_same_session_with_commits_kept(
         ("scope", "declined"),
         ("merge", "pending"),
     ]
+    section = review_scope_section(adapter)
+    assert "### Decision 1: Declined" in section
+    assert "`tests/old_test.txt`, `docs/notes.md`" in section
+    assert "Use the allowed paths" in section
 
 
 async def test_plan_scope_request_parks_with_saved_plan(make_task, make_run, ledger):
@@ -447,6 +461,10 @@ async def test_plan_scope_approved_resumes_at_implement_with_plan(
     assert not adapter.calls_for("plan") and len(first.calls_for("plan")) == 1
     assert events(ledger, run, "run_resume")[-1]["from"] == "scope"
     assert outcome.iterations == 1
+    section = review_scope_section(adapter)
+    assert "### Decision 1: Approved" in section
+    assert "`tests/old_test.txt`" in section and "Keep the old fixture" in section
+    assert "docs/notes.md" not in section
 
 
 async def test_plan_scope_declined_resumes_at_implement_with_plan(
@@ -489,6 +507,10 @@ async def test_plan_scope_declined_resumes_at_implement_with_plan(
     assert not adapter.calls_for("plan") and len(first.calls_for("plan")) == 1
     assert events(ledger, run, "run_resume")[-1]["from"] == "scope"
     assert outcome.iterations == 1
+    section = review_scope_section(adapter)
+    assert "### Decision 1: Declined" in section
+    assert "`tests/old_test.txt`, `docs/notes.md`" in section
+    assert "Use allowed paths" in section
 
 
 async def test_plan_scope_approval_first_saves_header_as_ordinary_plan(make_task, make_run, ledger):
@@ -504,3 +526,105 @@ async def test_plan_scope_approval_first_saves_header_as_ordinary_plan(make_task
     assert ledger.pending_approval(run.run_id)["kind"] == "plan"
     assert not events(ledger, run, "scope_requested")
     assert not ledger.iterations(run.run_id) and not adapter.calls_for("implement")
+
+
+async def test_review_receives_repeated_scope_decisions_in_order(
+    make_task, make_run, ledger, data_dir, config
+):
+    task = make_task(paths=("done.txt",), max_iterations=3)
+    first = ScriptedPiAdapter({"implement": PiScript(final_text=REQUEST)})
+    run, _ = make_run(task, first)
+    assert (await run.run()).pending_approval == "scope"
+    approve_scope(
+        ledger,
+        run,
+        task,
+        ["tests/old_test.txt", "docs/notes.md"],
+        "First: find another way",
+        decline=True,
+    )
+
+    second = ScriptedPiAdapter({"implement": PiScript(final_text=REQUEST)})
+    resumed = resume(run, second, config, ledger, data_dir)
+    assert resumed.claim_resume()
+    assert (await resumed.run()).pending_approval == "scope"
+    approve_scope(ledger, resumed, task, ["tests/old_test.txt"], "Second: allow just the fixture")
+
+    adapter = ScriptedPiAdapter(
+        {
+            "implement": PiScript(files=[("done.txt", "ok"), ("tests/old_test.txt", "new")]),
+            "review": PiScript(final_text=verdict_text("pass")),
+        }
+    )
+    resumed = resume(run, adapter, config, ledger, data_dir)
+    assert resumed.claim_resume()
+    outcome = await resumed.run()
+    assert outcome.pending_approval == "merge", outcome.failure_reason
+    section = review_scope_section(adapter)
+    assert section.count("### Decision") == 2
+    assert section.count("First: find another way") == 1
+    assert section.count("Second: allow just the fixture") == 1
+    declined, approved = section.split("### Decision 2: Approved", 1)
+    assert "### Decision 1: Declined" in declined
+    assert "`tests/old_test.txt`, `docs/notes.md`" in declined
+    assert "First: find another way" in declined
+    assert "`tests/old_test.txt`" in approved and "docs/notes.md" not in approved
+    assert "Second: allow just the fixture" in approved
+    assert resumed._scope_decisions() == [
+        ScopeDecision(
+            "declined", ("tests/old_test.txt", "docs/notes.md"), "First: find another way"
+        ),
+        ScopeDecision("approved", ("tests/old_test.txt",), "Second: allow just the fixture"),
+    ]
+
+
+async def test_scope_decisions_filter_after_matching_all_requests(make_task, make_run, ledger):
+    run, _ = make_run(
+        make_task(policy="approve-plan-first"),
+        ScriptedPiAdapter({"plan": PiScript(final_text="# Plan")}),
+    )
+    assert (await run.run()).pending_approval == "plan"
+    ledger.record_approval(run.run_id, "merge", "approved", "Unrelated merge")
+    # An orphan or non-scope handback must not create a request or shift matching.
+    ledger.append_event(run.run_id, "helmraiser", "handed_back", {"scope": {"paths": ["orphan"]}})
+    for index, decision in enumerate(("pending", "rejected", "approved", "declined")):
+        ledger.record_approval(run.run_id, "scope", decision, f"  Note {index}\n ")
+        ledger.append_event(
+            run.run_id, "implement", "scope_requested", {"paths": [f"request-{index}"]}
+        )
+        ledger.append_event(run.run_id, "helmraiser", "handed_back", {"stage": "implement"})
+        ledger.append_event(
+            run.run_id,
+            "helmraiser",
+            "handed_back",
+            {
+                "scope": {
+                    "paths": [f"subset-{index}"],
+                    "declined": [f"declined-{index}"],
+                    "note": "Not authoritative",
+                }
+            },
+        )
+    assert run._scope_decisions() == [
+        ScopeDecision("approved", ("subset-2",), "  Note 2\n "),
+        ScopeDecision("declined", ("declined-3",), "  Note 3\n "),
+    ]
+
+
+@pytest.mark.parametrize("decision", ["approved", "declined"])
+@pytest.mark.parametrize("has_request", [False, True])
+async def test_scope_decision_without_handback_is_retained(
+    make_task, make_run, ledger, decision, has_request
+):
+    run, _ = make_run(
+        make_task(policy="approve-plan-first"),
+        ScriptedPiAdapter({"plan": PiScript(final_text="# Plan")}),
+    )
+    assert (await run.run()).pending_approval == "plan"
+    ledger.record_approval(run.run_id, "scope", decision, None)
+    if has_request:
+        ledger.append_event(
+            run.run_id, "implement", "scope_requested", {"paths": ["requested.txt"]}
+        )
+    expected_paths = ("requested.txt",) if decision == "declined" and has_request else ()
+    assert run._scope_decisions() == [ScopeDecision(decision, expected_paths, None)]

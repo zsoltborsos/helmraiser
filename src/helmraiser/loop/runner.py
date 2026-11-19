@@ -74,7 +74,7 @@ from helmraiser.loop.report import (
     render_reworks,
     render_scope_request,
 )
-from helmraiser.loop.review import Verdict, build_review_prompt, parse_verdict
+from helmraiser.loop.review import ScopeDecision, Verdict, build_review_prompt, parse_verdict
 from helmraiser.loop.routing import format_dispatch_decision
 from helmraiser.loop.services import RunningService, ServiceError, start_service, stop_services
 from helmraiser.loop.shell import SANDBOX_HOST, UNCONFINED_NOTE, Wrap, run_shell, tail_lines
@@ -912,6 +912,36 @@ class GovernedRun:
             if approval["kind"] == "plan" and approval["decision"] == "approved":
                 return str(approval["note"]) if approval["note"] else None
         return None
+
+    def _scope_decisions(self) -> list[ScopeDecision]:
+        approvals = [a for a in self.ledger.approvals(self.run_id) if a["kind"] == "scope"]
+        requests: list[dict[str, Any]] = []
+        for event in self.ledger.events(self.run_id, types=("scope_requested", "handed_back")):
+            payload = event["payload"]
+            if event["type"] == "scope_requested":
+                requests.append({"paths": payload["paths"]})
+            elif requests and "scope" in payload:
+                requests[-1]["scope"] = payload["scope"]
+
+        decisions = []
+        # Each request creates one approval. Pair before filtering so unresolved or
+        # rejected approvals cannot shift later decisions onto the wrong request.
+        for index, approval in enumerate(approvals):
+            decision = approval["decision"]
+            if decision not in ("approved", "declined"):
+                continue
+            request = requests[index] if index < len(requests) else {}
+            scope = request.get("scope", {})
+            if decision == "approved":
+                # Only the handback records the actual subset granted by --paths.
+                paths = scope.get("paths", ())
+            else:
+                paths = scope.get("declined", request.get("paths", ()))
+            note = approval["note"]
+            decisions.append(
+                ScopeDecision(decision, tuple(paths), str(note) if note is not None else None)
+            )
+        return decisions
 
     async def _run_review_round(
         self,
@@ -2189,6 +2219,7 @@ class GovernedRun:
             evidence_results=self.evidence_results,
             evidence_dir=self.rundir.evidence,
             plan_approval_note=self._plan_approval_note(),
+            scope_decisions=self._scope_decisions(),
             rework_notes=[str(r["note"]) for r in self.ledger.reworks(self.run_id)],
             **plan_options,
         )

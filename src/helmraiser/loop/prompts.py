@@ -21,14 +21,21 @@ def paths_block(task: TaskSpec) -> str:
         if isinstance(recorded, list)
         else set()
     )
-    return "## Allowed paths\n\n" + "\n".join(
+    entries = "\n".join(
         f"- `{pattern}`" + (" (related test, added by intake)" if pattern in related else "")
         for pattern in task.paths
-    ) + "\n\nChanges outside these globs fail before verify. Restore/remove forbidden " "changes; do not broaden the declaration.\n\n" + (
+    )
+    guidance = (
         "These tests are permitted scope, not required edits. Update them only where "
         "the requested behavior forces a change, keeping each assertion at least as strict.\n\n"
         if related
         else ""
+    )
+    return (
+        "## Allowed paths\n\n"
+        + entries
+        + "\n\nChanges outside these globs fail before verify. Restore/remove forbidden "
+        "changes; do not broaden the declaration.\n\n" + guidance
     )
 
 

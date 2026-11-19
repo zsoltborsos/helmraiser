@@ -9,8 +9,10 @@ Thank you for your interest in contributing to Helmraiser!
 git clone https://github.com/zsoltborsos/helmraiser.git
 cd helmraiser
 
-# Install in editable mode with dev dependencies
-pip install -e ".[dev]"
+# Python 3.12+; isolate dependencies from the system Python
+python3 -m venv .venv
+.venv/bin/pip install -e ".[dev]"
+export PATH="$PWD/.venv/bin:$PATH"
 ```
 
 ## Running Tests
@@ -23,8 +25,13 @@ pytest
 pytest --cov=helmraiser --cov-report=term-missing
 
 # A specific file
-pytest --no-cov tests/test_cli.py -v
+python -m pytest --no-cov tests/cli/test_show.py -v
 ```
+
+The suite uses fake pi adapters and does not call real models or require provider
+credentials. Docker calls are guarded; real sandbox/container tests are optional.
+Test subsets need `--no-cov` because the coverage floor applies to the full suite.
+See [AGENTS.md](AGENTS.md) for test isolation rules and the complete gates.
 
 ## Code Style
 
@@ -75,8 +82,8 @@ pre-commit install
 
 ## Where to Ask Questions
 
-- Open a [GitHub Discussion](https://github.com/zsoltborsos/helmraiser/discussions) for general questions.
-- Open an [Issue](https://github.com/zsoltborsos/helmraiser/issues) for bugs or feature requests.
+- Open an [Issue](https://github.com/zsoltborsos/helmraiser/issues) for questions, bugs or feature requests.
+- Report vulnerabilities privately using [SECURITY.md](SECURITY.md).
 
 ## License
 

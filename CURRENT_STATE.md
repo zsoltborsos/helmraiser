@@ -22,6 +22,16 @@ A fresh install has no models and refuses model work until the required roles ar
 
 Without `lb` on PATH, Logbook is treated as not in use: runs and landing proceed silently, directives and reports omit its context, and doctor labels it optional.
 
+## Public-release documentation
+
+The README is the introduction and disposable-repository first-run guide; detailed
+CLI/configuration behavior lives in `docs/reference.md`. The slug CLI example uses
+process isolation, owner approval and prewritten behavioral tests. Its acceptance
+was exercised under real srt: missing target → expected red, temporary reference
+implementation → green, incorrect output → rejected, without model calls or queue writes.
+Model-selection guidance distinguishes configuration from historical personal trials.
+Remaining public-release checks are in `TASKS.md`.
+
 ## Known gaps
 
 - **Failed reopened PR runs.** A reopened run that fails (including setup failure) cannot be retried, reworked or landed while its PR stays open; recovery is a hand commit on the PR branch or closing the PR.

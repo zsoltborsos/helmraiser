@@ -11,7 +11,7 @@ model tokens. Offer a paid end-to-end check separately, after readiness.
 ## Discover
 
 Locate the Helmraiser clone by resolving this skill directory's symlink; the clone
-root is two directories above it. Read its README **Models setup** section and show
+root is two directories above it. Read `docs/reference.md`'s **Models setup** section and show
 `examples/config.json` as the owner's tried-and-working reference, not universal defaults.
 Resolve these paths against the clone, not the current working directory.
 

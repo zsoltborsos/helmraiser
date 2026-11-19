@@ -66,9 +66,10 @@ The pre-commit hooks run black, `ruff --fix` and mypy on commit. Stage explicit 
 - **Never call a real model from the suite.** Use `tests/mocks/fake_pi.py`, a scripted
   `pi` executable put on `PATH` by the `fake_pi` fixture, for subprocess-level tests.
   Use `tests/mocks/scripted_pi_adapter.py` (`ScriptedPiAdapter`) for loop-level tests.
-- Real-model runs are manual dogfood: `helmraiser work --once` on
-  `examples/tasks/status-json-docs.md`. The spec reserves `HELMRAISER_DOGFOOD=1` to gate such a test, but no
-  test uses it yet. Keep it out of the default suite if you add one.
+- Real-model runs are opt-in manual dogfood: use the README's disposable repository
+  and `examples/tasks/slug-cli.md`, with explicit consent to spend. The spec reserves
+  `HELMRAISER_DOGFOOD=1` to gate such a test, but no test uses it yet. Keep it out of
+  the default suite if you add one.
 - Tests must not signal host processes. `tests/conftest.py` makes `os.killpg` raise, and
   abort tests use a fake `ProcessController`.
 - `tests/conftest.py` points `HELMRAISER_CONFIG_DIR` at `~/.helmraiser-test` unless it is

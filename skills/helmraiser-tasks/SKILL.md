@@ -14,7 +14,7 @@ Prove each claim about a library, tool, service or sandbox with a one-line
 `helmraiser preflight <repo> --run '<probe>'` before putting it in the brief. For
 example, check a service container's reported address or a template engine's
 sandbox behaviour. Plausible assumptions can be false in the actual sandbox.
-See [Trying commands in the sandbox](../../README.md#trying-commands-in-the-sandbox).
+See [Trying commands in the sandbox](../../docs/reference.md#trying-commands-in-the-sandbox).
 
 ## 2. Prove acceptance before queueing
 
@@ -30,8 +30,8 @@ Preflight takes the **primary checkout**, tests its committed HEAD and uses
 project setup/environment, not task overrides. Account explicitly for task-only
 `setup` or `env` differences before treating the result as proof. Select the
 project interpreter explicitly, such as `.venv/bin/python`, where applicable.
-See [Trying commands in the sandbox](../../README.md#trying-commands-in-the-sandbox)
-and [Task files](../../README.md#task-files).
+See [Trying commands in the sandbox](../../docs/reference.md#trying-commands-in-the-sandbox)
+and [Task files](../../docs/reference.md#task-files).
 
 ## 3. Declare the complete scope
 
@@ -40,7 +40,7 @@ assert the changed behaviour; grep for those tests before queueing. Before
 approving a scope request, widen any independent path guards in the task's
 verify commands too. Helmraiser's scope approval does not rewrite custom guards,
 and omitted tests can stop an otherwise valid change.
-See [Task files](../../README.md#task-files) and [Policies](../../README.md#policies).
+See [Task files](../../docs/reference.md#task-files) and [Policies](../../docs/reference.md#policies).
 
 ## 4. Keep the brief safe to share
 
@@ -53,13 +53,13 @@ leaves the local interactive session.
 `helmraiser add <file>` registers a draft;
 `helmraiser intake <file> --check --yes --origin <kind>:<session>` queues it. A valid
 hand-written acceptance block needs no intake-model call. Use the supported
-origin kinds in [Quick start](../../README.md#quick-start): the queueing session
+origin kinds in [Workflow commands](../../docs/reference.md#quick-start): the queueing session
 owns review, and registration alone does not start work.
 
 Diff guards must use `$HELMRAISER_BASE_SHA`, so scope checks use the captured base
 rather than a moving branch. Keep fetch/rebase commands out of task bodies;
 leave base synchronization to Helmraiser's host workflow.
-See [Task files](../../README.md#task-files) and [Policies](../../README.md#policies).
+See [Task files](../../docs/reference.md#task-files) and [Policies](../../docs/reference.md#policies).
 
 ## 6. Schedule independent siblings
 
@@ -72,8 +72,8 @@ These checks keep parallel edits from conflicting.
 merge and fast-forward that base. PR creation or remote merge alone is not enough;
 dependents must start with the delivered code. Squash merging does not satisfy
 the recorded-head ancestry check.
-See [Running unattended](../../README.md#running-unattended) and
-[Dependency holds](../../README.md#dependency-holds).
+See [Running unattended](../../docs/reference.md#running-unattended) and
+[Dependency holds](../../docs/reference.md#dependency-holds).
 
 ## 7. Check sandbox readability
 
@@ -88,7 +88,7 @@ helmraiser preflight <repo> --run 'ls -A <path> | wc -l'
 
 Credentials interactive agents use but Helmraiser runs must not read belong in
 `~/.secrets/<project>/`. The sandbox is not a blanket home-directory privacy
-boundary. See [Isolation](../../README.md#isolation) for read rules and exceptions.
+boundary. See [Isolation](../../docs/reference.md#isolation) for read rules and exceptions.
 
 ## 8. Review before final approval
 
@@ -102,8 +102,8 @@ While awaiting **merge** approval, fix with
 hand. Treat delivery approval as final: PR delivery removes the worktree and
 records delivery before the PR merges. Plan/scope approvals instead resume work.
 Use `helmraiser land <run>` for governed PR landing.
-See [Policies](../../README.md#policies) and
-[Reworking a run awaiting merge approval](../../README.md#reworking-a-run-awaiting-merge-approval).
+See [Policies](../../docs/reference.md#policies) and
+[Reworking a run awaiting merge approval](../../docs/reference.md#reworking-a-run-awaiting-merge-approval).
 
 ## 9. Recognize the cleanup/startup race
 
@@ -116,23 +116,23 @@ If a run still fails with a bubblewrap "Read-only file system" error naming
 another run, check `helmraiser log <run>` for `sandbox_retry`, then use
 `helmraiser retry <run>`. This can be a sandbox startup race, not an application
 defect.
-See [Isolation](../../README.md#isolation),
-[Trying commands in the sandbox](../../README.md#trying-commands-in-the-sandbox),
-[Monitoring](../../README.md#monitoring) and
-[Retrying a failed run](../../README.md#retrying-a-failed-run).
+See [Isolation](../../docs/reference.md#isolation),
+[Trying commands in the sandbox](../../docs/reference.md#trying-commands-in-the-sandbox),
+[Monitoring](../../docs/reference.md#monitoring) and
+[Retrying a failed run](../../docs/reference.md#retrying-a-failed-run).
 
 ## 10. Check the small CLI/environment traps
 
 - Task `setup:` **replaces**, rather than extends, project setup. Preserve required
   environment preparation or later gates lose their dependencies.
-  See [`project.toml`](../../README.md#projecttoml).
+  See [`project.toml`](../../docs/reference.md#projecttoml).
 - `helmraiser show <ref> [--json]` and `helmraiser wait <ref>` both take a run ID, task ID
   or unique run prefix; for a task ID, `show` picks the task's latest run. `wait` waits
   for attention by default; use `--until end` for terminal completion.
-  See [Showing one run](../../README.md#showing-one-run) and
-  [Waiting for a run](../../README.md#waiting-for-a-run).
+  See [Showing one run](../../docs/reference.md#showing-one-run) and
+  [Waiting for a run](../../docs/reference.md#waiting-for-a-run).
 - Read the PR URL from `helmraiser show <run> --json`, field `pr_url`, rather than
   scraping human output: JSON is the machine interface.
-- Before consuming `status --json`, read [Status contract](../../README.md#status-contract).
+- Before consuming `status --json`, read [Status contract](../../docs/reference.md#status-contract).
   Count keys end in `_count`: `awaiting_count` is a count, `awaiting`
   is a list. Treating one as the other breaks monitoring.

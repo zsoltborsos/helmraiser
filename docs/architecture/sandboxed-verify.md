@@ -4,7 +4,9 @@
 owner chose option (b): project-declared services started by Helmraiser outside the
 sandbox, with verify and evidence running inside it. A later run-isolation slice also
 put setup under its own srt cache/registry policy; the S4 discussion below is retained
-as the historical design.
+as the historical design. Use the [isolation reference](../reference.md#isolation)
+for the current permissions and lifecycle; statements in the original plan below
+are not a current security contract.
 
 ## Problem
 
@@ -81,8 +83,8 @@ open:
 - `env` values reach Docker through its environment (`-e NAME`), not its argv; events
   and the summary record the names only.
 - Cleanup goes by the `helmraiser.run` label, not by name. `work` removes labelled
-  containers whose run is terminal, awaiting approval or not in the ledger; `doctor`
-  lists them.
+  containers whose run this ledger knows and is terminal or awaiting approval;
+  containers unknown to this ledger are left alone. `doctor` lists orphans.
 - The bootstrap waits for each relay from `/proc/net/tcp`, runs the step's own
   `/bin/bash -o pipefail -c <run>`, stops the relays and keeps the step's status; it
   fails the step with 125 when `socat` or srt's authenticated proxy is missing or a

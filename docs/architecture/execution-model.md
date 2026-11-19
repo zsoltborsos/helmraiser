@@ -9,11 +9,11 @@ helmraiser work
   ├─ reconcile non-terminal ledger runs whose worker lock is missing or dead
   └─ until empty or paused:
        first, a run handed back to the worker (status resuming), oldest first, one
-       run per project: GovernedRun.resume(run).run() from the run's stage
+       run per project by default: GovernedRun.resume(run).run() from the run's stage
        otherwise the next queued task (priority, then queue time):
        subscription stop_at ok? (else skip it)  isolation available? (else refuse)
-       one run per project: a task whose project has a run that is not terminal
-       (awaiting_approval included) is held; tasks of other projects run
+       project capacity: nonterminal runs (awaiting_approval included) use slots;
+       default 1; higher limits require disjoint paths and independent dependencies
        GovernedRun(task snapshot).run()
          claim       task lock (project state.db), before recording the run
          record      run rows in the central ledger and project state.db
@@ -45,8 +45,10 @@ helmraiser work
          close       ledger, summary.md, status.json
 ```
 
-With process isolation, reads are allowed except for the built-in `~/.ssh`, `~/.gnupg`,
-and `~/.aws` denials and any `[sandbox] deny_read` entries in project.toml. Relative
+With process isolation, reads are broadly allowed except built-in credential/data
+location denials, configured `isolation.deny_read`, project `[sandbox] deny_read`
+entries and optional other-project filtering. See the complete
+[isolation reference](../reference.md#isolation) for boundaries and pi exceptions. Relative
 project entries are denied beneath both the primary checkout and the run worktree;
 absolute and `~` entries are denied as specified. The effective policy is recorded in
 `srt-settings.json` in the run directory. Setup instead uses
@@ -69,10 +71,13 @@ With no commits and a clean worktree (or a `setup:` failure even with setup debr
 either retry form resumes at `start` in the same worktree: setup unless its latest attempt
 passed with the same command, a missing plan only when needed, then normal implementation
 and gates.
-Merge and PR approvals
-automatically rebase the run branch when its captured base has moved; a conflicting
-rebase is refused without landing. Parked runs should therefore be approved in dispatch
-order. `helmraiser reject <run>` removes the worktree and its creation metadata, keeps the
+For unpublished work, merge and PR approvals automatically rebase the run branch
+when its captured base has moved; a conflicting rebase is refused without landing.
+This automatic approval-time rebase does not re-run verification. Use `rework --rebase`
+to integrate a moved base and run the governed gates again. Existing published PRs
+are never rebased by approval: `rework --rebase` instead merges the base into the
+published history, then verifies and reviews before a non-force update of the same PR.
+Parked runs should therefore be approved in dispatch order. `helmraiser reject <run>` removes the worktree and its creation metadata, keeps the
 branch, and marks the run failed.
 
 ## Failure handling inside a run
@@ -113,7 +118,7 @@ branch, and marks the run failed.
 | Location | `$HELMRAISER_DATA_DIR/helmraiser.db` (default `~/.helmraiser`) | `<repo>/.helmraiser/state.db` |
 | Owner | `ledger/db.py` (`Ledger`) | `storage/state.py` (`StateManager`) |
 | Holds | tasks (with enqueue snapshot), runs, run events, iterations, evidence, approvals, queue pause, provider holds and cap switch | run status mirror, per-task locks, attempt-scoped process leases, abort requests |
-| Statuses | `starting, running, verifying, reviewing, awaiting_approval, landed, failed, aborting, aborted` | `queued, starting, running, succeeded, failed, aborting, aborted` |
+| Statuses | `starting, running, verifying, reviewing, awaiting_approval, resuming, landed, failed, aborting, aborted` | `queued, starting, running, succeeded, failed, aborting, aborted` |
 | Read by | every CLI command, `status.json` | `abort`, `ExecutionEngine` lease publishing |
 
 The ledger is the source of truth. A fresh run first claims its task in project state;
@@ -180,8 +185,9 @@ argument and quoting can push it past srt's argv limit; the file is written when
 the session is spawned, so a dry run builds the argv without creating the run
 directory. The engine uses a 16 MiB stream line limit, because `turn_end` records
 exceed asyncio's 64 KiB default. Under process isolation, pi can write to the worktree, the run's
-`sessions/` directory, `/tmp`, the primary checkout's Git common directory (except
-`hooks/` and `config`), and the constrained `~/.pi/agent` root. The rest of the run
+`sessions/` directory, `/tmp`, restricted parts of the primary checkout's Git common
+directory (its branch ref directory, objects and worktree administration; not hooks or
+config), and the constrained `~/.pi/agent` root. The rest of the run
 directory is not writable from the sandbox.
 
 With the global `pi_rpc_implement` flag enabled (default `false`), only implement-stage

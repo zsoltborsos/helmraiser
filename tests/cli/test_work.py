@@ -966,8 +966,10 @@ class TestOnce:
 
 class TestEvidenceEndToEnd:
     def test_evidence_step_and_review_session_with_fake_pi(
-        self, tmp_project: Path, data_dir: Path, fake_pi: FakePi
+        self, tmp_project: Path, data_dir: Path, fake_pi: FakePi, cli_env: dict
     ):
+        # Isolate evidence collection and one review session from automatic feedback.
+        cli_env["review_feedback_rounds"] = 0
         path = tmp_project / "topics" / "fix-widget.md"
         path.parent.mkdir(exist_ok=True)
         path.write_text(

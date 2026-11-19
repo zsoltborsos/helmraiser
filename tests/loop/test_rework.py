@@ -229,10 +229,11 @@ async def test_rework_preserves_plan_approval_distinction(
     assert not rework_adapter.calls_for("plan")
 
 
-def test_rework_prompt_default_review_feedback_unchanged():
+def test_default_review_feedback_requires_every_finding():
     assert review_feedback_prompt([]) == (
-        "The independent review found severe issues. Fix every severe finding below, add a "
+        "The independent review found issues. Fix every finding below, add a "
         "regression test for each where feasible, stay within the task's scope, and commit the fix."
-        "\n\n## Severe findings"
     )
-    assert "Minor findings (optional)" in review_feedback_prompt([{"severity": "minor"}])
+    prompt = review_feedback_prompt([{"severity": "minor"}])
+    assert "## Minor findings" in prompt and "optional" not in prompt
+    assert "## Severe findings" not in prompt

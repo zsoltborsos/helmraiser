@@ -7,12 +7,44 @@ import pytest
 
 from helmraiser.ledger.db import Ledger
 from helmraiser.loop import runner
+from helmraiser.loop.prompts import review_feedback_prompt
 from helmraiser.loop.report import build_report, render_report
 from helmraiser.pi.protocol import Usage
 from tests.loop.test_evidence_review_merge import verdict_text
 from tests.mocks.scripted_pi_adapter import PiScript, ScriptedPiAdapter
 
 SEVERE = [{"severity": "severe", "file": "done.txt", "line": 1, "note": "race remains"}]
+MINOR = [{"severity": "minor", "file": "done.txt", "line": 2, "note": "clarify output"}]
+
+FEEDBACK_OPENING = (
+    "The independent review found issues. Fix every finding below, add a regression test "
+    "for each where feasible, stay within the task's scope, and commit the fix."
+)
+
+
+@pytest.mark.parametrize(
+    "findings,sections",
+    [
+        (SEVERE, "\n\n## Severe findings\n- done.txt:1: race remains"),
+        (MINOR, "\n\n## Minor findings\n- done.txt:2: clarify output"),
+        (
+            MINOR + SEVERE,
+            "\n\n## Severe findings\n- done.txt:1: race remains"
+            "\n\n## Minor findings\n- done.txt:2: clarify output",
+        ),
+    ],
+    ids=["severe", "minor", "mixed"],
+)
+def test_review_feedback_prompt_requires_every_finding(findings, sections):
+    prompt = review_feedback_prompt(findings)
+    assert prompt == FEEDBACK_OPENING + sections
+    assert ("## Severe findings" in prompt) == (SEVERE[0] in findings)
+    assert ("## Minor findings" in prompt) == (MINOR[0] in findings)
+    assert "optional" not in prompt
+
+
+def test_review_feedback_prompt_without_findings():
+    assert review_feedback_prompt([]) == FEEDBACK_OPENING
 
 
 async def test_severe_review_gets_fix_round_and_second_review(

@@ -267,12 +267,12 @@ def review_feedback_prompt(findings: list[dict[str, Any]], *, rework: bool = Fal
             "Address every review finding below, add regression tests where feasible, "
             "stay within the task's scope, and commit the fix."
             if rework
-            else "The independent review found severe issues. Fix every severe finding below, add a "
+            else "The independent review found issues. Fix every finding below, add a "
             "regression test for each where feasible, stay within the task's scope, and commit the fix."
         ),
-        "",
-        "## Severe findings",
     ]
+    if severe or rework:
+        lines += ["", "## Severe findings"]
     if rework and not findings:
         lines.append("No reviewer findings were recorded; address the approver's note.")
     for finding in severe:
@@ -281,7 +281,7 @@ def review_feedback_prompt(findings: list[dict[str, Any]], *, rework: bool = Fal
             f"{finding.get('note', '')}"
         )
     if minor:
-        lines += ["", "## Minor findings" if rework else "## Minor findings (optional)"]
+        lines += ["", "## Minor findings"]
         for finding in minor:
             lines.append(
                 f"- {finding.get('file', '?')}:{finding.get('line', '?')}: "

@@ -980,7 +980,7 @@ def test_same_project_lens_requests_never_overlap(tmp_path, monkeypatch):
         watch=True,
         poll_s=1,
         max_parallel=2,
-        scout_config=config_for(project),
+        scout_config=config_for(project, enabled=True),
         spawn_scout=harness.spawn_scout,
         scope=ProjectScope.of(),
     )

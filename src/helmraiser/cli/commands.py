@@ -1172,7 +1172,7 @@ def _child_argv(project: str, *, data_dir: Path, no_caps: bool) -> list[str]:
 
 
 def _scout_child_argv(
-    project: str, *, data_dir: Path, scout_id: str, request_id: int | None
+    project: str, *, data_dir: Path, scout_id: str, request_id: int | None, lens: str = "state"
 ) -> list[str]:
     """One supervised scout using the worker's current code snapshot."""
     argv = [
@@ -1189,6 +1189,10 @@ def _scout_child_argv(
     ]
     if request_id is not None:
         argv += ["--request-id", str(request_id)]
+    else:
+        argv += ["--automatic"]
+        if lens != "state":
+            argv += ["--lens", lens]
     return argv
 
 
@@ -1540,10 +1544,12 @@ def _supervise(
         return _spawn_child(argv, output)
 
     def spawn_scout(
-        project: str, output: Path, scout_id: str, request_id: int | None
+        project: str, output: Path, scout_id: str, request_id: int | None, lens: str = "state"
     ) -> subprocess.Popen[bytes]:
         return _spawn_child(
-            _scout_child_argv(project, data_dir=base, scout_id=scout_id, request_id=request_id),
+            _scout_child_argv(
+                project, data_dir=base, scout_id=scout_id, request_id=request_id, lens=lens
+            ),
             output,
         )
 

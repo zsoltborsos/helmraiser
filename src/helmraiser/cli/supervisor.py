@@ -144,7 +144,7 @@ class AdoptedProcess:
 # (project, file for the child's stdout) → the started child
 Spawn = Callable[[str, Path], ChildProcess]
 # (project, stdout file, assigned scout id, optional request id) → child
-ScoutSpawn = Callable[[str, Path, str, int | None], ChildProcess]
+ScoutSpawn = Callable[[str, Path, str, int | None, str], ChildProcess]
 # a queued task row → (JSON fields, human text) when ``work`` would skip it
 Skip = Callable[[dict[str, Any]], tuple[dict[str, Any], str] | None]
 # (the new code, announce called just before the exec) → why the process could not be
@@ -707,6 +707,7 @@ class Supervisor:
                     self.wall_clock(),
                     refresh=False,
                     ignore_enabled_and_cooldown=True,
+                    lens=request["lens"],
                 )
             except ScoutError:
                 continue
@@ -715,7 +716,22 @@ class Supervisor:
                 continue
             if self._start_scout(project, int(request["id"])):
                 spawned += 1
+        from helmraiser.loop.scout import scout_due_at
+        from helmraiser.loop.scout_lenses import scout_lens_settings
+
+        settings = scout_lens_settings(config, self.ledger)
+        candidates = []
         for repo in configured_focus_projects(config):
+            for lens, values in settings.items():
+                if not values["auto"]:
+                    continue
+                try:
+                    due = scout_due_at(repo, self.ledger, config, lens=lens)
+                    candidates.append((due, str(repo), lens))
+                except Exception as exc:
+                    self._project_error(str(repo), "scout", exc)
+        for _, project, lens in sorted(candidates):
+            repo = Path(project)
             if not self._may_start():
                 break
             project = str(repo)
@@ -731,13 +747,15 @@ class Supervisor:
                     config,
                     self.wall_clock(),
                     refresh=False,
+                    lens=lens,
+                    automatic=True,
                 )
             except ScoutError:
                 continue
             except Exception as exc:
                 self._project_error(project, "scout", exc)
                 continue
-            if self._start_scout(project, None):
+            if self._start_scout(project, None, lens):
                 spawned += 1
         return spawned
 
@@ -805,17 +823,17 @@ class Supervisor:
         self._publish()
         return True
 
-    def _start_scout(self, project: str, request_id: int | None) -> bool:
+    def _start_scout(self, project: str, request_id: int | None, lens: str = "state") -> bool:
         assert self.spawn_scout is not None
         request = self.ledger.get_scout_request(request_id) if request_id is not None else None
-        lens = request["lens"] if request else "state"
+        lens = request["lens"] if request else lens
         scout_id = str(uuid.uuid4())
         # The child consumes the request atomically with its scout record. Until
         # then it stays pending, including if this worker dies before spawning.
         output = self.data_dir / "worker-children" / f"{uuid.uuid4().hex}.jsonl"
         try:
             output.parent.mkdir(parents=True, exist_ok=True)
-            process = self.spawn_scout(project, output, scout_id, request_id)
+            process = self.spawn_scout(project, output, scout_id, request_id, lens)
         except Exception as exc:
             output.unlink(missing_ok=True)
             self._project_error(project, "scout", exc)

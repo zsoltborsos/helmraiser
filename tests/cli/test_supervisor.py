@@ -219,7 +219,7 @@ class Harness:
         return child
 
     def spawn_scout(
-        self, project: str, output: Path, scout_id: str, request_id: int | None
+        self, project: str, output: Path, scout_id: str, request_id: int | None, lens: str = "state"
     ) -> FakeChild:
         """A model-free ``helmraiser scout --json`` child."""
         assert project not in [child.project for child in self.alive()]
@@ -621,8 +621,16 @@ class TestScoutSupervisor:
         refresh_flags: list[bool] = []
 
         def gate(
-            repo: Path, ledger: Ledger, config: dict[str, Any], now: float, *, refresh: bool
+            repo: Path,
+            ledger: Ledger,
+            config: dict[str, Any],
+            now: float,
+            *,
+            refresh: bool,
+            lens: str,
+            automatic: bool,
         ) -> None:
+            assert lens == "state" and automatic
             refresh_flags.append(refresh)
             if any(row["outcome"] == "succeeded" for row in ledger.list_scouts(str(repo))):
                 raise supervisor.ScoutError("already succeeded")

@@ -1,5 +1,11 @@
 """Named methods for a scout session."""
 
+import math
+from typing import Any
+
+from helmraiser.config import DEFAULT_ROUTING
+from helmraiser.ledger.db import Ledger
+
 LENSES = {
     "state": "",
     "docs": """Find documentation that disagrees with the code. Read the project's user-facing and
@@ -47,6 +53,49 @@ Verify hints: the project's full test suite, and its coverage gate if it has one
 must not drop.
 """,
 }
+
+
+def scout_lens_settings(config: dict[str, Any], ledger: Ledger) -> dict[str, Any]:
+    scout = config.get("routing", {}).get("scout", {})
+    configured = scout.get("lenses", {})
+    if not isinstance(configured, dict):
+        raise ValueError("routing.scout.lenses must be an object")
+    result = {}
+    for lens in LENSES:
+        values = configured.get(lens, {})
+        if not isinstance(values, dict):
+            raise ValueError(f"routing.scout.lenses.{lens} must be an object")
+        override = ledger.scout_lens_override(lens)
+        row = {}
+        sources = {}
+        for field in ("auto", "cooldown_hours"):
+            default = (
+                (
+                    scout.get("enabled", DEFAULT_ROUTING["scout"]["enabled"])
+                    if lens == "state"
+                    else False
+                )
+                if field == "auto"
+                else scout.get("cooldown_hours", DEFAULT_ROUTING["scout"]["cooldown_hours"])
+            )
+            source = "ledger" if field in override else "config" if field in values else "default"
+            value = override.get(field, values.get(field, default))
+            if field == "auto":
+                if not isinstance(value, bool):
+                    raise ValueError(f"{lens}.auto must be boolean")
+            elif (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                or value < 0
+                or (source != "default" and value == 0)
+            ):
+                raise ValueError(f"{lens}.cooldown_hours must be finite and positive")
+            row[field] = value
+            sources[field] = source
+        row["source"] = sources
+        result[lens] = row
+    return result
 
 
 def lens_text(name: str) -> str:

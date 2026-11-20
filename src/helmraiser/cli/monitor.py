@@ -596,11 +596,13 @@ def status(
     for scout_row in payload["scouts"]["pending"]:
         reason = scout_row["wait_reason"] or "ready"
         console.print(
-            f"Scout pending: {scout_row['project']} ({reason})", markup=False, soft_wrap=True
+            f"Scout pending: {scout_row['project']} lens={scout_row['lens']} ({reason})",
+            markup=False,
+            soft_wrap=True,
         )
     for scout_row in payload["scouts"]["running"]:
         console.print(
-            f"Scout running: {scout_row['project']} {str(scout_row['scout_id'])[:8]}",
+            f"Scout running: {scout_row['project']} {str(scout_row['scout_id'])[:8]} lens={scout_row['lens']}",
             markup=False,
             soft_wrap=True,
         )

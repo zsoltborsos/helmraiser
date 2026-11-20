@@ -229,8 +229,10 @@ class Harness:
             "scout_id": scout_id,
             "request_id": request_id,
         }
+        request = self.ledger.get_scout_request(request_id) if request_id is not None else None
         self.ledger.create_scout(
             {
+                "lens": request["lens"] if request else "state",
                 "id": scout_id,
                 "project": project,
                 "model": "p/m",

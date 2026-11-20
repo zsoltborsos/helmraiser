@@ -205,6 +205,7 @@ class Child:
     request_id: int | None = None
     start_token: str | None = None
     code_commit: str | None = None
+    lens: str = "state"
 
     def as_dict(self) -> dict[str, Any]:
         payload = {
@@ -216,6 +217,7 @@ class Child:
         }
         if self.kind == "scout":
             payload["scout_id"] = self.scout_id
+            payload["lens"] = self.lens
         return payload
 
     def restart_dict(self) -> dict[str, Any]:
@@ -232,6 +234,8 @@ class Child:
 
 def read_restart_children(data_dir: Path) -> list[Child]:
     """Inspect this process's handoff without consuming it (also used by pruning)."""
+    from helmraiser.loop.scout_lenses import LENSES
+
     record = read_record(data_dir)
     entries: Any = None
     if record is not None and record.get("pid") == os.getpid():
@@ -270,6 +274,8 @@ def read_restart_children(data_dir: Path) -> list[Child]:
                 c.project == project and (c.kind == "scout" or kind == "scout") for c in children
             )
             or kind not in ("run", "scout")
+            or not isinstance(entry.get("lens", "state"), str)
+            or entry.get("lens", "state") not in LENSES
             or not isinstance(started_at, (int, float))
             or isinstance(started_at, bool)
             or not math.isfinite(started_at)
@@ -297,6 +303,7 @@ def read_restart_children(data_dir: Path) -> list[Child]:
                 request_id=entry.get("request_id"),
                 start_token=entry.get("start_token"),
                 code_commit=entry.get("code_commit"),
+                lens=entry.get("lens", "state"),
             )
         )
         pids.add(pid)
@@ -800,6 +807,8 @@ class Supervisor:
 
     def _start_scout(self, project: str, request_id: int | None) -> bool:
         assert self.spawn_scout is not None
+        request = self.ledger.get_scout_request(request_id) if request_id is not None else None
+        lens = request["lens"] if request else "state"
         scout_id = str(uuid.uuid4())
         # The child consumes the request atomically with its scout record. Until
         # then it stays pending, including if this worker dies before spawning.
@@ -822,11 +831,12 @@ class Supervisor:
             kind="scout",
             scout_id=scout_id,
             request_id=request_id,
+            lens=lens,
         )
         self.children.append(child)
         self._say(
             {"scout_started": child.as_dict()},
-            f"scout started {project} (pid {process.pid})",
+            f"scout started {project} lens={lens} (pid {process.pid})",
         )
         self._publish()
         return True
@@ -1022,7 +1032,7 @@ class Supervisor:
         }
         self._say(
             {"scout_finished": finished},
-            f"scout finished {child.project} (pid {child.process.pid}, exit {exit_code}, "
+            f"scout finished {child.project} lens={child.lens} (pid {child.process.pid}, exit {exit_code}, "
             f"{finished['outcome'] or 'no outcome'}): {len(drafts)} draft(s)",
         )
         if drafts:
@@ -1051,7 +1061,7 @@ class Supervisor:
             report = RunDir(child.scout_id, self.data_dir).create().path / "scout.md"
             if not report.exists():
                 report.write_text(
-                    f"# Scout {child.scout_id}\n\n## Failure\n\n{error}\n",
+                    f"# Scout {child.scout_id}\n\nLens: {child.lens}\n\n## Failure\n\n{error}\n",
                     encoding="utf-8",
                 )
             if scout is None:
@@ -1063,6 +1073,7 @@ class Supervisor:
                             "project": child.project,
                             "model": str(scout_config.get("model") or "unknown"),
                             "request_id": child.request_id,
+                            "lens": child.lens,
                             "started_at": child.started_at,
                             "ended_at": self.wall_clock(),
                             "outcome": "failed",

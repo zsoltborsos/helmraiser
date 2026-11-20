@@ -188,6 +188,7 @@ def build_scout_status(
         pending.append(
             {
                 "project": project,
+                "lens": request["lens"],
                 "requested_at": _iso_timestamp(float(request["requested_at"])),
                 "wait_reason": reason,
             }
@@ -197,6 +198,7 @@ def build_scout_status(
         {
             "project": str(Path(str(row["project"])).expanduser().resolve()),
             "scout_id": str(row["id"]),
+            "lens": row["lens"],
             "started_at": _iso_timestamp(float(row["started_at"])),
         }
         for row in ledger_running
@@ -209,6 +211,7 @@ def build_scout_status(
             {
                 "project": str(Path(str(child["project"])).expanduser().resolve()),
                 "scout_id": scout_id,
+                "lens": child.get("lens", "state"),
                 "started_at": _iso_timestamp(float(child["started_at"])),
             }
         )
@@ -224,6 +227,7 @@ def build_scout_status(
             {
                 "project": str(Path(str(row["project"])).expanduser().resolve()),
                 "scout_id": str(row["id"]),
+                "lens": row["lens"],
                 "ended_at": _iso_timestamp(float(ended_at)),
                 "ok": row["outcome"] == "succeeded",
                 "drafts": len(row["drafts_written"]),

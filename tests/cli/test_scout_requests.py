@@ -433,6 +433,7 @@ def test_pending_status_wait_reasons_retain_request(
         {
             "project": str(project.resolve()),
             "requested_at": "1970-01-01T00:00:10+00:00",
+            "lens": "state",
             "wait_reason": expected,
         }
     ]
@@ -871,7 +872,7 @@ def test_status_human_lines_and_help(tmp_path: Path, monkeypatch: pytest.MonkeyP
 
     result = runner.invoke(app, ["status", "--data-dir", str(data_dir)])
     assert result.exit_code == 0, result.output
-    assert f"Scout pending: {project.resolve()} (ready)" in result.output
+    assert f"Scout pending: {project.resolve()} lens=state (ready)" in result.output
     assert f"Scout running: {(tmp_path / 'other').resolve()} 12345678" in result.output
     assert runner.invoke(app, ["drafts", "request", "--help"]).exit_code == 0
     help_text = runner.invoke(app, ["scout", "--help"]).output

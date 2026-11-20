@@ -55,7 +55,13 @@ must not drop.
 }
 
 
-def scout_lens_settings(config: dict[str, Any], ledger: Ledger) -> dict[str, Any]:
+def scout_lens_settings(
+    config: dict[str, Any],
+    ledger: Ledger,
+    *,
+    overrides: dict[str, dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Resolve settings, optionally previewing replacement overrides without writing."""
     scout = config.get("routing", {}).get("scout", {})
     configured = scout.get("lenses", {})
     if not isinstance(configured, dict):
@@ -65,7 +71,11 @@ def scout_lens_settings(config: dict[str, Any], ledger: Ledger) -> dict[str, Any
         values = configured.get(lens, {})
         if not isinstance(values, dict):
             raise ValueError(f"routing.scout.lenses.{lens} must be an object")
-        override = ledger.scout_lens_override(lens)
+        override = (
+            overrides[lens]
+            if overrides is not None and lens in overrides
+            else ledger.scout_lens_override(lens)
+        )
         row = {}
         sources = {}
         for field in ("auto", "cooldown_hours"):

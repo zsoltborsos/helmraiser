@@ -68,15 +68,25 @@ def _settings(
         with Ledger(base / "helmraiser.db") as ledger:
             if lens is not None:
                 lens_text(lens)
+                if auto not in (None, "on", "off"):
+                    raise ValueError("auto must be on or off")
+                prospective = {} if reset else ledger.scout_lens_override(lens)
+                if auto is not None:
+                    prospective["auto"] = auto == "on"
+                if cooldown is not None:
+                    prospective["cooldown_hours"] = cooldown
+                # Resolve every lens before writing: even unrelated invalid config
+                # must not turn a rejected command into a persistent change.
+                settings = scout_lens_settings(config, ledger, overrides={lens: prospective})
                 if reset:
                     ledger.reset_scout_lens_override(lens)
                 else:
-                    if auto not in (None, "on", "off"):
-                        raise ValueError("auto must be on or off")
                     ledger.set_scout_lens_override(
                         lens, auto=None if auto is None else auto == "on", cooldown_hours=cooldown
                     )
-            payload = {"lenses": scout_lens_settings(config, ledger)}
+            else:
+                settings = scout_lens_settings(config, ledger)
+            payload = {"lenses": settings}
     except ValueError as exc:
         _fail(str(exc), as_json=as_json, code=EXIT_VALIDATION)
     if as_json:

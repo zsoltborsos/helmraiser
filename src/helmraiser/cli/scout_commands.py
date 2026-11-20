@@ -155,7 +155,7 @@ def drafts_request(
     from helmraiser.loop.scout_lenses import lens_text
 
     try:
-        lens_text(lens or "state")
+        lens_text("state" if lens is None else lens)
         roots = list(dict.fromkeys(_git_root(path) for path in repo))
         base = data_dir.expanduser() if data_dir is not None else default_data_dir()
         if cancel:
@@ -233,7 +233,7 @@ def scout(
     from helmraiser.loop.scout_lenses import lens_text
 
     try:
-        lens_text(lens or "state")
+        lens_text("state" if lens is None else lens)
     except ValueError as exc:
         _fail(str(exc), as_json=as_json, code=EXIT_VALIDATION)
     try:
@@ -271,7 +271,11 @@ def scout(
                 # their scout record. A changed safety gate must leave them there.
                 if request_id is not None:
                     if as_json:
-                        typer.echo(json.dumps({"error": str(exc), "scout_waiting": True}))
+                        typer.echo(
+                            json.dumps(
+                                {"error": str(exc), "scout_waiting": True, "lens": lens or "state"}
+                            )
+                        )
                     else:
                         typer.echo(f"Error: {exc}")
                     raise typer.Exit(code=EXIT_ERROR) from None
@@ -294,7 +298,9 @@ def scout(
     except ScoutRequestUnavailable as exc:
         # A cancellation, competing child, or safety gate won the race; no model was called.
         if as_json:
-            typer.echo(json.dumps({"error": str(exc), "scout_waiting": True}))
+            typer.echo(
+                json.dumps({"error": str(exc), "scout_waiting": True, "lens": lens or "state"})
+            )
         else:
             typer.echo(f"Error: {exc}")
         raise typer.Exit(code=EXIT_ERROR) from None

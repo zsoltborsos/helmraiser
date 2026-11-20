@@ -239,6 +239,7 @@ def test_cli_claim_safety_race_before_model(
                 )
             ),
             "scout_waiting": True,
+            "lens": "state",
         }
         assert ledger.list_scouts() == []
         assert ledger.list_scout_requests() == [request]
@@ -449,7 +450,7 @@ def test_requested_supervisor_runs_oldest_when_disabled_and_links_failure(
     first, second = tmp_path / "first", tmp_path / "second"
     first.mkdir()
     second.mkdir()
-    ledger.request_scouts([str(first)], requested_at=1.0)
+    ledger.request_scouts([str(first)], requested_at=1.0, lens="docs")
     ledger.request_scouts([str(second)], requested_at=2.0)
     harness = Harness(ledger)
     harness.scout_fail.add(str(first))
@@ -481,6 +482,7 @@ def test_requested_supervisor_runs_oldest_when_disabled_and_links_failure(
     for request in history:
         scout = ledger.get_scout(request["scout_id"])
         assert scout["request_id"] == request["id"]
+        assert scout["lens"] == request["lens"]
     assert ledger.get_scout(history[0]["scout_id"])["outcome"] == "failed"
     assert any(seen)
 
@@ -530,7 +532,7 @@ def test_child_safety_gate_race_keeps_request_pending_without_failed_scout(
     )
 
     assert result.exit_code == 1
-    assert json.loads(result.output) == {"error": message, "scout_waiting": True}
+    assert json.loads(result.output) == {"error": message, "scout_waiting": True, "lens": "state"}
     pending = ledger.list_scout_requests()[0]
     assert pending["id"] == request["id"]
     assert pending["requested_at"] == 7.0
@@ -733,6 +735,7 @@ def test_late_child_cannot_run_consumed_or_cancelled_request(
     assert json.loads(result.output) == {
         "error": "scout request is no longer pending",
         "scout_waiting": True,
+        "lens": "state",
     }
     assert ledger.list_scout_requests() == []
     assert ledger.get_scout("late-child") is None
@@ -745,7 +748,7 @@ def test_child_failure_before_scout_record_consumes_request_with_recent_failure(
     data_dir = tmp_path / "data"
     ledger = Ledger(data_dir / "helmraiser.db")
     project = str(tmp_path / "repo")
-    ledger.request_scouts([project], requested_at=7.0)
+    ledger.request_scouts([project], requested_at=7.0, lens="docs")
     request = ledger.list_scout_requests()[0]
     harness = Harness(ledger)
     config = config_for(Path(project))
@@ -781,6 +784,7 @@ def test_child_failure_before_scout_record_consumes_request_with_recent_failure(
         40.0,
         kind="scout",
         scout_id="failed-start",
+        lens="docs",
         request_id=request["id"],
     )
     instance._finish_scout(child, 1)
@@ -789,9 +793,12 @@ def test_child_failure_before_scout_record_consumes_request_with_recent_failure(
     scout = ledger.get_scout("failed-start")
     assert scout["request_id"] == request["id"]
     assert scout["outcome"] == "failed"
+    assert scout["lens"] == "docs"
     recent = build_scout_status(ledger, config, 50.0, {})["recent"]
     assert len(recent) == 1
     assert recent[0]["ok"] is False
+    assert recent[0]["lens"] == "docs"
+    assert "Lens: docs" in Path(recent[0]["report"]).read_text()
     assert recent[0]["error"] == "adapter unavailable"
     assert "adapter unavailable" in Path(recent[0]["report"]).read_text()
 
@@ -841,6 +848,7 @@ def test_scout_status_running_recent_shape_and_cutoff(
     assert payload["recent"][0] == {
         "project": str(project.resolve()),
         "scout_id": "new",
+        "lens": "state",
         "ended_at": "1970-01-03T07:33:10+00:00",
         "ok": False,
         "drafts": 2,
@@ -877,3 +885,108 @@ def test_status_human_lines_and_help(tmp_path: Path, monkeypatch: pytest.MonkeyP
     assert runner.invoke(app, ["drafts", "request", "--help"]).exit_code == 0
     help_text = runner.invoke(app, ["scout", "--help"]).output
     assert "queue pause" in help_text
+
+
+@pytest.mark.parametrize("command", [["scout"], ["drafts", "request"]])
+@pytest.mark.parametrize("json_mode", [False, True])
+def test_unknown_lens(command, json_mode, tmp_project):
+    result = runner.invoke(
+        app, [*command, str(tmp_project), "--lens", "bogus", *(["--json"] if json_mode else [])]
+    )
+    assert result.exit_code == 2
+    assert "state, docs, tests" in result.output
+
+
+def test_request_lenses_and_cancellation(tmp_project, tmp_path, monkeypatch):
+    monkeypatch.setattr(scout_commands, "load_config", lambda: config_for(tmp_project))
+    for lens in ["state", "docs", "tests"]:
+        result = invoke_request(tmp_path, str(tmp_project), "--lens", lens, "--json")
+        assert result.exit_code == 0
+        assert json.loads(result.output)["requested"] == [str(tmp_project)]
+    result = invoke_request(tmp_path, str(tmp_project), "--lens", "docs")
+    assert result.exit_code == 0
+    assert "already pending" in result.output
+    assert invoke_request(tmp_path, str(tmp_project), "--cancel", "--lens", "state").exit_code == 0
+    ledger = Ledger(tmp_path / "helmraiser.db")
+    assert [r["lens"] for r in ledger.list_scout_requests()] == ["docs", "tests"]
+    assert invoke_request(tmp_path, str(tmp_project), "--cancel").exit_code == 0
+    assert ledger.list_scout_requests() == []
+
+
+@pytest.mark.parametrize("lens", ["docs", "tests"])
+def test_child_resolves_requested_lens(tmp_project, tmp_path, monkeypatch, lens):
+    from tests.mocks.scripted_pi_adapter import PiScript, ScriptedPiAdapter
+
+    config = config_for(tmp_project)
+    monkeypatch.setattr(scout_commands, "load_config", lambda: config)
+    monkeypatch.setattr(scout_module, "_logbook_brief", lambda repo: None)
+    adapter = ScriptedPiAdapter({"scout": PiScript(final_text="[]")})
+    monkeypatch.setattr(scout_commands, "get_scout_adapter", lambda *args: adapter)
+    ledger = Ledger(tmp_path / "helmraiser.db")
+    ledger.request_scouts([tmp_project], lens=lens)
+    request = ledger.list_scout_requests()[0]
+    result = runner.invoke(
+        app,
+        [
+            "scout",
+            str(tmp_project),
+            "--request-id",
+            str(request["id"]),
+            "--data-dir",
+            str(tmp_path),
+            "--force",
+            "--json",
+        ],
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0
+    assert json.loads(result.output)["lens"] == lens
+    assert f"## Lens: {lens}" in adapter.calls[0].system_prompt_path.read_text()
+    assert ledger.get_scout_request(request["id"])["started_at"] is not None
+
+
+@pytest.mark.parametrize("lens", [None, "docs"])
+def test_child_only_running_lens_and_legacy_fallback(tmp_path, lens):
+    ledger = Ledger(tmp_path / "ledger.db")
+    child = {"kind": "scout", "scout_id": "child", "project": "/one", "started_at": 10}
+    if lens is not None:
+        child["lens"] = lens
+    payload = build_scout_status(ledger, config_for(), 20, {"children": [child]})
+    assert payload["running"] == [
+        {
+            "scout_id": "child",
+            "project": "/one",
+            "started_at": "1970-01-01T00:00:10+00:00",
+            "lens": lens or "state",
+        },
+    ]
+
+
+def test_same_project_lens_requests_never_overlap(tmp_path, monkeypatch):
+    data_dir = tmp_path / "data"
+    data_dir.mkdir()
+    project = tmp_path / "project"
+    project.mkdir()
+    ledger = Ledger(data_dir / "helmraiser.db")
+    ledger.request_scouts([project], lens="docs", requested_at=1)
+    ledger.request_scouts([project], lens="tests", requested_at=2)
+    harness = Harness(ledger)
+    harness.hooks[20] = lambda: (data_dir / "worker.stop").write_text("stop\n")
+    monkeypatch.setattr(supervisor, "scout_gate", lambda *args, **kwargs: None)
+    supervise(
+        ledger,
+        data_dir,
+        harness,
+        watch=True,
+        poll_s=1,
+        max_parallel=2,
+        scout_config=config_for(project),
+        spawn_scout=harness.spawn_scout,
+        scope=ProjectScope.of(),
+    )
+    # Harness.spawn_scout itself asserts there is no live child for the project.
+    assert {r["lens"] for r in ledger.list_scouts()} == {"docs", "tests", "state"}
+    for request in ledger.list_scout_requests(pending_only=False):
+        assert ledger.get_scout(request["scout_id"])["lens"] == request["lens"]
+    assert all(r["lens"] == "state" for r in ledger.list_scouts() if r["request_id"] is None)
+    assert ledger.list_scout_requests() == []

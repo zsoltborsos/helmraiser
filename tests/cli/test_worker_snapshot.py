@@ -197,6 +197,7 @@ def test_adopts_before_startup_reconcile_and_protects_snapshots(
             42.0,
             kind=name,
             scout_id="scout-id" if name == "scout" else None,
+            lens="docs" if name == "scout" else "state",
             start_token="token",
             code_commit="child-old",
         )

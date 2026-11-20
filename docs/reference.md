@@ -237,7 +237,26 @@ Every command takes `--json` and `--data-dir` (default `$HELMRAISER_DATA_DIR`, e
 
 ## Scout drafts
 
-`helmraiser scout <repo> [--max N] [--force] [--json]` runs one read-only task-discovery
+Both `scout` and `drafts request` accept `--lens NAME` (default `state`);
+unknown names exit 2 and list the known lenses. Each session follows one method:
+
+- `state`: find useful tasks from project state and existing context.
+- `docs`: find concrete documentation claims contradicted by code, pairing document and code lines.
+- `tests`: find tests that give no real assurance and propose stronger behavioural checks.
+
+Automatic worker scouting remains `state` only. Start gates and the pending-draft
+cap remain per project, not per lens. There is one pending request per `(project, lens)`.
+Cancellation without `--lens` cancels every pending lens for each project;
+`--cancel --lens NAME` cancels only that lens. Requested scouts already bypass
+cooldown and unchanged HEAD, so another lens can be requested at the same HEAD,
+subject to the remaining gates below.
+
+Reports name the lens. Human draft and scout listings show it; `scout --json`,
+every row of `drafts --json` / `drafts list --json`, and every `status --json` row
+in `scouts.pending`, `scouts.running`, and `scouts.recent` include `lens`.
+Non-state drafts have both `scout` and `scout-<lens>` tags; state drafts are unchanged.
+
+`helmraiser scout <repo> [--lens NAME] [--max N] [--force] [--json]` runs one read-only task-discovery
 session. Without `--force`, scouting must be enabled; the repository must be a focus
 project and not paused; the global queue must not be paused; the project must have no
 queued task or non-terminal run (including one running, resuming, or awaiting approval);
@@ -247,7 +266,7 @@ subscription must have routing headroom. `--force` bypasses every start gate, in
 the global queue pause, but not output validation or the per-run cap. `--max` must be
 positive, defaults to `max_drafts_per_run`, and is capped by it.
 
-`helmraiser drafts request <repo> [<repo>…] [--json]` asks the background worker to scout
+`helmraiser drafts request <repo> [<repo>…] [--lens NAME] [--json]` asks the background worker to scout
 specific focus projects. Every argument is normalized to its git root. Validation is
 all-or-nothing: every repository must be in `routing.scout.focus_projects` and none may
 be in `paused_projects`. Repeating a pending request reports `already pending` and is
@@ -1282,7 +1301,7 @@ per command.
 | `helmraiser preflight <repo> [--run CMD]… [-- CMD…]` | Runs commands in a throwaway worktree of HEAD with the project's setup, services and the verify sandbox settings; prints each exit code, duration, output tail and hints for known sandbox failures. No ledger rows (see [Trying commands in the sandbox](#trying-commands-in-the-sandbox)) |
 | `helmraiser clean [--project PATH] [--dry-run] [--json] [--data-dir PATH]` | Removes clean superseded or old failed/aborted worktrees, keeping branches (see [Cleaning up failed runs’ worktrees](#cleaning-up-failed-runs-worktrees)) |
 | `helmraiser compare <run-a> <run-b> [--json]` / `helmraiser compare --variant-of <task> [--project P] [--json]` | Judges two runs blind, then reveals their setups (see [Comparing runs](#comparing-runs)) |
-| `helmraiser scout <repo> [--max N] [--force]` | Runs one read-only scout session and writes validated, non-ruling candidates as draft task files (see [Scout drafts](#scout-drafts)) |
+| `helmraiser scout <repo> [--lens NAME] [--max N] [--force]` | Runs one read-only scout session and writes validated, non-ruling candidates as draft task files (see [Scout drafts](#scout-drafts)) |
 | `helmraiser drafts [--project P]` / `drafts drop <task> --reason TEXT` | Lists pending scout drafts, or retains one as dropped with its reason |
 | `helmraiser drafts request <repo>…` / `drafts request --cancel <repo>…` | Requests safe worker-driven scouts for chosen focus projects, or cancels pending requests |
 | `helmraiser wait <ref>` | Blocks silently until owner attention or completion; one result object with `--json` (see [Waiting for a run](#waiting-for-a-run)) |

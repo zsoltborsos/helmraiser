@@ -1081,6 +1081,7 @@ class TestDraftCommands:
         assert result.exit_code == 0 and [row["id"] for row in rows] == ["one", "two"]
         assert all(isinstance(row["age"], int) and row["age"] >= 0 for row in rows)
         assert set(rows[0]) == {
+            "lens",
             "task_id",
             "project",
             "path",

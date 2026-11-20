@@ -18,6 +18,13 @@ and what comes next.
    installation before release. The first-task acceptance has passed real sandbox
    preflight locally without models; a paid end-to-end example run remains opt-in.
 
+## Scout follow-ups
+
+- Per-lens automatic scheduling with settings the FO widget can toggle through the CLI.
+- Lenses `guardrails`, `verification` (optional generic web research for current best practices),
+  and `architecture` (with an import-graph summary as scout input).
+- A scheduled package-health check outside the scout.
+
 ## Next
 
 1. **Decide how to roll out RPC implement sessions.** `pi_rpc_implement` is off by

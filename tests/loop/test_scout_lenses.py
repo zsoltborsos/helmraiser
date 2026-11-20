@@ -35,3 +35,59 @@ def test_unknown():
         render_scout_directives(
             scout_id="id", project="repo", worktree="tree", exclusions=(), lens="bad"
         )
+
+
+@pytest.mark.parametrize("lens", ["state", "docs", "tests"])
+@pytest.mark.parametrize("failed", [False, True])
+def test_execution(tmp_project, tmp_path, monkeypatch, lens, failed):
+    import json
+    from pathlib import Path
+
+    from helmraiser.ledger.db import Ledger
+    from helmraiser.loop.scout import draft_rows, execute_scout
+    from tests.cli.test_scout_drafts import candidate
+    from tests.cli.test_scout_requests import config_for
+    from tests.mocks.scripted_pi_adapter import PiScript, ScriptedPiAdapter
+
+    ledger = Ledger(tmp_path / "ledger.db")
+    adapter = ScriptedPiAdapter(
+        {
+            "scout": PiScript(
+                final_text=json.dumps([candidate()]),
+                ok=not failed,
+                error_message="failure" if failed else None,
+            )
+        }
+    )
+    monkeypatch.setattr("helmraiser.loop.scout._logbook_brief", lambda repo: None)
+
+    def intake(spec):
+        raise ValueError("intake intentionally unavailable")
+
+    outcome = execute_scout(
+        tmp_project,
+        ledger,
+        config_for(tmp_project),
+        tmp_path / "data",
+        adapter,
+        intake,
+        force=True,
+        lens=lens,
+    )
+    assert outcome.lens == lens
+    assert outcome.as_dict()["lens"] == lens
+    assert outcome.outcome == ("failed" if failed else "succeeded")
+    assert ledger.get_scout(outcome.scout_id)["lens"] == lens
+    assert f"Lens: {lens}" in Path(outcome.report_path).read_text()
+    request = adapter.calls_for("scout")[0]
+    directive = request.system_prompt_path.read_text()
+    if lens != "state":
+        assert directive.endswith(f"\n## Lens: {lens}\n\n" + TEXTS[lens])
+    else:
+        assert "## Lens:" not in directive
+    if not failed:
+        assert draft_rows(ledger)[0]["lens"] == lens
+        from helmraiser.task.loader import parse_frontmatter
+
+        tags = parse_frontmatter(Path(outcome.written_paths[0]).read_text())["frontmatter"]["tags"]
+        assert tags == (["scout"] if lens == "state" else ["scout", f"scout-{lens}"])

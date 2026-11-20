@@ -1,5 +1,7 @@
 # Helmraiser — Current State
 
+- Scout lenses (`state`, `docs`, `tests`) persist through per-lens requests, worker lifecycle, reports, draft tags and JSON; automatic scouting remains state.
+
 _Updated 2026-11-14._ What is built and true now. Planned and in-flight work is in
 [TASKS.md](TASKS.md).
 

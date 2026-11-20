@@ -1324,3 +1324,31 @@ def test_depends_on_combined_hold(ledger, tmp_project):
         "unmet": [{"id": "missing", "reason": "unknown", "text": "missing: unknown dependency id"}],
     }
     assert ledger.next_queued() is None
+
+
+def test_version_nine_scout_lens_migration(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    ledger = Ledger(path)
+    ledger.create_scout({"id": "old", "project": "/repo", "model": "p/m", "report_path": "/report"})
+    ledger.request_scouts(["/repo"], requested_at=12)
+    ledger.close()
+    with sqlite3.connect(path) as conn:
+        conn.execute("DROP INDEX scout_requests_pending_project")
+        conn.execute("ALTER TABLE scout_requests DROP COLUMN lens")
+        conn.execute("ALTER TABLE scouts DROP COLUMN lens")
+        conn.execute(
+            "CREATE UNIQUE INDEX scout_requests_pending_project ON scout_requests(project) WHERE started_at IS NULL"
+        )
+        conn.execute("PRAGMA user_version = 9")
+    ledger = Ledger(path)
+    assert ledger.get_scout("old")["lens"] == "state"
+    request = ledger.list_scout_requests()[0]
+    assert request["lens"] == "state"
+    assert request["requested_at"] == 12
+    assert ledger.request_scouts(["/repo"], lens="docs") == (["/repo"], [])
+    assert ledger.request_scouts(["/repo"]) == ([], ["/repo"])
+    ledger.close()
+    with Ledger(path, read_only=True) as reopened:
+        assert [r["lens"] for r in reopened.list_scout_requests()] == ["state", "docs"]

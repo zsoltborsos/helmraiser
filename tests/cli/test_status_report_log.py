@@ -1476,8 +1476,16 @@ def test_piped_status_keeps_free_text_lines_whole(
                 "errors": [{"project": "/p" * 20, "stage": "task", "error": "ValueError " * 10}],
             },
             "scouts": {
-                "pending": [{"project": "/projects/" + "s" * 80, "wait_reason": "cooldown"}],
-                "running": [{"project": "/projects/" + "r" * 80, "scout_id": "abcdef0123456789"}],
+                "pending": [
+                    {"project": "/projects/" + "s" * 80, "wait_reason": "cooldown", "lens": "state"}
+                ],
+                "running": [
+                    {
+                        "project": "/projects/" + "r" * 80,
+                        "scout_id": "abcdef0123456789",
+                        "lens": "state",
+                    }
+                ],
             },
             "resuming": [
                 {"run_id": "r-res", "task": "resume-" * 12, "stage": "verify", "held_by": None}

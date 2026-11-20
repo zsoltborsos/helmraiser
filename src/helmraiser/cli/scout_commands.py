@@ -48,6 +48,77 @@ def _fail(
     raise typer.Exit(code=code)
 
 
+settings_app = typer.Typer(help="Per-lens automatic scout settings")
+drafts_app.add_typer(settings_app, name="settings")
+
+
+def _settings(
+    lens: str | None,
+    auto: str | None,
+    cooldown: float | None,
+    reset: bool,
+    as_json: bool,
+    data_dir: Path | None,
+) -> None:
+    from helmraiser.loop.scout_lenses import lens_text, scout_lens_settings
+
+    try:
+        config = load_config()
+        base = data_dir.expanduser() if data_dir is not None else default_data_dir()
+        with Ledger(base / "helmraiser.db") as ledger:
+            if lens is not None:
+                lens_text(lens)
+                if reset:
+                    ledger.reset_scout_lens_override(lens)
+                else:
+                    if auto not in (None, "on", "off"):
+                        raise ValueError("auto must be on or off")
+                    ledger.set_scout_lens_override(
+                        lens, auto=None if auto is None else auto == "on", cooldown_hours=cooldown
+                    )
+            payload = {"lenses": scout_lens_settings(config, ledger)}
+    except ValueError as exc:
+        _fail(str(exc), as_json=as_json, code=EXIT_VALIDATION)
+    if as_json:
+        typer.echo(json.dumps(payload))
+    else:
+        for name, row in payload["lenses"].items():
+            typer.echo(
+                f"{name}: auto={row['auto']} ({row['source']['auto']}) "
+                f"cooldown_hours={row['cooldown_hours']} ({row['source']['cooldown_hours']})"
+            )
+
+
+@settings_app.callback(invoke_without_command=True)
+def drafts_settings_default(
+    ctx: typer.Context,
+    as_json: bool = typer.Option(False, "--json"),
+    data_dir: Path | None = typer.Option(None, "--data-dir"),
+) -> None:
+    if ctx.invoked_subcommand is None:
+        _settings(None, None, None, False, as_json, data_dir)
+
+
+@settings_app.command("set")
+def drafts_settings_set(
+    lens: str,
+    auto: str | None = typer.Option(None, "--auto"),
+    cooldown_hours: float | None = typer.Option(None, "--cooldown-hours"),
+    as_json: bool = typer.Option(False, "--json"),
+    data_dir: Path | None = typer.Option(None, "--data-dir"),
+) -> None:
+    _settings(lens, auto, cooldown_hours, False, as_json, data_dir)
+
+
+@settings_app.command("reset")
+def drafts_settings_reset(
+    lens: str,
+    as_json: bool = typer.Option(False, "--json"),
+    data_dir: Path | None = typer.Option(None, "--data-dir"),
+) -> None:
+    _settings(lens, None, None, True, as_json, data_dir)
+
+
 def _git_root(repo: Path) -> Path:
     try:
         result = subprocess.run(

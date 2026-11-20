@@ -142,6 +142,8 @@ def build_scout_status(
         scout_gate,
     )
 
+    from helmraiser.loop.scout_lenses import scout_lens_settings
+
     ledger_running = [row for row in ledger.list_scouts() if row["outcome"] == "running"]
     running_by_id = {str(row["id"]): row for row in ledger_running}
     scout_children = [
@@ -180,6 +182,7 @@ def build_scout_status(
                     now,
                     refresh=False,
                     ignore_enabled_and_cooldown=True,
+                    lens=request["lens"],
                 )
             except ScoutError as exc:
                 reason = exc.wait_reason
@@ -237,6 +240,7 @@ def build_scout_status(
         )
     recent.sort(key=lambda row: row["ended_at"], reverse=True)
     return {
+        "lenses": scout_lens_settings(config, ledger),
         "focus_projects": [str(path) for path in configured_focus_projects(config)],
         "paused_projects": [str(path) for path in configured_paused_projects(config)],
         "pending": pending,
@@ -348,6 +352,7 @@ def build_status(
         "updated_at": datetime.fromtimestamp(now, tz=UTC).isoformat(),
         "queued_count": len(queued),
         "drafts": dict(sorted(draft_counts.items())),
+        "drafts_counted_kinds": ["scout", "manual"],
         "queue_next": queue_next,
         "held": held,
         "never_startable": never_startable_rows(queued, config) if caps_enforced else [],

@@ -513,6 +513,7 @@ class TestStatus:
             "updated_at",
             "queued_count",
             "drafts",
+            "drafts_counted_kinds",
             "queue_next",
             "held",
             "never_startable",
@@ -546,7 +547,16 @@ class TestStatus:
         ]
         assert written["held"] == []
         assert written["failed_24h_count"] == 1 and written["spend"]["prov"]["5h"] == 1.41
+        assert written["drafts_counted_kinds"] == ["scout", "manual"]
         assert written["scouts"] == {
+            "lenses": {
+                lens: {
+                    "auto": lens == "state",
+                    "cooldown_hours": 24,
+                    "source": {"auto": "default", "cooldown_hours": "default"},
+                }
+                for lens in ("state", "docs", "tests")
+            },
             "focus_projects": [],
             "paused_projects": [],
             "pending": [],

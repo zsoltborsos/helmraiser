@@ -1090,6 +1090,7 @@ class TestDraftCommands:
             "title",
             "size",
             "source",
+            "kind",
             "age",
             "intake_status",
             "intake_error",

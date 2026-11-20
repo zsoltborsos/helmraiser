@@ -470,6 +470,7 @@ def draft_rows(
     for row in ledger.list_tasks(status="draft", project=project):
         parsed = parse_frontmatter(str(row["snapshot"]))
         frontmatter = parsed.get("frontmatter") or {}
+        source = str(frontmatter.get("source") or "")
         preparation = ledger.get_scout_draft(str(row["task_id"]))
         scout = ledger.get_scout(preparation["scout_id"]) if preparation else None
         path = Path(str(row["source_path"])).resolve()
@@ -487,7 +488,8 @@ def draft_rows(
                 "title": str(row["title"]),
                 "size": str(frontmatter.get("size") or "?"),
                 "lens": scout["lens"] if scout else "state",
-                "source": str(frontmatter.get("source") or ""),
+                "source": source,
+                "kind": "scout" if source.startswith("scout") else "manual",
                 "age": max(0, int(current - float(row["created_at"]))),
                 "intake_status": preparation["intake_status"] if preparation else "not_run",
                 "intake_error": preparation["intake_error"] if preparation else None,

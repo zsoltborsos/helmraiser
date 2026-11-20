@@ -175,10 +175,14 @@ def _format_age(seconds: int) -> str:
     return f"{seconds // 86400}d"
 
 
-def _list_drafts(project: str | None, as_json: bool, data_dir: Path | None) -> None:
+def _list_drafts(
+    project: str | None, as_json: bool, data_dir: Path | None, all_kinds: bool = False
+) -> None:
     base = data_dir.expanduser() if data_dir is not None else default_data_dir()
     project_key = str(Path(project).expanduser().resolve()) if project else None
     rows = draft_rows(Ledger(base / "helmraiser.db"), project=project_key)
+    if not all_kinds:
+        rows = [row for row in rows if row["kind"] == "scout"]
     if as_json:
         typer.echo(json.dumps(rows))
         return
@@ -190,7 +194,7 @@ def _list_drafts(project: str | None, as_json: bool, data_dir: Path | None) -> N
             intake_text += f" ({row['intake_error']})"
         typer.echo(
             f"{row['project']} {row['id']} {row['title']} size={row['size']} "
-            f"source={row['source']} lens={row['lens']} age={_format_age(row['age'])} "
+            f"kind={row['kind']} source={row['source']} lens={row['lens']} age={_format_age(row['age'])} "
             f"intake: {intake_text} preflight: {preflight_text}"
         )
         for note in row["intake_notes"]:
@@ -203,10 +207,11 @@ def drafts_default(
     project: str | None = typer.Option(None, "--project", help="Restrict to one repository"),
     as_json: bool = typer.Option(False, "--json", help="Machine-readable output"),
     data_dir: Path | None = typer.Option(None, "--data-dir", help="Override HELMRAISER_DATA_DIR"),
+    all_kinds: bool = typer.Option(False, "--all", help="Include manual drafts"),
 ) -> None:
     """List pending drafts when invoked without a subcommand."""
     if ctx.invoked_subcommand is None:
-        _list_drafts(project, as_json, data_dir)
+        _list_drafts(project, as_json, data_dir, all_kinds)
 
 
 @drafts_app.command("list")
@@ -214,9 +219,10 @@ def drafts_list(
     project: str | None = typer.Option(None, "--project", help="Restrict to one repository"),
     as_json: bool = typer.Option(False, "--json", help="Machine-readable output"),
     data_dir: Path | None = typer.Option(None, "--data-dir", help="Override HELMRAISER_DATA_DIR"),
+    all_kinds: bool = typer.Option(False, "--all", help="Include manual drafts"),
 ) -> None:
     """List pending scout drafts."""
-    _list_drafts(project, as_json, data_dir)
+    _list_drafts(project, as_json, data_dir, all_kinds)
 
 
 @drafts_app.command("request")

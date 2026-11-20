@@ -1294,6 +1294,9 @@ class TestDraftCommands:
 
 
 class _FakeLedger:
+    def scout_lens_override(self, lens):
+        return {}
+
     def __init__(
         self,
         drafts: int,

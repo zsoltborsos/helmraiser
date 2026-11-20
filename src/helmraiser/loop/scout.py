@@ -582,6 +582,24 @@ def _nonnegative_number(value: Any, name: str) -> float:
     return number
 
 
+def scout_due_at(
+    repo: Path, ledger: Ledger, config: dict[str, Any], *, lens: str = "state"
+) -> float:
+    from helmraiser.loop.scout_lenses import scout_lens_settings
+
+    cooldown = scout_lens_settings(config, ledger)[lens]["cooldown_hours"]
+    successful = [
+        row
+        for row in ledger.list_scouts(str(repo))
+        if row["outcome"] == "succeeded" and row.get("lens", "state") == lens
+    ]
+    if not successful:
+        return float("-inf")
+    latest = max(successful, key=lambda row: float(row["ended_at"] or row["started_at"]))
+    last_at = float(latest["ended_at"] or latest["started_at"])
+    return last_at + (cooldown * 3600 if latest.get("head_commit") == head_commit(repo) else 0)
+
+
 def scout_gate(
     repo: Path,
     ledger: Ledger,
@@ -590,14 +608,24 @@ def scout_gate(
     *,
     refresh: bool = True,
     ignore_enabled_and_cooldown: bool = False,
+    lens: str = "state",
+    automatic: bool = False,
 ) -> None:
     """Raise ``ScoutError`` unless a scout may start for ``repo`` now. ``refresh=False``
     reads live usage from its cache (the worker checks every tick and must not call the
     usage APIs that often); a scout itself checks again with a fresh reading. Requested
     scouts may skip only the enabled and unchanged-HEAD/cooldown checks."""
+    from helmraiser.loop.scout_lenses import lens_text, scout_lens_settings
+
+    lens_text(lens)
     scout = _routing_scout(config)
     resolved = repo.expanduser().resolve()
-    if not ignore_enabled_and_cooldown and not scout.get("enabled", False):
+    enabled = (
+        scout_lens_settings(config, ledger)[lens]["auto"]
+        if automatic
+        else scout.get("enabled", False)
+    )
+    if not ignore_enabled_and_cooldown and not enabled:
         raise ScoutError("routing.scout.enabled is false")
     if resolved in configured_paused_projects(config):
         raise ScoutError(f"project is paused for scouting: {resolved}")
@@ -625,18 +653,8 @@ def scout_gate(
             wait_reason="draft cap",
         )
     if not ignore_enabled_and_cooldown:
-        cooldown = _nonnegative_number(scout.get("cooldown_hours", 24), "cooldown_hours")
-        current_head = head_commit(resolved)
-        successful = [
-            row for row in ledger.list_scouts(str(resolved)) if row["outcome"] == "succeeded"
-        ]
-        if successful:
-            # The latest completion, not the latest start: overlapping scouts can finish out
-            # of order.
-            latest = max(successful, key=lambda row: float(row["ended_at"] or row["started_at"]))
-            last_at = float(latest["ended_at"] or latest["started_at"])
-            if latest.get("head_commit") == current_head and now - last_at < cooldown * 3600:
-                raise ScoutError("repository HEAD is unchanged and scout cooldown has not elapsed")
+        if scout_due_at(resolved, ledger, config, lens=lens) > now:
+            raise ScoutError("repository HEAD is unchanged and scout cooldown has not elapsed")
     model = str(scout.get("model") or "").strip()
     subscription = spend.provider(model)
     subscriptions = spend.subscriptions(config)
@@ -700,6 +718,7 @@ def execute_scout(
     scout_id: str | None = None,
     request_id: int | None = None,
     lens: str = "state",
+    automatic: bool = False,
 ) -> ScoutOutcome:
     """Run one scout session and persist its report, record, and accepted drafts."""
     from helmraiser.loop.scout_lenses import lens_text
@@ -715,6 +734,8 @@ def execute_scout(
             config,
             current_time,
             ignore_enabled_and_cooldown=request_id is not None,
+            lens=lens,
+            automatic=automatic,
         )
     scout_config = _routing_scout(config)
     model = ModelSpec.parse(str(scout_config.get("model")))

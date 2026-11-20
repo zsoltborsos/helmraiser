@@ -304,6 +304,7 @@ def scout(
     data_dir: Path | None = typer.Option(None, "--data-dir", help="Override HELMRAISER_DATA_DIR"),
     scout_id: str | None = typer.Option(None, "--scout-id", hidden=True),
     request_id: int | None = typer.Option(None, "--request-id", hidden=True),
+    automatic: bool = typer.Option(False, "--automatic", hidden=True),
 ) -> None:
     """Run one read-only scout session and write proposed tasks as drafts."""
     from helmraiser.loop.scout_lenses import lens_text
@@ -341,6 +342,8 @@ def scout(
                     config,
                     time.time(),
                     ignore_enabled_and_cooldown=request_id is not None,
+                    lens=lens,
+                    automatic=automatic,
                 )
             except (ScoutError, ValueError) as exc:
                 # Requests stay pending until execute_scout atomically creates
@@ -367,6 +370,7 @@ def scout(
             requested=requested,
             force=force,
             gate_checked=True,
+            automatic=automatic,
             scout_id=scout_id,
             request_id=request_id,
             lens=lens,

@@ -91,3 +91,39 @@ def test_execution(tmp_project, tmp_path, monkeypatch, lens, failed):
 
         tags = parse_frontmatter(Path(outcome.written_paths[0]).read_text())["frontmatter"]["tags"]
         assert tags == (["scout"] if lens == "state" else ["scout", f"scout-{lens}"])
+
+
+def test_settings_precedence_and_validation(tmp_path):
+    from helmraiser.ledger.db import Ledger
+    from helmraiser.loop.scout_lenses import scout_lens_settings
+
+    with Ledger(tmp_path / "ledger.db") as ledger:
+        settings = scout_lens_settings({}, ledger)
+        assert settings["state"] == {
+            "auto": True,
+            "cooldown_hours": 24,
+            "source": {"auto": "default", "cooldown_hours": "default"},
+        }
+        config = {
+            "routing": {
+                "scout": {
+                    "enabled": False,
+                    "cooldown_hours": 0,
+                    "lenses": {"docs": {"auto": True, "cooldown_hours": 12}},
+                }
+            }
+        }
+        assert scout_lens_settings(config, ledger)["state"]["cooldown_hours"] == 0
+        ledger.set_scout_lens_override("docs", auto=False)
+        row = scout_lens_settings(config, ledger)["docs"]
+        assert row == {
+            "auto": False,
+            "cooldown_hours": 12,
+            "source": {"auto": "ledger", "cooldown_hours": "config"},
+        }
+        ledger.reset_scout_lens_override("docs")
+        assert scout_lens_settings(config, ledger)["docs"]["auto"] is True
+        for value in (0, -1, float("inf"), float("nan"), True, "12"):
+            config["routing"]["scout"]["lenses"]["docs"]["cooldown_hours"] = value
+            with pytest.raises(ValueError, match="cooldown_hours"):
+                scout_lens_settings(config, ledger)

@@ -1480,3 +1480,59 @@ class TestScoutSupervisorGateHeadroomAndDrafts:
                 config,
                 now,
             )
+
+
+def test_per_lens_due_and_automatic_gates(tmp_project, monkeypatch):
+    from helmraiser.loop import scout as module
+
+    config = _gate_config(tmp_project)
+    config["routing"]["scout"]["enabled"] = False
+    ledger = _FakeLedger(
+        0,
+        scouts=[
+            {
+                "outcome": "succeeded",
+                "lens": "docs",
+                "started_at": 1,
+                "ended_at": 100,
+                "head_commit": "same",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        ledger, "scout_lens_override", lambda lens: {"auto": True} if lens == "tests" else {}
+    )
+    monkeypatch.setattr(module, "head_commit", lambda repo: "same")
+    monkeypatch.setattr(module.spend, "live_for", lambda *a, **k: {})
+    monkeypatch.setattr(module.spend, "usage", lambda *a, **k: {})
+    monkeypatch.setattr(
+        module, "calculate_headroom", lambda *a: {"openai-codex": {"has_headroom": True}}
+    )
+    assert module.scout_due_at(tmp_project, ledger, config, lens="tests") == float("-inf")
+    assert module.scout_due_at(tmp_project, ledger, config, lens="docs") == 86500
+    module.scout_gate(tmp_project, ledger, config, 101, lens="tests", automatic=True)
+    with pytest.raises(module.ScoutError):
+        module.scout_gate(tmp_project, ledger, config, 101, lens="docs", automatic=True)
+    config["routing"]["scout"]["enabled"] = True
+    module.scout_gate(tmp_project, ledger, config, 86500, lens="docs")
+    with pytest.raises(module.ScoutError, match="cooldown"):
+        module.scout_gate(tmp_project, ledger, config, 86499, lens="docs")
+
+
+def test_manual_drafts_are_only_listed_with_all(tmp_path):
+    base = tmp_path / "data"
+    ledger = Ledger(base / "helmraiser.db")
+    repo = tmp_path / "repo"
+    seed_draft(ledger, repo, id="scouted")
+    key = seed_draft(ledger, repo, id="manual")
+    row = ledger.get_task(key)
+    text = row["snapshot"].replace("source: scout ", "source: owner ")
+    path = Path(row["source_path"])
+    path.write_text(text)
+    ledger.upsert_task(parse_task(text, path, {}), text)
+    for command in (["drafts"], ["drafts", "list"]):
+        result = runner.invoke(app, [*command, "--json", "--data-dir", str(base)])
+        assert result.exit_code == 0, result.output
+        assert [(r["id"], r["kind"]) for r in json.loads(result.output)] == [("scouted", "scout")]
+        result = runner.invoke(app, [*command, "--all", "--json", "--data-dir", str(base)])
+        assert {r["kind"] for r in json.loads(result.output)} == {"scout", "manual"}

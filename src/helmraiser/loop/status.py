@@ -141,7 +141,6 @@ def build_scout_status(
         configured_paused_projects,
         scout_gate,
     )
-
     from helmraiser.loop.scout_lenses import scout_lens_settings
 
     ledger_running = [row for row in ledger.list_scouts() if row["outcome"] == "running"]

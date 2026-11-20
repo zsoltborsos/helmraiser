@@ -228,11 +228,12 @@ class Harness:
             "at": self.now,
             "scout_id": scout_id,
             "request_id": request_id,
+            "lens": lens,
         }
         request = self.ledger.get_scout_request(request_id) if request_id is not None else None
         self.ledger.create_scout(
             {
-                "lens": request["lens"] if request else "state",
+                "lens": request["lens"] if request else lens,
                 "id": scout_id,
                 "project": project,
                 "model": "p/m",
@@ -2188,3 +2189,50 @@ def test_held_pr_parent_excludes_inflight_backoff_and_stop(
             worker.backoff[str(tmp_project)] = 10
         worker._fill()
     assert calls == []
+
+
+def test_automatic_lens_order_and_disabled_lenses(ledger, data_dir, harness, tmp_path, monkeypatch):
+    from helmraiser.loop import scout
+
+    first, second = tmp_path / "a", tmp_path / "b"
+    config = TestScoutSupervisor().config(first, second)
+    config["routing"]["scout"]["enabled"] = False
+    ledger.set_scout_lens_override("docs", auto=True)
+    ledger.set_scout_lens_override("tests", auto=True)
+    due = {
+        (str(first), "docs"): 20,
+        (str(first), "tests"): 10,
+        (str(second), "docs"): 5,
+        (str(second), "tests"): 30,
+    }
+    monkeypatch.setattr(
+        scout, "scout_due_at", lambda repo, ledger, config, *, lens: due[str(repo), lens]
+    )
+    monkeypatch.setattr(supervisor, "scout_gate", lambda *a, **k: None)
+    harness.hooks[1] = lambda: (data_dir / "worker.stop").write_text("stop\n")
+    supervise(
+        ledger,
+        data_dir,
+        harness,
+        watch=True,
+        max_parallel=2,
+        scout_config=config,
+        spawn_scout=harness.spawn_scout,
+    )
+    assert [(r["project"], r["lens"]) for r in harness.scout_spawned] == [
+        (str(second), "docs"),
+        (str(first), "tests"),
+    ]
+
+
+def test_automatic_child_argv_carries_lens(tmp_path):
+    from helmraiser.cli.commands import _scout_child_argv
+
+    argv = _scout_child_argv(
+        "/repo", data_dir=tmp_path, scout_id="id", request_id=None, lens="docs"
+    )
+    assert "--automatic" in argv
+    assert argv[argv.index("--lens") + 1] == "docs"
+    argv = _scout_child_argv("/repo", data_dir=tmp_path, scout_id="id", request_id=3, lens="docs")
+    assert "--automatic" not in argv and "--lens" not in argv
+    assert argv[argv.index("--request-id") + 1] == "3"

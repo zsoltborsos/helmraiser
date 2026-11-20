@@ -345,6 +345,7 @@ def render_draft(
     repo: Path,
     scout_id: str,
     project_notes: str | None = None,
+    lens: str = "state",
 ) -> str:
     frontmatter = {
         "id": candidate.id,
@@ -356,7 +357,7 @@ def render_draft(
         "status": "draft",
         "source": f"scout {scout_id}",
         "size": candidate.size,
-        "tags": ["scout"],
+        "tags": ["scout"] + ([f"scout-{lens}"] if lens != "state" else []),
     }
     hints = candidate.verify_hints or ("Determine during intake.",)
     body = (
@@ -386,8 +387,9 @@ def render_scout_report(
     preparations: list[dict[str, Any]],
     error: str | None = None,
     raw_tail: str | None = None,
+    lens: str = "state",
 ) -> str:
-    lines = [f"# Scout {scout_id}", "", "## Candidates", ""]
+    lines = [f"# Scout {scout_id}", "", f"Lens: {lens}", "", "## Candidates", ""]
     lines.extend(f"- `{item.id}` — {item.title} ({item.size})" for item in candidates)
     if not candidates:
         lines.append("- None.")
@@ -454,6 +456,8 @@ class ScoutOutcome:
     usage: dict[str, Any]
     error: str | None = None
 
+    lens: str = "state"
+
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
 
@@ -467,6 +471,7 @@ def draft_rows(
         parsed = parse_frontmatter(str(row["snapshot"]))
         frontmatter = parsed.get("frontmatter") or {}
         preparation = ledger.get_scout_draft(str(row["task_id"]))
+        scout = ledger.get_scout(preparation["scout_id"]) if preparation else None
         path = Path(str(row["source_path"])).resolve()
         try:
             origin = origin_from_text(path.read_text(encoding="utf-8"))
@@ -481,6 +486,7 @@ def draft_rows(
                 "id": str(row["id"]),
                 "title": str(row["title"]),
                 "size": str(frontmatter.get("size") or "?"),
+                "lens": scout["lens"] if scout else "state",
                 "source": str(frontmatter.get("source") or ""),
                 "age": max(0, int(current - float(row["created_at"]))),
                 "intake_status": preparation["intake_status"] if preparation else "not_run",
@@ -693,8 +699,12 @@ def execute_scout(
     now: float | None = None,
     scout_id: str | None = None,
     request_id: int | None = None,
+    lens: str = "state",
 ) -> ScoutOutcome:
     """Run one scout session and persist its report, record, and accepted drafts."""
+    from helmraiser.loop.scout_lenses import lens_text
+
+    lens_text(lens)
     repo = repo.expanduser().resolve()
     current_time = time.time() if now is None else now
     limit = effective_scout_limit(requested, config)
@@ -717,6 +727,7 @@ def execute_scout(
             "id": scout_id,
             "project": str(repo),
             "model": model.render(),
+            "lens": lens,
             "head_commit": commit,
             "request_id": request_id,
             "report_path": str(report_path),
@@ -744,6 +755,7 @@ def execute_scout(
             project=repo,
             worktree=expected_worktree,
             exclusions=defaults.scout_exclude,
+            lens=lens,
         )
         directives_path = rundir.path / "directives-scout.md"
         directives_path.write_text(directives, encoding="utf-8")
@@ -786,7 +798,7 @@ def execute_scout(
                 seen_ids.add(candidate.id)
                 seen_titles.add(title_key)
                 continue
-            text = render_draft(candidate, repo, scout_id, project_notes)
+            text = render_draft(candidate, repo, scout_id, project_notes, lens=lens)
             spec = parse_task(text, path.resolve(), config)
             errors = validate_task(spec)
             if errors:
@@ -844,6 +856,7 @@ def execute_scout(
         report_path.write_text(
             render_scout_report(
                 scout_id=scout_id,
+                lens=lens,
                 candidates=candidates,
                 drafted=written_ids,
                 skipped=skipped,
@@ -868,6 +881,7 @@ def execute_scout(
         )
         return ScoutOutcome(
             scout_id=scout_id,
+            lens=lens,
             outcome="succeeded",
             written_task_ids=tuple(written_ids),
             written_paths=tuple(written_paths),
@@ -881,6 +895,7 @@ def execute_scout(
         report_path.write_text(
             render_scout_report(
                 scout_id=scout_id,
+                lens=lens,
                 candidates=candidates,
                 drafted=written_ids,
                 skipped=skipped,
@@ -902,6 +917,7 @@ def execute_scout(
         )
         return ScoutOutcome(
             scout_id=scout_id,
+            lens=lens,
             outcome="failed",
             written_task_ids=tuple(written_ids),
             written_paths=tuple(written_paths),

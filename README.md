@@ -227,6 +227,11 @@ in the demo's primary checkout to check the delivered result yourself.
 Bug reports and questions are welcome in [GitHub Issues](https://github.com/zsoltborsos/helmraiser/issues).
 Please report security vulnerabilities privately as described in the security policy.
 
+## History
+
+Development started on 25 February 2026 under the working name Squadron. This repository's
+history begins at the rename to Helmraiser on 14 November 2026.
+
 ## License
 
 [MIT](LICENSE).

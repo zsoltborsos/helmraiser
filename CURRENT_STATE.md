@@ -1,6 +1,6 @@
 # Helmraiser — Current State
 
-- Scout lenses (`state`, `docs`, `tests`) persist through per-lens requests, worker lifecycle, reports, draft tags and JSON; automatic scouting remains state.
+- Scout lenses have CLI/JSON settings with ledger overrides, per-project/lens automatic cadence, and scout-only draft listings by default (`--all` includes manual drafts).
 
 _Updated 2026-11-14._ What is built and true now. Planned and in-flight work is in
 [TASKS.md](TASKS.md).

@@ -244,8 +244,29 @@ unknown names exit 2 and list the known lenses. Each session follows one method:
 - `docs`: find concrete documentation claims contradicted by code, pairing document and code lines.
 - `tests`: find tests that give no real assurance and propose stronger behavioural checks.
 
-Automatic worker scouting remains `state` only. Start gates and the pending-draft
-cap remain per project, not per lens. There is one pending request per `(project, lens)`.
+Automatic worker scouting uses per-lens settings. Start gates and the pending-draft
+cap remain per project; successful history and cooldown are per project and lens.
+Requests run first, then automatic pairs oldest due first (never-scouted first;
+changed HEAD uses completion time, unchanged HEAD uses completion plus cooldown;
+ties use resolved project path then lens name). Different lenses never overlap on one project.
+
+`helmraiser drafts settings [--json]` shows all lenses.
+`helmraiser drafts settings set <lens> [--auto on|off] [--cooldown-hours N] [--json]`
+writes partial ledger overrides; N must be finite and positive.
+`helmraiser drafts settings reset <lens> [--json]` removes that lens's overrides.
+All three commands accept `--data-dir`. JSON is `{"lenses": {"state": {"auto": true,
+"cooldown_hours": 24, "source": {"auto": "default", "cooldown_hours": "default"}}, ...}}`.
+Each field resolves independently: ledger, explicit
+`routing.scout.lenses.<lens>.auto` / `.cooldown_hours` config, then default.
+The default inherits global `routing.scout.enabled` for state (false for other lenses)
+and global `cooldown_hours` for every lens. Missing globals default to true and 24.
+Sources are `ledger`, `config`, or `default`; inherited globals count as `default`.
+Legacy global zero cooldown remains valid; new per-lens cooldowns must be positive.
+
+**The legacy enabled switch is not a global automatic veto:** an explicit per-lens
+`auto` (config or ledger) can enable automation even with `routing.scout.enabled=false`.
+Use queue pause to stop all starts. Direct `scout` retains the legacy enabled check
+unless forced; requests bypass enablement and cooldown. There is one pending request per `(project, lens)`.
 Cancellation without `--lens` cancels every pending lens for each project;
 `--cancel --lens NAME` cancels only that lens. Requested scouts already bypass
 cooldown and unchanged HEAD, so another lens can be requested at the same HEAD,
@@ -261,7 +282,7 @@ session. Without `--force`, scouting must be enabled; the repository must be a f
 project and not paused; the global queue must not be paused; the project must have no
 queued task or non-terminal run (including one running, resuming, or awaiting approval);
 pending drafts must be below `max_pending_drafts`; HEAD must have changed since the
-latest successful scout or `cooldown_hours` must have elapsed; and the scout model's
+latest successful scout for the selected lens or its `cooldown_hours` must have elapsed; and the scout model's
 subscription must have routing headroom. `--force` bypasses every start gate, including
 the global queue pause, but not output validation or the per-run cap. `--max` must be
 positive, defaults to `max_drafts_per_run`, and is capped by it.
@@ -301,8 +322,10 @@ settings, a throwaway worktree, and each step's own timeout. Results are classif
 An intake failure is retained on the reviewable draft and does not stop later drafts.
 The scout report records each proposal, intake result, and preflight result.
 
-Use `helmraiser drafts [--project P] [--json]` to list project, ID, title, size, source,
-age, and the human preflight summary. JSON also includes intake status/error, proposal,
+Use `helmraiser drafts [--project P] [--all] [--json]` (or `drafts list`) to list project, ID, title, size, source,
+age, kind, and the human preflight summary. Only scout drafts are listed by default;
+`--all` includes manual drafts. JSON `kind` is `scout` when the snapshot source starts
+with `scout`, otherwise `manual`. Drop accepts either kind. JSON also includes intake status/error, proposal,
 normalized preflight steps, `task_id` (the argument `drafts drop` takes), `path` (the
 absolute ledger source path), and `origin` (the
 current file's `{kind, session}` mapping, or `null`). `helmraiser drafts drop <task>
@@ -1498,6 +1521,8 @@ The `status.json` object has these fields:
 |-------|------|---------|
 | `updated_at` | ISO-8601 string (UTC) | When the file was written |
 | `queued_count` | integer | Tasks with status `queued` |
+| `drafts_counted_kinds` | array | `["scout", "manual"]`: both kinds count toward `drafts` and safety caps |
+| `scouts.lenses` | object | Per-lens `auto`, `cooldown_hours`, and `source.auto` / `source.cooldown_hours` (`ledger`, `config`, `default`), as in drafts settings |
 | `drafts` | object | Sorted mapping of project paths to counts of tasks with status `draft`; dropped tasks are excluded |
 | `queue_next` | list | The first five queued tasks in dispatch order: `task_id`, `id`, `title`, `priority`, `project`, and `held_by`: `null`, or a hold payload. Project-run holds contain `{run_id, status, pending}` (`pending` is `plan`, `merge` or `scope` for a run awaiting approval, else `null`). Dependency holds contain `{reason: "depends_on", unmet: [{id, reason, text}]}`; combined holds retain both sets of fields |
 | `held` | list | Every held queued task: `task_id`, `id`, `title`, `project`, plus the same hold payload as `queue_next[].held_by`; dependency-only holds have no holder run fields |
@@ -1516,7 +1541,7 @@ The `status.json` object has these fields:
 | `held_providers` | object | Provider → `{until, detail}` for active provider holds; expired holds are omitted |
 | `worker` | object | The background worker: its `worker.json` record (`pid`, `started_at`, `argv`, `log`, `projects`, `exclude_projects`, `max_parallel_runs`) with `state` `running` or `exited`, or `{"state": "none"}` without a record. A running worker also has `children`: one `{pid, project, run_id, kind, started_at}` per child in flight (`kind` is `run` or `scout`; scout children also have `scout_id`; `run_id` is available for fresh runs after registration via their task lock and child PID, and for selected resumptions), and `errors`: one `{project, stage, error, since, retry_at}` per project whose work currently fails (`stage` is `reconcile`, `task`, `start`, `run` or `scout`; `since` and `retry_at` are Unix timestamps). A running worker also has `skips: [{task_id, reason}]` for all current scheduler skip reasons (invalid tasks, quota, caps and optional [Logbook holds](#logbook-optional)), not skip history. The record also carries `code` (`{commit, snapshot}`: the commit of the code snapshot the worker runs, and its directory), `restarted` (`{at, from, to}`, the last restart on new code, commit hashes) after one, and `exit` (`{at, reason, error}`) once the worker has ended: `reason` is `stopped`, `max_runs`, or `error` with `error` saying why |
 
-The `scouts` object has this stable shape:
+The `scouts` object also includes `lenses` as described above; its activity fields have this shape:
 
 ```json
 {
@@ -1535,7 +1560,8 @@ requests are oldest first. `wait_reason` is `queue paused`, `project busy`, `dra
 tick. `running` includes both ledger scouts and a newly spawned child before it creates
 its ledger row. `recent` contains requested and automatic scouts that ended during the
 last 24 hours, newest first. Human status prints one `Scout pending:` or `Scout running:`
-line per active scout and does not print recent scouts.
+line per active scout and does not print recent scouts. `recent[].drafts` counts drafts
+written by that scout, not currently pending drafts.
 
 ```bash
 helmraiser status --json | jq '{queued_count, awaiting_count, running: (.running | length), paused}'
@@ -1985,7 +2011,7 @@ disjoint, dependency-independent tasks. A fresh child temporarily blocks further
 starts of its project until its run is registered through its task lock and PID. Each time a slot is
 free it starts projects with a run handed back to the worker first (a plan approval,
 `rework`, or `retry`), then queued tasks. Only after runnable work is exhausted, it fills spare slots
-with eligible focus-project scouts. A scout is a supervised `python -m helmraiser scout
+with eligible focus-project/lens scouts using effective per-lens automation. A scout is a supervised `python -m helmraiser scout
 <repo> --json` child, occupies one parallel slot without incrementing `--max N`, never
 overlaps another child for its project, and inherits the worker's committed-code snapshot
 environment. Foreground `--max-parallel` drains do not scout. The worker starts nothing

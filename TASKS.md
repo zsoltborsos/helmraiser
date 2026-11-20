@@ -20,7 +20,6 @@ and what comes next.
 
 ## Scout follow-ups
 
-- Per-lens automatic scheduling with settings the FO widget can toggle through the CLI.
 - Lenses `guardrails`, `verification` (optional generic web research for current best practices),
   and `architecture` (with an import-graph summary as scout input).
 - A scheduled package-health check outside the scout.

@@ -114,7 +114,7 @@ def _list_drafts(project: str | None, as_json: bool, data_dir: Path | None) -> N
             intake_text += f" ({row['intake_error']})"
         typer.echo(
             f"{row['project']} {row['id']} {row['title']} size={row['size']} "
-            f"source={row['source']} age={_format_age(row['age'])} "
+            f"source={row['source']} lens={row['lens']} age={_format_age(row['age'])} "
             f"intake: {intake_text} preflight: {preflight_text}"
         )
         for note in row["intake_notes"]:
@@ -146,17 +146,23 @@ def drafts_list(
 @drafts_app.command("request")
 def drafts_request(
     repo: list[Path] = typer.Argument(..., help="Repositories to scout"),
+    lens: str | None = typer.Option(None, "--lens", help="Scout method (default: state)"),
     cancel: bool = typer.Option(False, "--cancel", help="Cancel pending scout requests"),
     as_json: bool = typer.Option(False, "--json", help="Machine-readable output"),
     data_dir: Path | None = typer.Option(None, "--data-dir", help="Override HELMRAISER_DATA_DIR"),
 ) -> None:
     """Request safe worker-driven scouts, or cancel pending requests."""
+    from helmraiser.loop.scout_lenses import lens_text
+
     try:
+        lens_text(lens or "state")
         roots = list(dict.fromkeys(_git_root(path) for path in repo))
         base = data_dir.expanduser() if data_dir is not None else default_data_dir()
         if cancel:
             ledger = Ledger(base / "helmraiser.db")
-            changed, unchanged = ledger.cancel_scout_requests(str(root) for root in roots)
+            changed, unchanged = ledger.cancel_scout_requests(
+                (str(root) for root in roots), lens=lens
+            )
             payload = {"cancelled": changed, "not_pending": unchanged}
             phrases = (("cancelled", changed), ("not pending", unchanged))
         else:
@@ -169,7 +175,9 @@ def drafts_request(
                 if root in paused:
                     raise ScoutError(f"project is paused for scouting: {root}")
             ledger = Ledger(base / "helmraiser.db")
-            changed, unchanged = ledger.request_scouts(str(root) for root in roots)
+            changed, unchanged = ledger.request_scouts(
+                (str(root) for root in roots), lens=lens or "state"
+            )
             payload = {"requested": changed, "already_pending": unchanged}
             phrases = (("requested", changed), ("already pending", unchanged))
     except (ScoutError, ValueError) as exc:
@@ -211,6 +219,7 @@ def drafts_drop(
 
 def scout(
     repo: Path = typer.Argument(..., help="Repository to inspect for useful tasks"),
+    lens: str | None = typer.Option(None, "--lens", help="Scout method (default: state)"),
     maximum: int | None = typer.Option(None, "--max", help="Maximum drafts to write"),
     force: bool = typer.Option(
         False, "--force", help="Bypass all start gates, including the queue pause"
@@ -221,6 +230,12 @@ def scout(
     request_id: int | None = typer.Option(None, "--request-id", hidden=True),
 ) -> None:
     """Run one read-only scout session and write proposed tasks as drafts."""
+    from helmraiser.loop.scout_lenses import lens_text
+
+    try:
+        lens_text(lens or "state")
+    except ValueError as exc:
+        _fail(str(exc), as_json=as_json, code=EXIT_VALIDATION)
     try:
         root = _git_root(repo)
         config = load_config()
@@ -228,6 +243,18 @@ def scout(
         requested = effective_scout_limit(maximum, config)
         base = data_dir.expanduser() if data_dir is not None else default_data_dir()
         ledger = Ledger(base / "helmraiser.db")
+        if request_id is not None:
+            request = ledger.get_scout_request(request_id)
+            if (
+                request is None
+                or request["started_at"] is not None
+                or request["project"] != str(root)
+            ):
+                raise ScoutRequestUnavailable("scout request is no longer pending")
+            if lens is not None and lens != request["lens"]:
+                raise ScoutRequestUnavailable("scout request lens does not match")
+            lens = request["lens"]
+        lens = lens or "state"
         if not force:
             import time
 
@@ -262,6 +289,7 @@ def scout(
             gate_checked=True,
             scout_id=scout_id,
             request_id=request_id,
+            lens=lens,
         )
     except ScoutRequestUnavailable as exc:
         # A cancellation, competing child, or safety gate won the race; no model was called.
@@ -275,14 +303,16 @@ def scout(
     if as_json:
         typer.echo(json.dumps(outcome.as_dict()))
     elif outcome.outcome == "succeeded":
-        typer.echo(f"scout {outcome.scout_id}: {len(outcome.written_task_ids)} draft(s)")
+        typer.echo(
+            f"scout {outcome.scout_id} lens={outcome.lens}: {len(outcome.written_task_ids)} draft(s)"
+        )
         for task_id in outcome.written_task_ids:
             typer.echo(f"  drafted {task_id}")
         for ruling in outcome.rulings:
             typer.echo(f"  owner ruling: {ruling['title']} — {ruling['question']}")
         typer.echo(f"report: {outcome.report_path}")
     else:
-        typer.echo(f"Error: scout {outcome.scout_id} failed: {outcome.error}")
+        typer.echo(f"Error: scout {outcome.scout_id} lens={outcome.lens} failed: {outcome.error}")
         typer.echo(f"report: {outcome.report_path}")
     if outcome.outcome != "succeeded":
         raise typer.Exit(code=EXIT_ERROR)

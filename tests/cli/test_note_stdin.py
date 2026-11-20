@@ -1,6 +1,7 @@
 """Owner notes read from stdin preserve text and validate before side effects."""
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -222,8 +223,10 @@ def test_inline_note_is_unchanged(tmp_project, data_dir, fake_pi, command):
 
 
 @pytest.mark.parametrize("command", ["approve", "reject", "rework", "record-landed"])
-def test_note_help_mentions_stdin(command):
+def test_note_help_mentions_stdin(command, monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("COLUMNS", "120")
     result = runner.invoke(app, [command, "--help"])
     assert result.exit_code == 0, result.output
-    assert "--note" in result.output
-    assert "reads stdin" in " ".join(result.output.replace("│", " ").split())
+    output = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
+    assert "--note" in output
+    assert "reads stdin" in " ".join(output.replace("│", " ").split())

@@ -990,3 +990,30 @@ def test_same_project_lens_requests_never_overlap(tmp_path, monkeypatch):
         assert ledger.get_scout(request["scout_id"])["lens"] == request["lens"]
     assert all(r["lens"] == "state" for r in ledger.list_scouts() if r["request_id"] is None)
     assert ledger.list_scout_requests() == []
+
+
+@pytest.mark.parametrize("lens", [None, "docs", "tests"])
+def test_ordinary_scout_gate_error_includes_lens(
+    tmp_project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lens: str | None
+) -> None:
+    monkeypatch.setattr(scout_commands, "load_config", lambda: config_for(tmp_project))
+
+    def reject_gate(*args, **kwargs):
+        raise ScoutError("pending draft cap reached")
+
+    def unexpected_adapter(*args):
+        pytest.fail("a rejected scout must not construct a model adapter")
+
+    monkeypatch.setattr(scout_commands, "scout_gate", reject_gate)
+    monkeypatch.setattr(scout_commands, "get_scout_adapter", unexpected_adapter)
+    args = ["scout", str(tmp_project), "--json", "--data-dir", str(tmp_path)]
+    if lens is not None:
+        args += ["--lens", lens]
+    result = runner.invoke(app, args, catch_exceptions=False)
+    assert result.exit_code == 1
+    assert json.loads(result.output) == {
+        "error": "pending draft cap reached",
+        "lens": lens or "state",
+    }
+    with Ledger(tmp_path / "helmraiser.db") as ledger:
+        assert ledger.list_scouts() == []

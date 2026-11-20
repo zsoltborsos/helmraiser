@@ -38,8 +38,13 @@ EXIT_VALIDATION = 2
 drafts_app = typer.Typer(help="List, request, and drop scout-generated draft tasks")
 
 
-def _fail(message: str, *, as_json: bool, code: int = EXIT_ERROR) -> NoReturn:
-    typer.echo(json.dumps({"error": message}) if as_json else f"Error: {message}")
+def _fail(
+    message: str, *, as_json: bool, code: int = EXIT_ERROR, lens: str | None = None
+) -> NoReturn:
+    payload = {"error": message}
+    if lens is not None:
+        payload["lens"] = lens
+    typer.echo(json.dumps(payload) if as_json else f"Error: {message}")
     raise typer.Exit(code=code)
 
 
@@ -235,7 +240,7 @@ def scout(
     try:
         lens_text("state" if lens is None else lens)
     except ValueError as exc:
-        _fail(str(exc), as_json=as_json, code=EXIT_VALIDATION)
+        _fail(str(exc), as_json=as_json, code=EXIT_VALIDATION, lens=lens)
     try:
         root = _git_root(repo)
         config = load_config()
@@ -305,7 +310,7 @@ def scout(
             typer.echo(f"Error: {exc}")
         raise typer.Exit(code=EXIT_ERROR) from None
     except (ScoutError, ValueError) as exc:
-        _fail(str(exc), as_json=as_json)
+        _fail(str(exc), as_json=as_json, lens=lens or "state")
     if as_json:
         typer.echo(json.dumps(outcome.as_dict()))
     elif outcome.outcome == "succeeded":

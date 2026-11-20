@@ -497,7 +497,7 @@ def test_drafts_json_uses_current_file_origin_and_absolute_source_path(
     scout_spec = parse_task(scout_text, scout_path.resolve(), {})
     ledger.upsert_task(scout_spec, scout_text)
 
-    result = invoke("drafts", "--json", data_dir=data_dir)
+    result = invoke("drafts", "--all", "--json", data_dir=data_dir)
 
     assert result.exit_code == 0, result.output
     rows = {row["id"]: row for row in json.loads(result.output)}

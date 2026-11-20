@@ -203,6 +203,7 @@ class TestScoutWorker:
             str(tmp_path),
             "--scout-id",
             "assigned",
+            "--automatic",
         ]
         assert "--force" not in argv and "--request-id" not in argv
 

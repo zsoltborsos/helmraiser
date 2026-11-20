@@ -33,6 +33,7 @@ from helmraiser.task.project import load_project_defaults
 from helmraiser.task.schema import validate_task
 from helmraiser.task.structural import (
     body_outside_paths_warnings,
+    large_budget_warnings,
     outside_paths_warnings,
     related_tests_warnings,
     structural_reason,
@@ -432,5 +433,6 @@ def run_intake(
     if collect_scope_warnings:
         notes += outside_paths_warnings(merged)
         notes += body_outside_paths_warnings(merged)
+        notes += large_budget_warnings(merged)
         notes += related_tests_warnings(merged)
     return IntakeOutcome(merged, proposal, notes, validate_task(replace(merged, status="queued")))

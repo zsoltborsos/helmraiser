@@ -141,6 +141,7 @@ from helmraiser.task.schema import validate_task
 from helmraiser.task.structural import (
     RELATED_TESTS_AUTO_ADD_LIMIT,
     body_outside_paths_warnings,
+    large_budget_warnings,
     outside_paths_warnings,
     related_tests_outside_scope,
     related_tests_warnings,
@@ -427,6 +428,7 @@ def intake(
         related_output["related_tests_count"] = len(candidates)
         outcome.notes += outside_paths_warnings(outcome.spec)
         outcome.notes += body_outside_paths_warnings(outcome.spec)
+        outcome.notes += large_budget_warnings(outcome.spec)
         if (
             candidates
             and len(candidates) <= RELATED_TESTS_AUTO_ADD_LIMIT
@@ -613,6 +615,7 @@ def intake(
             outcome.notes += related_tests_warnings(outcome.spec, candidates)
         outcome.notes += outside_paths_warnings(outcome.spec)
         outcome.notes += body_outside_paths_warnings(outcome.spec)
+        outcome.notes += large_budget_warnings(outcome.spec)
     document = render_task(outcome.spec)
     outcome.spec.source_path.write_bytes(document.encode("utf-8"))
     try:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import shutil
 import subprocess
 from dataclasses import replace
@@ -1574,6 +1575,107 @@ class TestStepSandboxFloor:
         assert result.exit_code == 2, result.output
         errors = json.loads(result.output)["errors"]
         assert any("needs require_approval = true" in e for e in errors)
+
+
+class TestLargeBudgetWarnings:
+    @pytest.mark.parametrize("cost", [19.99, 20.0, 25.0])
+    @pytest.mark.parametrize("mode", [["--check"], ["--yes"], ["--check", "--yes"]])
+    @pytest.mark.parametrize("as_json", [False, True])
+    def test_note_on_check_and_queue(self, tmp_project, data_dir, monkeypatch, cost, mode, as_json):
+        monkeypatch.setenv("COLUMNS", "120")
+        path = write_task(
+            tmp_project,
+            COMPLETE.replace(
+                "policy: review\n", f"policy: review\nbudget:\n  max_cost_usd: {cost}\n"
+            ),
+        )
+        original = path.read_bytes()
+        adapter = ScriptedPiAdapter({})
+        use_adapter(monkeypatch, adapter)
+        if "--check" in mode:
+            TestIntakeCheck.preflight(monkeypatch, "green")
+        check_only = "--yes" not in mode
+        if check_only:
+            TestIntakeCheck.no_ledger(monkeypatch)
+        result = invoke(
+            "intake", str(path), *mode, *(["--json"] if as_json else []), data_dir=data_dir
+        )
+        assert result.exit_code == 0, result.output
+        expected = (
+            f"budget.max_cost_usd is ${cost:g}; tasks budgeted at $20 or more often fail: "
+            "consider splitting this task into smaller tasks linked with depends_on"
+        )
+        if as_json:
+            payload = json.loads(result.output)
+            notes = [n for n in payload["notes"] if n.startswith("budget.max_cost_usd is ")]
+            assert notes == ([] if cost < 20 else [expected])
+            assert payload["status"] == ("draft" if check_only else "queued")
+        else:
+            output = " ".join(re.sub(r"\x1b\[[0-9;]*m", "", result.output).split())
+            if cost < 20:
+                assert "budget.max_cost_usd is " not in output
+            else:
+                assert output.count(expected) == 1
+        saved = parse_task(path.read_text(), path, {})
+        assert saved.budget.max_cost_usd == cost
+        if check_only:
+            assert path.read_bytes() == original
+            assert not data_dir.exists()
+        else:
+            assert saved.status == "queued"
+            ledger = Ledger(data_dir / "helmraiser.db")
+            assert ledger.get_task(saved.task_id)["status"] == "queued"
+        assert adapter.calls == []
+
+    def test_proposed_budget_is_used(self, tmp_project, data_dir, ledger, monkeypatch):
+        path = write_task(tmp_project, DRAFT)
+        proposal = PROPOSAL.format(policy="review", isolation="process").replace(
+            "max_cost_usd: 2.5", "max_cost_usd: 25"
+        )
+        adapter = ScriptedPiAdapter({"intake": PiScript(final_text=proposal)})
+        use_adapter(monkeypatch, adapter)
+        result = invoke("intake", str(path), "--yes", "--json", data_dir=data_dir)
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert [n for n in payload["notes"] if n.startswith("budget.max_cost_usd is ")] == [
+            "budget.max_cost_usd is $25; tasks budgeted at $20 or more often fail: "
+            "consider splitting this task into smaller tasks linked with depends_on"
+        ]
+        assert payload["status"] == "queued"
+        saved = parse_task(path.read_text(), path, {})
+        assert saved.status == "queued" and saved.budget.max_cost_usd == 25
+        assert ledger.get_task(saved.task_id)["status"] == "queued"
+        assert len(adapter.calls) == 1
+        assert adapter.calls[0].stage == "intake"
+
+    @pytest.mark.parametrize("collect_scope_warnings", [False, True])
+    def test_run_intake_collection_flag(
+        self, tmp_project, data_dir, isolated_config, collect_scope_warnings
+    ):
+        path = write_task(
+            tmp_project,
+            COMPLETE.replace("policy: review\n", "policy: review\nbudget:\n  max_cost_usd: 25\n"),
+        )
+        spec = parse_task(path.read_text(), path, isolated_config)
+        outcome = intake_logic.run_intake(
+            spec,
+            config=isolated_config,
+            adapter=None,
+            model=None,
+            data_dir=data_dir,
+            allow_auto=False,
+            collect_scope_warnings=collect_scope_warnings,
+        )
+        assert outcome.errors == []
+        notes = [n for n in outcome.notes if n.startswith("budget.max_cost_usd is ")]
+        assert notes == (
+            [
+                "budget.max_cost_usd is $25; tasks budgeted at $20 or more often fail: "
+                "consider splitting this task into smaller tasks linked with depends_on"
+            ]
+            if collect_scope_warnings
+            else []
+        )
 
 
 class TestBodyOutsidePaths:

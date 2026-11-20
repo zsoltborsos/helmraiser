@@ -32,6 +32,8 @@ from pathlib import Path, PurePosixPath
 from helmraiser.task.model import TaskSpec
 from helmraiser.task.paths import matches_paths, paths_overlap
 
+LARGE_BUDGET_WARN_USD = 20.0
+
 SOURCE_ROOTS = frozenset(
     {"src", "lib", "app", "apps", "packages", "pkg", "internal", "cmd", "source"}
 )
@@ -152,6 +154,18 @@ def _command_reason(words: list[str]) -> str | None:
             if flag in _EXISTS_FLAGS and is_source_path(path):
                 return f"tests that {path} exists"
     return None
+
+
+def large_budget_warnings(task: TaskSpec) -> list[str]:
+    """Advise splitting tasks with large budgets, without changing validity."""
+    cost = task.budget.max_cost_usd
+    if cost < LARGE_BUDGET_WARN_USD:
+        return []
+    return [
+        f"budget.max_cost_usd is ${cost:g}; tasks budgeted at "
+        f"${LARGE_BUDGET_WARN_USD:g} or more often fail: consider splitting this task "
+        "into smaller tasks linked with depends_on"
+    ]
 
 
 def outside_paths_warnings(task: TaskSpec) -> list[str]:

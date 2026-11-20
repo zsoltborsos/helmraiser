@@ -14,6 +14,7 @@ from helmraiser.task.structural import (
     _tracked_files,
     body_outside_paths_warnings,
     body_paths_outside_scope,
+    large_budget_warnings,
     outside_paths_warnings,
     related_tests_outside_scope,
     related_tests_warnings,
@@ -80,6 +81,42 @@ def test_structural_steps_are_flagged(run: str, reason: str) -> None:
 @pytest.mark.parametrize("run", BEHAVIOURAL)
 def test_behavioural_steps_are_not_flagged(run: str) -> None:
     assert structural_reason(run) is None
+
+
+@pytest.mark.parametrize(
+    ("cost", "expected"),
+    [
+        (19.99, []),
+        (
+            20.0,
+            [
+                "budget.max_cost_usd is $20; tasks budgeted at $20 or more often fail: "
+                "consider splitting this task into smaller tasks linked with depends_on"
+            ],
+        ),
+        (
+            25.0,
+            [
+                "budget.max_cost_usd is $25; tasks budgeted at $20 or more often fail: "
+                "consider splitting this task into smaller tasks linked with depends_on"
+            ],
+        ),
+        (
+            25.5,
+            [
+                "budget.max_cost_usd is $25.5; tasks budgeted at $20 or more often fail: "
+                "consider splitting this task into smaller tasks linked with depends_on"
+            ],
+        ),
+    ],
+)
+def test_large_budget_warnings(tmp_path, cost, expected) -> None:
+    spec = parse_task(
+        f"---\nid: t\ntitle: T\nproject: {tmp_path}\nstatus: draft\n---\n", tmp_path / "t.md", {}
+    )
+    task = replace(spec, budget=replace(spec.budget, max_cost_usd=cost))
+    assert large_budget_warnings(task) == expected
+    assert task.budget.max_cost_usd == cost
 
 
 def test_outside_paths_warnings(tmp_path) -> None:

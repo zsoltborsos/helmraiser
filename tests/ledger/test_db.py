@@ -1352,3 +1352,16 @@ def test_version_nine_scout_lens_migration(tmp_path):
     ledger.close()
     with Ledger(path, read_only=True) as reopened:
         assert [r["lens"] for r in reopened.list_scout_requests()] == ["state", "docs"]
+
+
+def test_scout_overrides(ledger):
+    ledger.set_scout_lens_override("docs", auto=True)
+    ledger.set_scout_lens_override("docs", cooldown_hours=12)
+    assert ledger.scout_lens_override("docs") == {"auto": True, "cooldown_hours": 12}
+    assert ledger.scout_lens_override("tests") == {}
+    with pytest.raises(ValueError):
+        ledger.set_scout_lens_override("docs", auto=False, cooldown_hours=0)
+    assert ledger.scout_lens_override("docs")["auto"] is True
+    ledger.reset_scout_lens_override("docs")
+    ledger.reset_scout_lens_override("docs")
+    assert ledger.scout_lens_override("docs") == {}

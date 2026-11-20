@@ -8,6 +8,7 @@ runs under ``_write_lock`` inside ``BEGIN IMMEDIATE``.
 from __future__ import annotations
 
 import json
+import math
 import os
 import sqlite3
 import threading
@@ -1475,6 +1476,41 @@ class Ledger:
         if until is not None and until <= time.time():
             return None
         return {"reason": self._get_state(conn, "pause_reason") or "", "until": until}
+
+    def scout_lens_override(self, lens: str) -> dict[str, Any]:
+        raw = self._get_state(self._get_conn(), f"scout_lens:{lens}")
+        return json.loads(raw) if raw else {}
+
+    def set_scout_lens_override(
+        self, lens: str, *, auto: bool | None = None, cooldown_hours: float | None = None
+    ) -> None:
+        from helmraiser.loop.scout_lenses import lens_text
+
+        lens_text(lens)
+        if auto is None and cooldown_hours is None:
+            raise ValueError("provide auto or cooldown_hours")
+        if auto is not None and not isinstance(auto, bool):
+            raise ValueError("auto must be boolean")
+        if cooldown_hours is not None and (
+            isinstance(cooldown_hours, bool)
+            or not isinstance(cooldown_hours, (int, float))
+            or not math.isfinite(cooldown_hours)
+            or cooldown_hours <= 0
+        ):
+            raise ValueError("cooldown_hours must be finite and positive")
+        with self._write() as conn:
+            key = f"scout_lens:{lens}"
+            raw = self._get_state(conn, key)
+            value = json.loads(raw) if raw else {}
+            if auto is not None:
+                value["auto"] = auto
+            if cooldown_hours is not None:
+                value["cooldown_hours"] = cooldown_hours
+            self._set_state(conn, key, json.dumps(value))
+
+    def reset_scout_lens_override(self, lens: str) -> None:
+        with self._write() as conn:
+            conn.execute("DELETE FROM queue_state WHERE key = ?", (f"scout_lens:{lens}",))
 
     def caps_switch(self) -> str | None:
         value = self._get_state(self._get_conn(), "caps_enforced")

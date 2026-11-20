@@ -24,7 +24,7 @@ from helmraiser.task.model import PRIORITY_RANK, TaskSpec
 
 # Bump on schema changes or data migrations: a ledger whose ``user_version``
 # matches is opened read-only and never migrated.
-SCHEMA_VERSION = 9
+SCHEMA_VERSION = 10
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS tasks (
@@ -91,16 +91,16 @@ CREATE TABLE IF NOT EXISTS queue_state (
 CREATE TABLE IF NOT EXISTS scout_requests (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   project TEXT NOT NULL,
+  lens TEXT NOT NULL DEFAULT 'state',
   requested_at REAL NOT NULL,
   started_at REAL,
   scout_id TEXT
 );
-CREATE UNIQUE INDEX IF NOT EXISTS scout_requests_pending_project
-  ON scout_requests(project) WHERE started_at IS NULL;
 CREATE TABLE IF NOT EXISTS scouts (
   id TEXT PRIMARY KEY,
   project TEXT NOT NULL,
   model TEXT NOT NULL,
+  lens TEXT NOT NULL DEFAULT 'state',
   head_commit TEXT,
   request_id INTEGER REFERENCES scout_requests(id),
   started_at REAL NOT NULL,
@@ -132,6 +132,7 @@ _ADDED_RUN_COLUMNS = {
     "plan_cost_usd": "REAL NOT NULL DEFAULT 0",
 }
 _ADDED_SCOUT_COLUMNS = {
+    "lens": "TEXT NOT NULL DEFAULT 'state'",
     "head_commit": "TEXT",
     "request_id": "INTEGER REFERENCES scout_requests(id)",
     "error": "TEXT",
@@ -163,6 +164,7 @@ RUN_STATUSES = frozenset(
 )
 _SCOUT_COLUMNS = frozenset(
     {
+        "lens",
         "id",
         "project",
         "model",
@@ -355,12 +357,6 @@ class Ledger:
             for statement in _SCHEMA.split(";"):
                 if statement.strip():
                     conn.execute(statement)
-            if not self._scout_request_index_is_current(conn):
-                conn.execute("DROP INDEX IF EXISTS scout_requests_pending_project")
-                conn.execute(
-                    "CREATE UNIQUE INDEX scout_requests_pending_project "
-                    "ON scout_requests(project) WHERE started_at IS NULL"
-                )
             run_columns = self._table_columns(conn, "runs")
             for column, ddl in _ADDED_RUN_COLUMNS.items():
                 if column not in run_columns:
@@ -369,6 +365,16 @@ class Ledger:
             for column, ddl in _ADDED_SCOUT_COLUMNS.items():
                 if column not in scout_columns:
                     conn.execute(f"ALTER TABLE scouts ADD COLUMN {column} {ddl}")
+            if "lens" not in self._table_columns(conn, "scout_requests"):
+                conn.execute(
+                    "ALTER TABLE scout_requests ADD COLUMN lens TEXT NOT NULL DEFAULT 'state'"
+                )
+            if not self._scout_request_index_is_current(conn):
+                conn.execute("DROP INDEX IF EXISTS scout_requests_pending_project")
+                conn.execute(
+                    "CREATE UNIQUE INDEX scout_requests_pending_project "
+                    "ON scout_requests(project, lens) WHERE started_at IS NULL"
+                )
             draft_columns = self._table_columns(conn, "scout_drafts")
             for column, ddl in _ADDED_SCOUT_DRAFT_COLUMNS.items():
                 if column not in draft_columns:
@@ -395,15 +401,26 @@ class Ledger:
             and set(_ADDED_SCOUT_COLUMNS) <= cls._table_columns(conn, "scouts")
             and set(_ADDED_SCOUT_DRAFT_COLUMNS) <= cls._table_columns(conn, "scout_drafts")
             and cls._table_columns(conn, "scout_requests")
-            >= {"id", "project", "requested_at", "started_at", "scout_id"}
+            >= {"id", "project", "requested_at", "started_at", "scout_id", "lens"}
             and cls._scout_request_index_is_current(conn)
         )
 
     @staticmethod
     def _scout_request_index_is_current(conn: sqlite3.Connection) -> bool:
-        return any(
-            str(row[1]) == "scout_requests_pending_project" and bool(row[2]) and bool(row[4])
-            for row in conn.execute("PRAGMA index_list(scout_requests)").fetchall()
+        columns = [
+            row[2] for row in conn.execute("PRAGMA index_info(scout_requests_pending_project)")
+        ]
+        definition = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE name = 'scout_requests_pending_project'"
+        ).fetchone()
+        return (
+            columns == ["project", "lens"]
+            and definition is not None
+            and "WHERE started_at IS NULL" in definition[0]
+            and any(
+                str(row[1]) == "scout_requests_pending_project" and bool(row[2]) and bool(row[4])
+                for row in conn.execute("PRAGMA index_list(scout_requests)").fetchall()
+            )
         )
 
     @staticmethod
@@ -679,7 +696,11 @@ class Ledger:
         return list(dict.fromkeys(project_key(project) for project in projects))
 
     def request_scouts(
-        self, projects: Iterable[str | Path], requested_at: float | None = None
+        self,
+        projects: Iterable[str | Path],
+        requested_at: float | None = None,
+        *,
+        lens: str = "state",
     ) -> tuple[list[str], list[str]]:
         """Create at most one pending request per project, preserving input order."""
         requested: list[str] = []
@@ -688,28 +709,32 @@ class Ledger:
         with self._write() as conn:
             for project in self._unique_projects(projects):
                 pending = conn.execute(
-                    "SELECT 1 FROM scout_requests " "WHERE project = ? AND started_at IS NULL",
-                    (project,),
+                    "SELECT 1 FROM scout_requests "
+                    "WHERE project = ? AND lens = ? AND started_at IS NULL",
+                    (project, lens),
                 ).fetchone()
                 if pending is not None:
                     already_pending.append(project)
                     continue
                 conn.execute(
-                    "INSERT INTO scout_requests (project, requested_at) VALUES (?, ?)",
-                    (project, timestamp),
+                    "INSERT INTO scout_requests (project, requested_at, lens) VALUES (?, ?, ?)",
+                    (project, timestamp, lens),
                 )
                 requested.append(project)
         return requested, already_pending
 
-    def cancel_scout_requests(self, projects: Iterable[str | Path]) -> tuple[list[str], list[str]]:
+    def cancel_scout_requests(
+        self, projects: Iterable[str | Path], *, lens: str | None = None
+    ) -> tuple[list[str], list[str]]:
         """Delete pending requests, preserving input order in both result lists."""
         cancelled: list[str] = []
         not_pending: list[str] = []
         with self._write() as conn:
             for project in self._unique_projects(projects):
                 cursor = conn.execute(
-                    "DELETE FROM scout_requests WHERE project = ? AND started_at IS NULL",
-                    (project,),
+                    "DELETE FROM scout_requests WHERE project = ? AND started_at IS NULL"
+                    + (" AND lens = ?" if lens is not None else ""),
+                    (project, lens) if lens is not None else (project,),
                 )
                 (cancelled if cursor.rowcount else not_pending).append(project)
         return cancelled, not_pending
@@ -737,7 +762,7 @@ class Ledger:
         Recheck pause and project work under the write lock before claiming, unless
         explicitly forced. Unrequested scouts retain their caller's gate policy.
         """
-        record = {"outcome": "running", "started_at": time.time(), **scout}
+        record = {"lens": "state", "outcome": "running", "started_at": time.time(), **scout}
         unknown = set(record) - _SCOUT_COLUMNS
         if unknown:
             raise ValueError(f"unknown scout columns: {', '.join(sorted(unknown))}")
@@ -774,12 +799,13 @@ class Ledger:
                         )
                 cursor = conn.execute(
                     "UPDATE scout_requests SET started_at = ?, scout_id = ? "
-                    "WHERE id = ? AND project = ? AND started_at IS NULL",
+                    "WHERE id = ? AND project = ? AND lens = ? AND started_at IS NULL",
                     (
                         record["started_at"],
                         record["id"],
                         record["request_id"],
                         project,
+                        record["lens"],
                     ),
                 )
                 if cursor.rowcount != 1:

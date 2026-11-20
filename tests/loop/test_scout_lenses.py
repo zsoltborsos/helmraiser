@@ -1,6 +1,7 @@
-from helmraiser.pi.directives import render_scout_directives
-from helmraiser.loop.scout import build_scout_prompt
 import pytest
+
+from helmraiser.loop.scout import build_scout_prompt
+from helmraiser.pi.directives import render_scout_directives
 
 BASE = '# Helmraiser scout id — read-only task discovery\n\nScout project repo in the detached worktree at tree. This is strictly\nread-only: never modify, create, or delete files. Propose only code or documentation\nwork that can be verified by local commands. Do not propose host, cloud, provider,\ndeployment, credential, or external-service work. Do not reopen recorded owner\ndecisions. Do not propose work touching these excluded path prefixes: (none).\n\nReturn only one strict JSON list, with no Markdown fence or prose. Every object must\nhave exactly these keys: "id", "title", "why", "evidence", "files", "change",\n"verify_hints", "size", "needs_owner_ruling", and "ruling_question". Evidence is\na non-empty list of relative "file:line" strings; files is a non-empty list of\nrelative paths; size is "S", "M", or "L". Set needs_owner_ruling true and provide\na non-empty ruling_question whenever the work requires an owner decision.\n'
 TEXTS = {
@@ -10,7 +11,7 @@ TEXTS = {
 
 
 def test_state_compatibility():
-    args = dict(scout_id="id", project="repo", worktree="tree", exclusions=())
+    args = {"scout_id": "id", "project": "repo", "worktree": "tree", "exclusions": ()}
     assert render_scout_directives(**args) == BASE
     assert render_scout_directives(**args, lens="state") == BASE
     assert (

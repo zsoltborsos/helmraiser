@@ -359,6 +359,8 @@ Omitting `paths` leaves scope unrestricted and preserves existing run behavior.
 Intake adds a note (`notes` in `--json`), never an error, for each existing project
 file with an extension that a verify command names outside `paths`: `verify runs X,
 which is outside paths: add it if the change needs to edit it`.
+Intake also adds an advisory note (`notes` in `--json`), never an error, when
+`budget.max_cost_usd` is $20 or more, suggesting smaller tasks linked with `depends_on`.
 Intake also adds one note listing tracked files and directories named in the body
 that `paths` does not cover. Fenced code blocks count; URLs do not. There is no body
 note when `paths` is omitted or the project is not a git repository. The note is

@@ -140,3 +140,9 @@ See [Isolation](../../docs/reference.md#isolation),
 - Before consuming `status --json`, read [Status contract](../../docs/reference.md#status-contract).
   Count keys end in `_count`: `awaiting_count` is a count, `awaiting`
   is a list. Treating one as the other breaks monitoring.
+
+## 11. Keep tasks small
+
+If a task needs a budget of $20 or more, split it into smaller tasks linked with
+`depends_on`, each with its own acceptance block. Intake’s large-budget note is
+advisory, not a queueing error.

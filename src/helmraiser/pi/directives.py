@@ -107,13 +107,17 @@ def render_scout_directives(
     project: Path | str,
     worktree: Path | str,
     exclusions: tuple[str, ...],
+    lens: str = "state",
 ) -> str:
+    from helmraiser.loop.scout_lenses import lens_text
+
+    text = lens_text(lens)
     return SCOUT_TEMPLATE.format(
         scout_id=scout_id,
         project=project,
         worktree=worktree,
         exclusions=", ".join(exclusions) if exclusions else "(none)",
-    )
+    ) + (f"\n## Lens: {lens}\n\n{text}" if lens != "state" else "")
 
 
 def render_implement_directives(

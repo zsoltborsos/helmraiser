@@ -603,6 +603,16 @@ class TestIntakeProportionateAcceptance:
         answer_format = prompt.split("## Answer format\n\n", 1)[1]
         for rule in rules:
             assert answer_format.count(f"- {rule}\n") == 1
+        evidence_rule = answer_format.split("- evidence:", 1)[1].split(
+            "Verify runs after every implementation attempt", 1
+        )[0]
+        assert (
+            evidence_rule.count(
+                "Criteria may refer only to the evidence artifacts, the diff and verify output, "
+                "which are all the reviewer reads; never to the pull-request body or anything else."
+            )
+            == 1
+        )
 
     def test_prompt_describes_check_placement_and_budget(self, tmp_project: Path):
         spec = parse_task(DRAFT.format(project=tmp_project), tmp_project / "t.md", {})

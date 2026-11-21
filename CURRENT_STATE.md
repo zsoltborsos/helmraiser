@@ -1,5 +1,7 @@
 # Helmraiser — Current State
 
+Intake evidence criteria are limited to evidence artifacts, the diff and verify output, never the pull-request body or other inputs.
+
 Scout directives request exact `file:line` evidence entries with symbol names in `why`, self-consistent changes and checks, test-only mutation checks outside the worktree, and grouping findings that touch the same file. Intake prompts request variable-based base references, duration-appropriate timeouts, configured lint/type commands, and complete change coverage.
 
 Scout drafts declare ordered, deduplicated paths and skip overlaps with accepted candidates or pending drafts; body-path advisories exclude Evidence lists and appended project notes.

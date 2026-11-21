@@ -198,6 +198,8 @@ def build_intake_prompt(spec: TaskSpec, config: dict[str, Any], feedback: str | 
         "  root that exit 0 only when the task is done.\n"
         "- evidence: list of {name, run, artifacts, criteria, red_on_base (optional)}; commands write files into\n"
         "  $HELMRAISER_EVIDENCE_DIR and criteria say what a reviewer must see in them.\n"
+        "Criteria may refer only to the evidence artifacts, the diff and verify output, "
+        "which are all the reviewer reads; never to the pull-request body or anything else.\n"
         "Verify runs after every implementation attempt and must stay fast: the tests "
         "that cover the changed code, plus the project's lint or type checks when the "
         "task changes code. Put the project's full test suite (and its coverage gate) "

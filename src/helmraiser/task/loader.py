@@ -114,6 +114,14 @@ def _step_sandbox(raw: dict[str, Any]) -> str | None:
     return str(value) if value is not None else None
 
 
+def _step_red_on_base(raw: dict[str, Any], kind: str, n: int) -> bool:
+    value = raw.get("red_on_base", False)
+    if not isinstance(value, bool):
+        name = str(raw.get("name") or f"{kind}-{n}")
+        raise TaskLoadError(f"{kind} step '{name}': red_on_base must be a boolean")
+    return value
+
+
 def _verify_steps(fm: dict[str, Any]) -> tuple[VerifyStep, ...]:
     steps: list[VerifyStep] = []
     for n, gate in enumerate(fm.get("quality_gates") or [], start=1):
@@ -130,6 +138,7 @@ def _verify_steps(fm: dict[str, Any]) -> tuple[VerifyStep, ...]:
                 run=str(raw.get("run") or ""),
                 timeout=int(raw.get("timeout", 300)),
                 sandbox=_step_sandbox(raw),
+                red_on_base=_step_red_on_base(raw, "verify", n),
             )
         )
     return tuple(steps)
@@ -158,6 +167,7 @@ def _evidence_steps(fm: dict[str, Any]) -> tuple[EvidenceStep, ...]:
                 criteria=_criteria(raw.get("criteria")),
                 timeout=int(raw.get("timeout", 600)),
                 sandbox=_step_sandbox(raw),
+                red_on_base=_step_red_on_base(raw, "evidence", n),
             )
         )
     return tuple(steps)
@@ -276,6 +286,7 @@ def spec_to_frontmatter(spec: TaskSpec) -> dict[str, Any]:
                 "run": s.run,
                 "timeout": s.timeout,
                 **({"sandbox": s.sandbox} if s.sandbox is not None else {}),
+                **({"red_on_base": True} if s.red_on_base else {}),
             }
             for s in spec.verify
         ],
@@ -310,6 +321,7 @@ def spec_to_frontmatter(spec: TaskSpec) -> dict[str, Any]:
                 "criteria": e.criteria,
                 "timeout": e.timeout,
                 **({"sandbox": e.sandbox} if e.sandbox is not None else {}),
+                **({"red_on_base": True} if e.red_on_base else {}),
             }
             for e in spec.evidence
         ]

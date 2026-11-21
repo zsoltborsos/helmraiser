@@ -95,6 +95,7 @@ class VerifyStep:
     run: str
     timeout: int = 300
     sandbox: str | None = None  # "host": run unconfined (needs require_approval)
+    red_on_base: bool = False
 
 
 @dataclass(frozen=True)
@@ -105,6 +106,7 @@ class EvidenceStep:
     criteria: str
     timeout: int = 600
     sandbox: str | None = None  # "host": run unconfined (needs require_approval)
+    red_on_base: bool = False
 
 
 @dataclass(frozen=True)

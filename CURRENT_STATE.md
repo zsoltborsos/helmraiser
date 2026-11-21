@@ -1,5 +1,7 @@
 # Helmraiser — Current State
 
+Verify/evidence steps parse and preserve optional boolean `red_on_base` markers.
+
 - Scout drafts omit delivery and inherit the project default (fallback: merge); intake prompts show effective setup, environment variable names only, explicit-tool-path guidance, and a documentation-only stale-text check exception.
 
 - Scout lenses have CLI/JSON settings with ledger overrides, per-project/lens automatic cadence, and scout-only draft listings by default (`--all` includes manual drafts).

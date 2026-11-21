@@ -150,7 +150,8 @@ def build_intake_prompt(spec: TaskSpec, config: dict[str, Any], feedback: str | 
     notes = project_notes_for_body(spec.project, spec.body)
     notes_prompt = (
         "## Owner-maintained project notes\n\n"
-        "These are constraints on proposed verify and evidence commands:\n\n"
+        "These are the project's own rules for verify and evidence steps, budgets and "
+        "timeouts. Where they differ from the general rules below, follow these:\n\n"
         f"{project_notes_section(notes)}\n\n"
         if notes is not None
         else ""
@@ -231,7 +232,8 @@ def build_intake_prompt(spec: TaskSpec, config: dict[str, Any], feedback: str | 
         "  it; never propose none. budget: {max_cost_usd, max_minutes, max_iterations}, "
         "sized to the task: for size S propose max_cost_usd 3, max_minutes 60 and "
         "max_iterations 3; for M propose 6, 120 and 4; for L or unknown size, "
-        "size it to the work. Preserve an existing budget.\n"
+        "size it to the work. Preserve an existing budget. "
+        "Project notes override this guidance.\n"
         "- models: implement, fallback, review, plan as provider/id[:thinking]; review must\n"
         "  differ from implement and never be weaker. Propose only deliberate\n"
         "  deviations from configured profiles; omit `models:` when no deviation is needed.\n"

@@ -1864,9 +1864,6 @@ Make the widget work.
         self, tmp_project: Path
     ) -> None:
         notes = "Use node --import tsx, never tsx --test."
-        notes_path = tmp_project / ".helmraiser" / "notes.md"
-        notes_path.parent.mkdir(exist_ok=True)
-        notes_path.write_text(notes, encoding="utf-8")
         spec = TaskSpec(
             id="t",
             title="T",
@@ -1884,9 +1881,30 @@ Make the widget work.
             source_path=tmp_project / "t.md",
         )
 
+        notes_introduction = (
+            "These are the project's own rules for verify and evidence steps, budgets "
+            "and timeouts. Where they differ from the general rules below, follow these:"
+        )
+        old_introduction = (
+            "These are constraints on proposed verify and evidence commands:"
+        )
+        budget_guidance = (
+            "Preserve an existing budget. Project notes override this guidance."
+        )
+        prompt = build_intake_prompt(spec, {})
+        assert notes_introduction not in prompt
+        assert "## Owner-maintained project notes" not in prompt
+        assert old_introduction not in prompt
+        assert budget_guidance in prompt
+
+        notes_path = tmp_project / ".helmraiser" / "notes.md"
+        notes_path.parent.mkdir(exist_ok=True)
+        notes_path.write_text(notes, encoding="utf-8")
         prompt = build_intake_prompt(spec, {})
         assert "owner-maintained project notes" in prompt.lower()
-        assert "constraints on proposed verify and evidence commands" in prompt
+        assert notes_introduction in prompt
+        assert budget_guidance in prompt
+        assert old_introduction not in prompt
         assert prompt.count(notes) == 1
         assert "## Project notes (Helmraiser)" in prompt
 

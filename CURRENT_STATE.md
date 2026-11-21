@@ -10,6 +10,8 @@ Implement directives tell agents to commit and stop without `BLOCKED:` when veri
 
 Scout draft preparation re-proposes once on fail/sandbox checks using real diagnostics, retains the final proposal/preflight and a note naming first-attempt failures; standalone intake does not retry.
 
+Intake prompts tell the model that project notes override general verify/evidence placement, budget and timeout guidance.
+
 Intake shows a current budget only when the task explicitly sets a budget mapping; merged budgets remain explicit, while resolved defaults and budget serialization are unchanged.
 
 Intake prompts request fast targeted verify checks, full-suite/coverage evidence without duplicate checks, optional task-size context, and proposed budgets of $3/60 minutes/3 iterations for S and $6/120 minutes/4 iterations for M; L or unknown sizes are sized to the work, and existing budgets are preserved.

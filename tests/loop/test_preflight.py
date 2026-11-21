@@ -465,7 +465,11 @@ class TestRunPreflight:
     ):
         payload = run_preflight_steps(
             tmp_project,
-            [VerifyStep("check", "printf 'EACCES: permission denied\\n' >&2; exit 1", sandbox=sandbox)],
+            [
+                VerifyStep(
+                    "check", "printf 'EACCES: permission denied\\n' >&2; exit 1", sandbox=sandbox
+                )
+            ],
             config=config,
             data_dir=tmp_path / "data",
         )
@@ -684,9 +688,7 @@ class TestRunPreflight:
 
         (command,) = payload["commands"]
         assert command["sandbox"] == (sandbox or "srt")
-        assert command["hints"] == [
-            loopback_hint("127.0.0.1:56380", sandboxed=sandbox != "host")
-        ]
+        assert command["hints"] == [loopback_hint("127.0.0.1:56380", sandboxed=sandbox != "host")]
         assert fake_docker.containers() == {}
         assert_cleaned_up(tmp_project, tmp_path / "d", payload)
 

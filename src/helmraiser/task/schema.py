@@ -74,11 +74,15 @@ def validate_task(task: TaskSpec) -> list[str]:
         errors.append(f"isolation must be one of {', '.join(ISOLATIONS)}")
 
     for step in task.verify:
+        if not isinstance(step.red_on_base, bool):
+            errors.append(f"verify step '{step.name}': red_on_base must be a boolean")
         if not step.run.strip():
             errors.append(f"verify step '{step.name}' has an empty run command")
         if step.name == "task-paths":
             errors.append("verify step name 'task-paths' is reserved for the path scope check")
     for evidence in task.evidence:
+        if not isinstance(evidence.red_on_base, bool):
+            errors.append(f"evidence step '{evidence.name}': red_on_base must be a boolean")
         if not evidence.run.strip():
             errors.append(f"evidence step '{evidence.name}' has an empty run command")
     steps = [("verify", s.name, s.sandbox) for s in task.verify] + [

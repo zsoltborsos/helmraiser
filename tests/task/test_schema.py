@@ -43,6 +43,21 @@ def queued(project: Path, **overrides) -> TaskSpec:
 
 
 class TestDraft:
+    @pytest.mark.parametrize("kind", ["verify", "evidence"])
+    @pytest.mark.parametrize("value", [True, False, "true", 0, 1, None, [], {}])
+    def test_red_on_base_boolean(self, tmp_path: Path, kind: str, value: object):
+        base = (
+            VerifyStep("check", "false")
+            if kind == "verify"
+            else EvidenceStep("check", "false", (), "")
+        )
+        step = replace(base, red_on_base=value)
+        errors = validate_task(make_spec(tmp_path, **{kind: (step,)}))
+        if isinstance(value, bool):
+            assert errors == []
+        else:
+            assert f"{kind} step 'check': red_on_base must be a boolean" in errors
+
     def test_minimal_draft_is_valid(self, tmp_path: Path):
         spec = make_spec(tmp_path, verify=(), models={})
         assert validate_task(spec) == []

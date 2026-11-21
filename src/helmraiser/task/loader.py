@@ -236,6 +236,7 @@ def parse_task(content: str, source_path: Path, config: dict[str, Any]) -> TaskS
             project_defaults.models if project_defaults else None,
         ),
         budget=resolve_budget(budget_raw if isinstance(budget_raw, dict) else None, config),
+        budget_explicit=isinstance(budget_raw, dict),
         verify=_verify_steps(fm),
         evidence=_evidence_steps(fm),
         tags=tuple(str(t) for t in tags),

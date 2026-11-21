@@ -171,6 +171,8 @@ class TaskSpec:
     plan_explicit: bool = False
     depends_on: tuple[str, ...] = ()
     paths: tuple[str, ...] | None = None
+    # Records a frontmatter budget mapping, not whether a resolved budget exists.
+    budget_explicit: bool = False
 
     @property
     def task_id(self) -> str:

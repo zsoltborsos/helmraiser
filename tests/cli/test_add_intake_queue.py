@@ -2182,6 +2182,7 @@ class TestRelatedTestsOutsidePaths:
             status="queued",
             paths=(self.SOURCE, "tests/other.test.tsx"),
             extra={"intake": fm["intake"]},
+            budget_explicit=True,
         )
         assert document == render_task(saved)
         assert fm["intake"]["related_tests_added"] == ["tests/other.test.tsx"]

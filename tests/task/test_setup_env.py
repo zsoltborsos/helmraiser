@@ -69,7 +69,9 @@ class TestSchema:
             "setup: python3 -m venv .venv" in text
             and "PYTHONPATH: $HELMRAISER_WORKTREE/src" in text
         )
-        assert load_task(out, DEFAULT_CONFIG) == replace(spec, source_path=out.resolve())
+        assert load_task(out, DEFAULT_CONFIG) == replace(
+            spec, source_path=out.resolve(), budget_explicit=True
+        )
 
     def test_env_values_are_strings(self, tmp_path: Path):
         content = f"---\nid: t\ntitle: T\nproject: {tmp_path}\nenv:\n  PORT: 8080\n---\n"

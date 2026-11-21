@@ -15,7 +15,7 @@ from helmraiser.task.loader import (
     render_task,
     write_task,
 )
-from helmraiser.task.model import ModelSpec
+from helmraiser.task.model import Budget, ModelSpec
 from helmraiser.utils.markdown import parse_frontmatter, serialize_frontmatter
 
 FULL_TASK = """---
@@ -103,6 +103,7 @@ class TestLoad:
         assert spec.models["review"] == ModelSpec("openai-codex/gpt-6-astra", "high")
         assert spec.models["intake"] == ModelSpec("p/intake", "high")  # from config
         assert spec.models["scout"] == ModelSpec("p/scout", "low")
+        assert spec.budget_explicit is True
         assert (spec.budget.max_cost_usd, spec.budget.max_minutes) == (3.0, 60)
         assert [v.name for v in spec.verify] == ["tests", "lint"]
         assert spec.verify[0].timeout == 600
@@ -120,6 +121,7 @@ class TestLoad:
     def test_profile_resolution_without_overrides(self, tmp_path: Path, config: dict):
         path = write(tmp_path, f"---\nid: t\ntitle: T\nproject: {tmp_path}\n---\nbody\n")
         spec = load_task(path, config)
+        assert spec.budget_explicit is False
         assert spec.models["implement"] == ModelSpec("p/impl", "medium")
         assert spec.models["fallback"] == ModelSpec("p/fallback", "high")
         assert spec.models["review"] == ModelSpec("p/review", "high")
@@ -133,6 +135,28 @@ class TestLoad:
         assert spec.isolation == "process"
         assert spec.policy is None
         assert spec.plan is False
+
+    @pytest.mark.parametrize(
+        ("budget_fm", "explicit", "expected"),
+        [
+            ({}, False, Budget(7.0, 45, 3)),
+            ({"budget": {}}, True, Budget(7.0, 45, 3)),
+            ({"budget": {"max_minutes": 10}}, True, Budget(7.0, 10, 3)),
+            (
+                {"budget": {"max_cost_usd": 2.0, "max_minutes": 20, "max_iterations": 2}},
+                True,
+                Budget(2.0, 20, 2),
+            ),
+            ({"budget": None}, False, Budget(7.0, 45, 3)),
+            ({"budget": "invalid"}, False, Budget(7.0, 45, 3)),
+        ],
+    )
+    def test_budget_provenance(self, tmp_path: Path, config: dict, budget_fm, explicit, expected):
+        spec = parse_task(
+            serialize_frontmatter({"id": "t", **budget_fm}, "body"), tmp_path / "t.md", config
+        )
+        assert spec.budget_explicit is explicit
+        assert spec.budget == expected
 
     def test_judge_is_a_profile(self, tmp_path: Path, config: dict):
         spec = load_task(write(tmp_path, "---\nid: t\n---\nbody\n"), config)
@@ -155,7 +179,8 @@ class TestLoad:
     def test_empty_config_resolves_no_models(self, tmp_path: Path):
         spec = load_task(write(tmp_path, f"---\nid: t\ntitle: T\nproject: {tmp_path}\n---\n"), {})
         assert spec.models == {}
-        assert spec.budget.max_iterations == DEFAULT_CONFIG["budget"]["max_iterations"]
+        assert spec.budget_explicit is False
+        assert spec.budget == Budget(**DEFAULT_CONFIG["budget"])
 
     def test_quality_gates_sugar(self, tmp_path: Path, config: dict):
         content = (
@@ -254,7 +279,18 @@ class TestRoundTrip:
         assert ("plan" in rendered) is (plan is not None)
         if plan is not None:
             assert rendered["plan"] is plan
-        assert parse_task(render_task(spec), spec.source_path, config) == spec
+        assert parse_task(render_task(spec), spec.source_path, config) == replace(
+            spec, budget_explicit=True
+        )
+
+    def test_implicit_budget_round_trips_as_explicit(self, tmp_path: Path, config: dict):
+        spec = parse_task("---\nid: t\n---\nbody\n", tmp_path / "t.md", config)
+        assert spec.budget_explicit is False
+        text = render_task(spec)
+        fm = parse_frontmatter(text)["frontmatter"]
+        assert fm["budget"] == config["budget"]
+        assert "budget_explicit" not in fm
+        assert parse_task(text, spec.source_path, config) == replace(spec, budget_explicit=True)
 
     def test_direct_construction_model_serialization_compatibility(
         self, tmp_path: Path, config: dict

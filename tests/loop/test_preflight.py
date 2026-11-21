@@ -459,6 +459,29 @@ class TestIntakeAcceptanceCheck:
 
 
 class TestRunPreflight:
+    @pytest.mark.parametrize("sandbox", ["host", None], ids=["host", "srt"])
+    def test_permission_hints_respect_step_sandbox(
+        self, tmp_project: Path, tmp_path: Path, config: dict, srt_log: Path, sandbox
+    ):
+        payload = run_preflight_steps(
+            tmp_project,
+            [VerifyStep("check", "printf 'EACCES: permission denied\\n' >&2; exit 1", sandbox=sandbox)],
+            config=config,
+            data_dir=tmp_path / "data",
+        )
+
+        assert payload["ok"] is False and payload["error"] is None
+        (result,) = payload["commands"]
+        assert result["exit_code"] == 1 and result["passed"] is False
+        assert result["sandbox"] == (sandbox or "srt")
+        assert result["hints"] == ([] if sandbox == "host" else [DENIED_HINT])
+        classification = "fail" if sandbox == "host" else "sandbox"
+        assert preflight.classify_preflight_step(tmp_project, result, ()) == classification
+        normalized = preflight.normalize_scout_preflight(tmp_project, payload, ())
+        assert normalized["summary"] == f"{classification}(1)"
+        assert len(srt_calls(srt_log)) == (0 if sandbox == "host" else 1)
+        assert_cleaned_up(tmp_project, tmp_path / "data", payload)
+
     @pytest.mark.parametrize("configured", [False, True])
     def test_temporary_run_directory(
         self, tmp_project, tmp_path, config, srt_log, monkeypatch, configured
@@ -644,7 +667,9 @@ class TestRunPreflight:
             "Error: connect ECONNREFUSED 127.0.0.1:56380\n"
         )
         monkeypatch.setattr(
-            preflight, "sandbox_hints", lambda _output, ports: sandbox_hints(refused, ports)
+            preflight,
+            "sandbox_hints",
+            lambda _output, ports, *, sandboxed: sandbox_hints(refused, ports, sandboxed=sandboxed),
         )
         project_toml(tmp_project, SERVICE + "host_port = 56379\n")
 

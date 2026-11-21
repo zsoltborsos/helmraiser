@@ -32,7 +32,7 @@ from helmraiser.loop.runner import (
     step_env,
 )
 from helmraiser.loop.services import RunningService, ServiceError, stop_services
-from helmraiser.loop.shell import run_shell, tail_lines
+from helmraiser.loop.shell import SANDBOX_SRT, run_shell, tail_lines
 from helmraiser.loop.verify import run_step
 from helmraiser.pipeline.run_identity import resolve_run_id
 from helmraiser.task.model import VerifyStep
@@ -328,7 +328,11 @@ def run_preflight_steps(
                     "sandbox": result.sandbox,
                     "output": result.tail,
                     "tail": tail_lines(result.tail, tail),
-                    "hints": sandbox_hints(result.tail, [s.host_port for s in running]),
+                    "hints": sandbox_hints(
+                        result.tail,
+                        [s.host_port for s in running],
+                        sandboxed=result.sandbox == SANDBOX_SRT,
+                    ),
                 }
             )
         payload["ok"] = all(item["passed"] for item in payload["commands"])

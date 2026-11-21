@@ -180,6 +180,9 @@ The intake prompt says that verify and evidence run the project's tests and comm
 never read, grep, parse or check the existence of source files. For documentation-only
 Markdown or plain-text tasks, one step may check that removed stale wording no longer
 appears in the affected document; this excludes help strings and other text embedded in code.
+Intake is instructed to set `red_on_base: true` only on steps that check the task's
+change against an existing file, such as that stale-text check or an assertion on current
+command output, so the step must fail before the change.
 A proposed step that still
 does (it greps or reads with `grep`, `rg`, `cat`, `readFileSync`, `open` or
 `Path(…).read_text()`, parses with `createSourceFile` or `ast.parse`, or runs `test -f`
@@ -227,7 +230,11 @@ project setup and services, and the verify sandbox settings. No extra pi session
 beyond intake's model when a proposal is needed. Each step reports `name: class`:
 `green`, `expected red`, `sandbox`, or `fail`; failures include the diagnostic excerpt
 and any sandbox hint. Exit 0 means all steps are green or expected red; otherwise it
-exits 2 without queueing. Expected red requires a known missing-target diagnostic for a
+exits 2 without queueing. A step with `red_on_base: true` is expected red when it fails,
+unless a sandbox hint makes it `sandbox`. If it passes, it is `fail`: the diagnostic says
+it was declared red on base but passed on unchanged code, so it cannot detect the change.
+This diagnostic appears in human failure output and JSON `check.steps[].tail`.
+For unmarked steps, expected red requires a known missing-target diagnostic for a
 literal file mentioned in the task's paths or body that is absent at HEAD. Globs,
 directory-only declarations and targets mentioned only in commands do not qualify.
 `--json` includes a `check` object with `summary`, `error`, and normalized `steps`.
@@ -327,7 +334,9 @@ Each generated draft then receives the same acceptance proposal as `intake --pro
 and remains `status: draft` without an approval stamp or queueing. Helmraiser preflights
 its proposed verify steps serially, using project setup and services, the verify sandbox
 settings, a throwaway worktree, and each step's own timeout. Results are classified as
-`green`, `expected red` (a missing path the task says it creates), `sandbox`, or `fail`.
+`green`, `expected red` (a missing path the task says it creates, or an explicitly
+`red_on_base: true` step that fails without a sandbox hint), `sandbox`, or `fail`.
+Marked passing steps are `fail` with the same diagnostic as intake checks.
 An intake failure is retained on the reviewable draft and does not stop later drafts.
 The scout report records each proposal, intake result, and preflight result.
 
@@ -391,8 +400,8 @@ punctuation-only input prints an empty line. Leave `test_slug.py` unchanged.
 | `delivery` | no | `merge` (default) or `pr`; new PR runs safely synchronize the base from its configured upstream (see [Policies](#policies)) |
 | `base` | no | Local branch from which to create the run worktree and target delivery; defaults to the primary checkout's current branch; PR synchronization never resets an ahead/diverged base |
 | `isolation` | no | `process` (default), `none` or `vm`; intake keeps the file's isolation unless the proposal is stronger |
-| `verify` | to queue | List of `{name, run, timeout, sandbox}` (timeout defaults to 300 s); a bare string is also accepted |
-| `evidence` | for `auto` | List of `{name, run, artifacts, criteria, timeout, sandbox}` (timeout defaults to 600 s); commands write into `$HELMRAISER_EVIDENCE_DIR` |
+| `verify` | to queue | List of `{name, run, timeout, sandbox, red_on_base}` (`red_on_base` is an optional boolean, default false; timeout defaults to 300 s); a bare string is also accepted |
+| `evidence` | for `auto` | List of `{name, run, artifacts, criteria, timeout, sandbox, red_on_base}` (`red_on_base` is an optional boolean, default false; timeout defaults to 600 s); commands write into `$HELMRAISER_EVIDENCE_DIR`. The marker affects base acceptance checks only, never implementation-run success criteria (also true for verify) |
 | `models` | no | Per-task profile override, e.g. `implement: provider/id:thinking`; overrides the project's `[models]` and the config's `profiles` |
 | `budget` | no | Per-task override of `max_cost_usd`, `max_minutes`, `max_iterations` |
 | `setup` | no | Shell command run in the fresh worktree; a retry restart re-runs it unless the same command's latest attempt passed |

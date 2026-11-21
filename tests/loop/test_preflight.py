@@ -651,6 +651,7 @@ class TestRunPreflight:
         assert fake_docker.containers() == {}
         assert_cleaned_up(tmp_project, tmp_path / "d", payload)
 
+    @pytest.mark.parametrize("sandbox", ["host", None], ids=["host", "srt"])
     def test_a_refused_port_gets_the_hint_unless_a_service_provides_it(
         self,
         tmp_project: Path,
@@ -659,6 +660,7 @@ class TestRunPreflight:
         srt_log: Path,
         fake_docker: FakeDocker,
         monkeypatch: pytest.MonkeyPatch,
+        sandbox,
     ):
         # The fake srt does not run relayed commands: feed the hints the refusals directly.
         monkeypatch.setattr(services, "port_ready", lambda port: True)
@@ -673,10 +675,20 @@ class TestRunPreflight:
         )
         project_toml(tmp_project, SERVICE + "host_port = 56379\n")
 
-        payload = run_preflight(tmp_project, ["true"], config=config, data_dir=tmp_path / "d")
+        payload = run_preflight_steps(
+            tmp_project,
+            [VerifyStep("check", "true", sandbox=sandbox)],
+            config=config,
+            data_dir=tmp_path / "d",
+        )
 
         (command,) = payload["commands"]
-        assert command["hints"] == [loopback_hint("127.0.0.1:56380", sandboxed=True)]
+        assert command["sandbox"] == (sandbox or "srt")
+        assert command["hints"] == [
+            loopback_hint("127.0.0.1:56380", sandboxed=sandbox != "host")
+        ]
+        assert fake_docker.containers() == {}
+        assert_cleaned_up(tmp_project, tmp_path / "d", payload)
 
     def test_failed_setup_stops_before_the_commands(
         self, tmp_project: Path, tmp_path: Path, config: dict, srt_log: Path

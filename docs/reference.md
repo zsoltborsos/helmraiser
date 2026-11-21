@@ -190,6 +190,17 @@ on a path under `src/`, `lib/`, `app/`, `packages/` and the like, or with a sour
 suffix) is kept, with a note naming it (`task/structural.py`). Paths under
 `$HELMRAISER_EVIDENCE_DIR`, build output and text files such as `README.md` do not count.
 Notes are printed before the editor opens, and `--json` output carries them.
+
+The prompt instructs the intake model to keep verify fast because it runs after every
+implementation attempt: use tests covering the changed code, plus the project's lint or
+type checks when code changes. Put the full test suite and its coverage gate only in
+evidence, which runs once after verify passes; do not duplicate checks in both.
+When frontmatter supplies `size`, the task section shows `Task size: S` (or the supplied
+value) before the task body; without size, no line is added. Proposed budgets for size S
+should be at most $3, 60 minutes and 3 iterations; for M, at most $6, 120 minutes and
+4 iterations. For L or unknown size, size the budget to the work. Preserve an existing
+budget. These are instructions to the intake model, not validated limits.
+
 The intake model's pi session (tools `read`, `grep`, `find`, `ls`, in the primary
 checkout) runs inside `srt` with the same read rules and network allowlist as a run
 (see [Isolation](#isolation)). It may write only to a temporary session directory and

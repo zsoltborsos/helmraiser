@@ -1553,6 +1553,7 @@ def test_per_lens_due_and_automatic_gates(tmp_project, monkeypatch):
     from helmraiser.loop import scout as module
 
     config = _gate_config(tmp_project)
+    config["routing"]["scout"]["lenses"] = {"docs": {"auto": False}}
     config["routing"]["scout"]["enabled"] = False
     ledger = _FakeLedger(
         0,
@@ -1578,9 +1579,11 @@ def test_per_lens_due_and_automatic_gates(tmp_project, monkeypatch):
     assert module.scout_due_at(tmp_project, ledger, config, lens="tests") == float("-inf")
     assert module.scout_due_at(tmp_project, ledger, config, lens="docs") == 86500
     module.scout_gate(tmp_project, ledger, config, 101, lens="tests", automatic=True)
-    with pytest.raises(module.ScoutError):
-        module.scout_gate(tmp_project, ledger, config, 101, lens="docs", automatic=True)
+    with pytest.raises(module.ScoutError, match=r"^routing\.scout\.enabled is false$"):
+        module.scout_gate(tmp_project, ledger, config, 86500, lens="docs", automatic=True)
     config["routing"]["scout"]["enabled"] = True
+    with pytest.raises(module.ScoutError, match=r"^routing\.scout\.enabled is false$"):
+        module.scout_gate(tmp_project, ledger, config, 86500, lens="docs", automatic=True)
     module.scout_gate(tmp_project, ledger, config, 86500, lens="docs")
     with pytest.raises(module.ScoutError, match="cooldown"):
         module.scout_gate(tmp_project, ledger, config, 86499, lens="docs")

@@ -316,7 +316,11 @@ class TestIntakeAcceptanceCheck:
         self, tmp_project, tmp_path, config, srt_log, monkeypatch, kind, shell, expected
     ):
         spec = self.spec(tmp_project)
-        marked = replace(getattr(spec, kind)[0], red_on_base=True)
+        marked = replace(
+            getattr(spec, kind)[0],
+            red_on_base=True,
+            sandbox=None if expected == "sandbox" else "host",
+        )
         spec = replace(spec, **{"verify": (), "evidence": (), kind: (marked,)})
         monkeypatch.setattr(verify, "run_shell", lambda *args: shell)
 

@@ -352,7 +352,6 @@ def render_draft(
         "title": candidate.title,
         "project": str(repo.resolve()),
         "policy": "review",
-        "delivery": "merge",
         "isolation": "process",
         "status": "draft",
         "source": f"scout {scout_id}",

@@ -1,5 +1,7 @@
 # Helmraiser — Current State
 
+- Scout drafts omit delivery and inherit the project default, falling back to merge.
+
 - Scout lenses have CLI/JSON settings with ledger overrides, per-project/lens automatic cadence, and scout-only draft listings by default (`--all` includes manual drafts).
 
 _Updated 2026-11-14._ What is built and true now. Planned and in-flight work is in

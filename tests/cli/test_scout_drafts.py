@@ -28,6 +28,7 @@ from helmraiser.pi.directives import render_scout_directives
 from helmraiser.task.loader import parse_task
 from helmraiser.task.model import project_slug
 from helmraiser.task.project import load_project_defaults
+from helmraiser.utils.markdown import parse_frontmatter
 from tests.conftest import FakeLb, FakePi
 from tests.loop.test_preflight import srt_calls
 from tests.loop.test_preflight import srt_log as _srt_log_fixture  # noqa: F401
@@ -452,13 +453,33 @@ class TestScoutContract:
         with pytest.raises(ScoutError, match="invalid .* path"):
             parse_candidates(json.dumps([candidate(**{field: value})]), ("private",))
 
-    def test_generated_draft_is_deterministic_and_loadable(self, tmp_project: Path):
+    @pytest.mark.parametrize("delivery", ["pr", None])
+    def test_generated_draft_is_deterministic_and_loadable(
+        self, tmp_project: Path, delivery: str | None
+    ):
+        if delivery is not None:
+            project_file(tmp_project, f'[defaults]\ndelivery = "{delivery}"\n')
         (parsed,) = parse_candidates(json.dumps([candidate()]), ())
         text = render_draft(parsed, tmp_project, "00000000-0000-4000-8000-000000000000")
+        assert text == render_draft(parsed, tmp_project, "00000000-0000-4000-8000-000000000000")
+        frontmatter = parse_frontmatter(text)["frontmatter"]
+        assert "delivery" not in frontmatter
+        assert frontmatter == {
+            "id": "tighten-parser",
+            "title": "Tighten parser validation",
+            "project": str(tmp_project.resolve()),
+            "policy": "review",
+            "isolation": "process",
+            "status": "draft",
+            "source": "scout 00000000-0000-4000-8000-000000000000",
+            "size": "S",
+            "tags": ["scout"],
+        }
         spec = parse_task(text, tmp_project / ".helmraiser/tasks/tighten-parser.md", {})
 
         assert spec.id == "tighten-parser" and spec.status == "draft"
-        assert spec.policy == "review" and spec.delivery == "merge"
+        assert spec.policy == "review"
+        assert spec.delivery == (delivery or "merge")
         assert spec.isolation == "process" and spec.tags == ("scout",)
         assert spec.extra["size"] == "S"
         assert spec.extra["source"] == "scout 00000000-0000-4000-8000-000000000000"

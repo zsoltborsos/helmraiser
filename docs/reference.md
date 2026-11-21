@@ -310,8 +310,9 @@ of HEAD, with only `read`, `grep`, `find` and `ls`; the worktree is removed afte
 The report is `<data-dir>/runs/<scout-id>/scout.md`.
 
 Valid non-ruling candidates become `.helmraiser/tasks/<id>.md` files with `status: draft`,
-`policy: review`, `delivery: merge`, `isolation: process`, size, `tags: [scout]`, and
-`source: scout <scout-id>`. Existing IDs and normalized titles are skipped. Candidates
+`policy: review`, `isolation: process`, size, `tags: [scout]`, and
+`source: scout <scout-id>`. Drafts omit delivery and inherit the project's default,
+falling back to `merge` when none is configured. Existing IDs and normalized titles are skipped. Candidates
 that need an owner ruling appear only in the report.
 
 Each generated draft then receives the same acceptance proposal as `intake --propose`

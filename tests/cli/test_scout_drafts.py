@@ -28,7 +28,7 @@ from helmraiser.pi.directives import render_scout_directives
 from helmraiser.task.loader import parse_task
 from helmraiser.task.model import project_slug
 from helmraiser.task.project import load_project_defaults
-from helmraiser.utils.markdown import parse_frontmatter
+from helmraiser.utils.markdown import parse_frontmatter, serialize_frontmatter
 from tests.conftest import FakeLb, FakePi
 from tests.loop.test_preflight import srt_calls
 from tests.loop.test_preflight import srt_log as _srt_log_fixture  # noqa: F401
@@ -485,12 +485,14 @@ class TestScoutContract:
             "isolation": "process",
             "status": "draft",
             "source": "scout 00000000-0000-4000-8000-000000000000",
+            "paths": ["src/parser.py", "tests/test_parser.py"],
             "size": "S",
             "tags": ["scout"],
         }
         spec = parse_task(text, tmp_project / ".helmraiser/tasks/tighten-parser.md", {})
 
         assert spec.id == "tighten-parser" and spec.status == "draft"
+        assert spec.paths == ("src/parser.py", "tests/test_parser.py")
         assert spec.policy == "review"
         assert spec.delivery == (delivery or "merge")
         assert spec.isolation == "process" and spec.tags == ("scout",)
@@ -499,6 +501,11 @@ class TestScoutContract:
         assert "## Goal" in spec.body and "`src/parser.py:12`" in spec.body
         assert "## Change" in spec.body and "`tests/test_parser.py`" in spec.body
         assert "## Verify hints" in spec.body and "pytest tests/test_parser.py" in spec.body
+
+    def test_draft_paths_preserve_first_occurrence_order(self, tmp_project: Path):
+        (parsed,) = parse_candidates(json.dumps([candidate(files=["z.py", "a.py", "z.py"])]), ())
+        spec = parse_task(render_draft(parsed, tmp_project, "test"), tmp_project / "t.md", {})
+        assert spec.paths == ("z.py", "a.py")
 
     def test_project_notes_are_appended_once_to_drafts(self, tmp_project: Path):
         notes = "Use node --import tsx, never the tsx CLI."
@@ -570,16 +577,14 @@ class TestScoutCommand:
         monkeypatch: pytest.MonkeyPatch,
         declared: bool,
     ):
-        if declared:
-            # Current scout drafts omit paths. Supply a scoped draft to exercise
-            # note propagation without changing the production draft renderer.
-            def scoped_draft(*args, **kwargs):
-                return render_draft(*args, **kwargs).replace(
-                    "status: draft\n",
-                    "status: draft\npaths: [src/parser.py, tests/test_parser.py]\n",
-                )
+        if not declared:
 
-            monkeypatch.setattr("helmraiser.loop.scout.render_draft", scoped_draft)
+            def unscoped_draft(*args, **kwargs):
+                parsed = parse_frontmatter(render_draft(*args, **kwargs))
+                parsed["frontmatter"].pop("paths")
+                return serialize_frontmatter(parsed["frontmatter"], parsed["body"])
+
+            monkeypatch.setattr("helmraiser.loop.scout.render_draft", unscoped_draft)
         (tmp_project / "docs").mkdir()
         (tmp_project / "docs/context.md").write_text("Context\n")
         subprocess.run(["git", "-C", str(tmp_project), "add", "docs/context.md"], check=True)

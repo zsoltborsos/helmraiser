@@ -355,6 +355,7 @@ def render_draft(
         "isolation": "process",
         "status": "draft",
         "source": f"scout {scout_id}",
+        "paths": list(dict.fromkeys(candidate.files)),
         "size": candidate.size,
         "tags": ["scout"] + ([f"scout-{lens}"] if lens != "state" else []),
     }

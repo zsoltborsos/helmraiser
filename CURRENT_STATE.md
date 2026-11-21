@@ -1,5 +1,7 @@
 # Helmraiser — Current State
 
+Scout drafts declare candidate files as ordered, deduplicated paths.
+
 Preflight hints respect each step’s actual sandbox mode: host permission failures remain ordinary failures, sandboxed permission failures retain their hints, and host loopback hints use non-sandbox wording.
 
 Implement directives tell agents to commit and stop without `BLOCKED:` when verify commands fail only because of their own shell’s environment limits; Helmraiser runs verify afterward.

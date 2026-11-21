@@ -91,7 +91,7 @@ def get_intake_adapter(config: dict[str, Any]) -> PiAdapter | None:
     )
 
 
-def build_intake_prompt(spec: TaskSpec, config: dict[str, Any]) -> str:
+def build_intake_prompt(spec: TaskSpec, config: dict[str, Any], feedback: str | None = None) -> str:
     defaults = load_project_defaults(spec.project)
     setup = effective_setup(spec, defaults)
     env_names = sorted(effective_env(spec, defaults))
@@ -174,7 +174,17 @@ def build_intake_prompt(spec: TaskSpec, config: dict[str, Any]) -> str:
         f"{spec.body.strip()}\n\n"
         "## Current acceptance block\n\n"
         f"```yaml\n{current_yaml}```\n\n"
-        f"{notes_prompt}"
+        + (
+            "## Failed acceptance check\n\n"
+            "Your previous proposal was run on the unchanged code. These steps failed for "
+            "reasons unrelated to the task. Propose an acceptance block that avoids each failure: use "
+            "only commands and tools the project environment provides, and do not lint or test files "
+            "that already fail on the unchanged code unless the task fixes them.\n\n"
+            f"{feedback}\n\n"
+            if feedback is not None
+            else ""
+        )
+        + f"{notes_prompt}"
         f"{environment_prompt}"
         "## Configured model profiles\n\n"
         f"{profiles_prompt}\n\n"
@@ -319,6 +329,8 @@ def propose_acceptance(
     model: ModelSpec,
     data_dir: Path,
     config: dict[str, Any],
+    *,
+    feedback: str | None = None,
 ) -> dict[str, Any]:
     """Run the intake model over the task and return its proposal.
 
@@ -328,7 +340,7 @@ def propose_acceptance(
     run_id = str(uuid.uuid4())
     with tempfile.TemporaryDirectory(prefix="helmraiser-intake-") as tmp:
         request = PiRequest(
-            prompt=build_intake_prompt(spec, config),
+            prompt=build_intake_prompt(spec, config, feedback),
             session_id=f"{run_id}-intake",
             model=model,
             cwd=spec.project,
@@ -414,6 +426,7 @@ def run_intake(
     allow_auto: bool,
     approve: bool = True,
     collect_scope_warnings: bool = True,
+    feedback: str | None = None,
 ) -> IntakeOutcome:
     """Merge the model's proposal (if any) into ``spec`` and validate it as queued.
 
@@ -430,7 +443,7 @@ def run_intake(
     elif adapter is not None:
         if model is None:
             raise ValueError("intake model not configured")
-        proposal = propose_acceptance(spec, adapter, model, data_dir, config)
+        proposal = propose_acceptance(spec, adapter, model, data_dir, config, feedback=feedback)
         if spec.policy is not None and "policy" in proposal:
             proposal["policy"] = spec.policy
             notes.append(f"intake kept the file's policy: {spec.policy}")

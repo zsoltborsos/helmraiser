@@ -1029,6 +1029,33 @@ class TestIntakeCheck:
         assert path.read_bytes() == original
         assert not data_dir.exists()
 
+    @pytest.mark.parametrize("classification", ["fail", "sandbox"])
+    def test_proposed_check_failure_does_not_retry(
+        self, tmp_project, data_dir, monkeypatch, classification
+    ):
+        self.preflight(monkeypatch, classification, "green")
+        self.no_ledger(monkeypatch)
+        adapter = ScriptedPiAdapter(
+            {
+                "intake": [
+                    PiScript(final_text=PROPOSAL.format(policy="review", isolation="process")),
+                    PiScript(final_text="must not be asked"),
+                ]
+            }
+        )
+        use_adapter(monkeypatch, adapter)
+        path = write_task(tmp_project, DRAFT)
+        original = path.read_bytes()
+        result = invoke("intake", str(path), "--check", "--yes", "--json", data_dir=data_dir)
+        assert result.exit_code == 2, result.output
+        out = json.loads(result.output)
+        assert out["error"] == "acceptance check failed"
+        assert out["check"]["summary"] == f"{classification}(1)"
+        assert len(adapter.calls) == 1
+        assert "## Failed acceptance check" not in adapter.calls[0].prompt
+        assert path.read_bytes() == original
+        assert not data_dir.exists()
+
     @pytest.mark.parametrize("as_json", [False, True])
     def test_check_only_is_ledger_and_editor_free(
         self, tmp_project, data_dir, monkeypatch, as_json
@@ -3309,3 +3336,40 @@ def test_depends_on_queue_next(tmp_project, data_dir, ledger):
     assert text.exit_code == 0, text.output
     assert "no eligible task" in text.output
     assert "missing-one: unknown" in text.output and "missing-two: unknown" in text.output
+
+
+def test_failed_check_feedback_prompt_and_forwarding(tmp_project, data_dir):
+    path = write_task(tmp_project, DRAFT)
+    spec = parse_task(path.read_text(), path, DEFAULT_CONFIG)
+    feedback = "step: tests\ncommand: false\nbase diagnostic"
+    opening = (
+        "Your previous proposal was run on the unchanged code. These steps failed for "
+        "reasons unrelated to the task. Propose an acceptance block that avoids each failure: use "
+        "only commands and tools the project environment provides, and do not lint or test files "
+        "that already fail on the unchanged code unless the task fixes them."
+    )
+    original = build_intake_prompt(spec, DEFAULT_CONFIG)
+    assert original == build_intake_prompt(spec, DEFAULT_CONFIG, None)
+    assert "## Failed acceptance check" not in original and opening not in original
+    prompt = build_intake_prompt(spec, DEFAULT_CONFIG, feedback)
+    section = f"## Failed acceptance check\n\n{opening}\n\n{feedback}\n\n"
+    assert prompt.count(section) == 1
+    assert prompt.replace(section, "") == original
+    assert prompt.index("## Current acceptance block") < prompt.index(section)
+    assert prompt.index(section) < prompt.index("## Project environment")
+    adapter = ScriptedPiAdapter(
+        {"intake": PiScript(final_text=PROPOSAL.format(policy="review", isolation="process"))}
+    )
+    outcome = intake_logic.run_intake(
+        spec,
+        config=DEFAULT_CONFIG,
+        adapter=adapter,
+        model=intake_logic.ModelSpec.parse("test/model"),
+        data_dir=data_dir,
+        allow_auto=False,
+        approve=False,
+        feedback=feedback,
+    )
+    assert not outcome.errors
+    assert len(adapter.calls) == 1
+    assert section in adapter.calls[0].prompt

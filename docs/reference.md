@@ -338,7 +338,7 @@ owner-maintained `.helmraiser/notes.md`, and optional [Logbook context](#logbook
 then runs exactly one scout-model pi session under srt in a detached throwaway worktree
 of HEAD, with only `read`, `grep`, `find` and `ls`; the worktree is removed afterwards.
 The report is `<data-dir>/runs/<scout-id>/scout.md`.
-The scout directive requests symbol-qualified evidence citations, code-grounded changes covering every verify hint, outside-worktree mutation checks without production edits for test-only candidates, and one candidate for findings touching the same file.
+The scout directive requests exact `file:line` evidence entries with symbol names in `why`, code-grounded changes covering every verify hint, outside-worktree mutation checks without production edits for test-only candidates, and one candidate for findings touching the same file.
 
 Valid non-ruling candidates become `.helmraiser/tasks/<id>.md` files with `status: draft`,
 `policy: review`, `isolation: process`, size, `tags: [scout]`, and

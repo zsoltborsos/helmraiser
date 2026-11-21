@@ -164,6 +164,30 @@ def body_paths_repo(tmp_path, git_init):
     return repo
 
 
+@pytest.mark.parametrize(
+    "body,expected",
+    [
+        ("Evidence:\n- src/b.py\n", []),
+        ("Evidence:\n- src/b.py\n\nsrc/a.py", ["src/a.py"]),
+        ("Evidence:\n- src/b.py\n## Change docs/x.md\nsrc/a.py", ["docs/x.md", "src/a.py"]),
+        ("Evidence:\n- src/b.py", []),
+        ("Evidence:\nsrc/b.py\n\nEvidence:\ndocs/x.md", []),
+        ("Inline Evidence: src/b.py", ["src/b.py"]),
+        ("## Project notes (Owner)\nsrc/b.py\n## Change\nsrc/a.py", []),
+        (
+            "## Change\nsrc/a.py\nEvidence:\nsrc/a.py\n## Project notes (Owner)\nsrc/a.py",
+            ["src/a.py"],
+        ),
+        (
+            "Evidence:\nsrc/b.py\n# Change docs/x.md\nsrc/a.py\nEvidence:\ntests/test_a.py\n\n## Project notes (Owner)\n.github/ci.yml",
+            ["docs/x.md", "src/a.py"],
+        ),
+    ],
+)
+def test_body_paths_excluded_sections(body_paths_repo, body, expected):
+    assert body_paths_outside_scope(body, ("other.py",), body_paths_repo) == expected
+
+
 def test_body_paths_mentions(body_paths_repo):
     body = """Edit `src/a.py:12` and src/b.py:12-20, docs/x.md#intro.
     **./tests/test_a.py::test_name**; .github/ci.yml.

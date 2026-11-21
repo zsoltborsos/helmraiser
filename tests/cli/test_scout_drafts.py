@@ -586,12 +586,25 @@ class TestScoutCommand:
 
             monkeypatch.setattr("helmraiser.loop.scout.render_draft", unscoped_draft)
         (tmp_project / "docs").mkdir()
-        (tmp_project / "docs/context.md").write_text("Context\n")
-        subprocess.run(["git", "-C", str(tmp_project), "add", "docs/context.md"], check=True)
+        for name in ("context", "evidence", "notes"):
+            (tmp_project / f"docs/{name}.md").write_text("Context\n")
+        notes_path = tmp_project / ".helmraiser/notes.md"
+        notes_path.parent.mkdir(exist_ok=True)
+        notes_path.write_text("Read docs/notes.md.")
+        subprocess.run(["git", "-C", str(tmp_project), "add", "docs"], check=True)
         fake_pi.write_script(
             {
                 "sessions": {
-                    "*-scout": {"text": json.dumps([candidate(change="Update docs/context.md.")])},
+                    "*-scout": {
+                        "text": json.dumps(
+                            [
+                                candidate(
+                                    change="Update docs/context.md.",
+                                    evidence=["docs/evidence.md:1"],
+                                )
+                            ]
+                        )
+                    },
                     "*-intake": {"text": intake_proposal()},
                 }
             }
@@ -613,6 +626,8 @@ class TestScoutCommand:
         (row,) = ledger.list_tasks(status="draft")
         intake = ledger.get_scout_draft(row["task_id"])
         assert intake["intake_notes"].count(note) == int(declared)
+        for excluded in ("docs/evidence.md", "docs/notes.md"):
+            assert excluded not in str(intake["intake_notes"])
         report = Path(json.loads(result.output)["report_path"]).read_text()
         assert (note in report) == declared
         drafts = runner.invoke(app, ["drafts", "--data-dir", str(data_dir), "--json"])

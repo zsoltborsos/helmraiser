@@ -10,8 +10,10 @@ when it greps, reads, parses or tests the existence of a path that looks like so
 ``paths`` do not cover: an implementer cannot change them, so such a run often ends in a
 scope request.
 
-``body_paths_outside_scope`` finds tracked files and directories named in the whole
-body (fenced blocks included, URLs excluded) that ``paths`` does not cover.
+``body_paths_outside_scope`` finds tracked files and directories named in the
+body (fenced blocks included, URLs excluded) that ``paths`` does not cover. Project
+notes through EOF and standalone Evidence lists through a blank line or ATX heading
+are excluded.
 ``body_outside_paths_warnings`` lists them in one advisory intake note, without changing
 the declared paths. There is no body note when ``paths`` is omitted or empty, the project
 is not a git repository, or listing tracked files fails.
@@ -216,7 +218,7 @@ def _tracked_files(repo: Path) -> set[str]:
 
 
 def body_paths_outside_scope(body: str, paths: tuple[str, ...] | None, repo: Path) -> list[str]:
-    """Sorted tracked files and directories mentioned in the body outside ``paths``."""
+    """Sorted tracked mentions outside ``paths``, excluding notes and Evidence lists."""
     if not paths:
         return []
     files = _tracked_files(repo)
@@ -226,8 +228,22 @@ def body_paths_outside_scope(body: str, paths: tuple[str, ...] | None, repo: Pat
         for parent in PurePosixPath(name).parents
         if str(parent) != "."
     }
+    checked_lines: list[str] = []
+    in_evidence = False
+    for line in body.splitlines():
+        if line.startswith("## Project notes ("):
+            break
+        if in_evidence:
+            if not line.strip() or re.match(r"^\s{0,3}#{1,6}(?:\s|$)", line):
+                in_evidence = False
+            else:
+                continue
+        if line.strip() == "Evidence:":
+            in_evidence = True
+            continue
+        checked_lines.append(line)
     outside: set[str] = set()
-    for token in re.split(r"[\s`\"'\[\]()<> ,;|]+", body):
+    for token in re.split(r"[\s`\"'\[\]()<> ,;|]+", "\n".join(checked_lines)):
         if "://" in token:
             continue
         token = token.lstrip("*").rstrip("*.,:;!?")

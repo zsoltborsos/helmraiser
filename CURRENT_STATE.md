@@ -40,6 +40,7 @@ was exercised under real srt: missing target → expected red, temporary referen
 implementation → green, incorrect output → rejected, without model calls or queue writes.
 Model-selection guidance distinguishes configuration from historical personal trials.
 Remaining public-release checks are in `TASKS.md`.
+`log --follow` help and reference document stopping at terminal runs or approval waits (plan, scope or merge), and restarting following after resumption.
 
 ## Known gaps
 

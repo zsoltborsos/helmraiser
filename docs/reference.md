@@ -1337,7 +1337,7 @@ per command.
 | `helmraiser drafts [--project P]` / `drafts drop <task> --reason TEXT` | Lists pending scout drafts, or retains one as dropped with its reason |
 | `helmraiser drafts request <repo>…` / `drafts request --cancel <repo>…` | Requests safe worker-driven scouts for chosen focus projects, or cancels pending requests |
 | `helmraiser wait <ref>` | Blocks silently until owner attention or completion; one result object with `--json` (see [Waiting for a run](#waiting-for-a-run)) |
-| `helmraiser log <run> [-f] [--since-id N]` | A run's ledger events as a timeline, or JSONL with `--json`; `-f` follows until the run ends |
+| `helmraiser log <run> [-f] [--since-id N]` | A run's ledger events as a timeline, or JSONL with `--json`; `-f` follows until the run is terminal or awaiting approval (plan, scope or merge); invoke it again after resumption to continue following. |
 | `helmraiser show <ref> [--json]` | State and limits by run ID, short/full task ID, or unique run prefix (see [Showing one run](#showing-one-run)) |
 | `helmraiser attach <run> [--stage implement\|review\|plan] [--exec]` | Prints the `pi --session-dir … --session …` command that opens the run's pi session; `--exec` runs it |
 | `helmraiser queue list\|next\|pause\|resume` | Inspect and control dispatch; `pause --minutes N` auto-resumes, and `resume` also clears provider holds |

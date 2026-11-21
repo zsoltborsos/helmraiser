@@ -945,7 +945,9 @@ def format_event(event: dict[str, Any]) -> str:
 
 def log(
     run: str = typer.Argument(..., help="Run id (or unique prefix)"),
-    follow: bool = typer.Option(False, "--follow", "-f", help="Poll until the run is terminal"),
+    follow: bool = typer.Option(
+        False, "--follow", "-f", help="Poll until the run is terminal or awaiting approval"
+    ),
     since_id: int = typer.Option(0, "--since-id", help="Only events with id > N"),
     interval: float = typer.Option(2.0, "--interval", help="Poll interval for --follow (s)"),
     as_json: bool = typer.Option(False, "--json", help="JSONL, one event per line"),

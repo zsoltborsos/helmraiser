@@ -44,13 +44,16 @@ prove; for a duplicate, both tests.
 
 In "change", prefer strengthening the test so it fails when the behaviour is reverted.
 Merge duplicates. Delete a test only when another named test already proves the same
-behaviour. Never weaken an assertion. Require the implementer to prove each strengthened
-or remaining test: temporarily break the named behaviour, show that the test fails,
-restore it, and report the result in the run summary. That proof cannot be a verify step,
-because intake runs verify on the unchanged code.
+behaviour. Never weaken an assertion. Require each strengthened or remaining test to be proved able to fail, by a check rather
+than a report. In "verify_hints", propose one mutation check per test: a command that
+breaks the named behaviour without changing any file in the worktree (for example a short
+script that patches it with a mock, or that runs the test against a modified copy of the
+source outside the worktree), runs only that test, and exits 0 only when the test fails.
+Say that the check is red_on_base: on the unchanged code the weak test survives the
+mutation, so the check fails until the test is strengthened.
 
-Verify hints: the project's full test suite, and its coverage gate if it has one; coverage
-must not drop.
+Verify hints: the mutation checks; the changed test files; the project's full test suite
+and its coverage gate, if it has one, as evidence. Coverage must not drop.
 """,
 }
 

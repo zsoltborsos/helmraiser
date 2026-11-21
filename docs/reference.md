@@ -173,9 +173,12 @@ Intake never proposes `policy: auto` unless you pass `--allow-auto`. It never pr
 `sandbox: host` either: it removes `sandbox` from every proposed step, with a note.
 The intake prompt includes a project environment section with the effective setup command
 (task setup overrides the project default) and sorted, merged environment variable names,
-never their values. Verify and evidence run from the repository root after setup, with no
-virtual environment activated: use worktree tool paths such as `.venv/bin/python` or the
-project's own runner such as `npm test`.
+never their values. Declared services are listed by name with their sorted provided variable
+names, omitting images, ports, service environment settings and provided values. When services
+are declared, the prompt instructs steps to use those variables rather than start containers
+or services. Verify and evidence run from the repository root after setup, with no virtual
+environment activated: use worktree tool paths such as `.venv/bin/python` or the project's own
+runner such as `npm test`.
 The intake prompt says that verify and evidence run the project's tests and commands and
 never read, grep, parse or check the existence of source files. For documentation-only
 Markdown or plain-text tasks, one step may check that removed stale wording no longer

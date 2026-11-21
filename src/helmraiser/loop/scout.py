@@ -40,9 +40,9 @@ from helmraiser.project_notes import (
 )
 from helmraiser.task.loader import TaskLoadError, origin_from_text, parse_task, write_task
 from helmraiser.task.model import ID_PATTERN, ModelSpec, TaskSpec
+from helmraiser.task.paths import matches_paths, parse_paths
 from helmraiser.task.project import load_project_defaults, worktree_manager
 from helmraiser.task.schema import validate_task
-from helmraiser.task.paths import matches_paths, parse_paths
 from helmraiser.utils.markdown import parse_frontmatter, serialize_frontmatter
 
 SCOUT_TOOLS = ("read", "grep", "find", "ls")

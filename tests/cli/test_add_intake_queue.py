@@ -1885,12 +1885,8 @@ Make the widget work.
             "These are the project's own rules for verify and evidence steps, budgets "
             "and timeouts. Where they differ from the general rules below, follow these:"
         )
-        old_introduction = (
-            "These are constraints on proposed verify and evidence commands:"
-        )
-        budget_guidance = (
-            "Preserve an existing budget. Project notes override this guidance."
-        )
+        old_introduction = "These are constraints on proposed verify and evidence commands:"
+        budget_guidance = "Preserve an existing budget. Project notes override this guidance."
         prompt = build_intake_prompt(spec, {})
         assert notes_introduction not in prompt
         assert "## Owner-maintained project notes" not in prompt

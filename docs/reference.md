@@ -351,6 +351,14 @@ settings, a throwaway worktree, and each step's own timeout. Results are classif
 `green`, `expected red` (a missing path the task says it creates, or an explicitly
 `red_on_base: true` step that fails without a sandbox hint), `sandbox`, or `fail`.
 Marked passing steps are `fail` with the same diagnostic as intake checks.
+If any step is `fail` or `sandbox`, scout asks intake once more using the original
+acceptance-free draft and those steps' names, commands, and real diagnostics (the last
+2,000 characters per output tail). Green and expected-red steps do not trigger a retry.
+The second proposal and preflight replace the first even if still failing. Intake notes
+retain `re-proposed after a failed acceptance check: <step names>` from the first attempt,
+also shown in the scout report. If retry intake fails, the first valid draft and preflight
+remain available with `intake_failed` and the retry note. Standalone `helmraiser intake`
+does not retry.
 An intake failure is retained on the reviewable draft and does not stop later drafts.
 The scout report records each proposal, intake result, and preflight result.
 

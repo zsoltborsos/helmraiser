@@ -889,6 +889,182 @@ class TestScoutCommand:
         assert fm["verify"][0]["red_on_base"] is True
         assert fm["status"] == "draft"
         assert "intake" not in fm
+        calls = [c for c in fake_pi.calls() if c["session_id"].endswith("-intake")]
+        assert len(calls) == (2 if expected == "fail(1)" else 1)
+
+    @pytest.mark.parametrize("second_fails", [False, True])
+    def test_scout_reproposes_failed_check_and_keeps_second(
+        self, tmp_project, tmp_path, fake_pi, scout_srt_log, cli_config, second_fails, monkeypatch
+    ):
+        from helmraiser.loop import intake as intake_logic
+
+        prompts = []
+        build_prompt = intake_logic.build_intake_prompt
+
+        def capture(spec, config, feedback=None):
+            prompt = build_prompt(spec, config, feedback)
+            prompts.append(prompt)
+            return prompt
+
+        monkeypatch.setattr(intake_logic, "build_intake_prompt", capture)
+        first_command = "printf 'base-check-failure\\n'; exit 1"
+        second_command = "exit 1" if second_fails else "exit 0"
+        first = intake_proposal(name="broken").replace("pytest tests/new_test.py", first_command)
+        second = intake_proposal(name="replacement").replace(
+            "pytest tests/new_test.py", second_command
+        )
+        fake_pi.write_script(
+            {
+                "sessions": {
+                    "*-scout": {"text": json.dumps([candidate(files=["README.md"])])},
+                    "*-intake": [{"text": first}, {"text": second}],
+                }
+            }
+        )
+        data_dir = tmp_path / "data"
+        result = run_scout(tmp_project, data_dir, "--force", "--max", "1")
+        assert result.exit_code == 0, result.output
+        out = json.loads(result.output)
+        calls = [c for c in fake_pi.calls() if c["session_id"].endswith("-intake")]
+        assert len(calls) == 2
+        first_prompt, retry_prompt = prompts
+        assert "## Failed acceptance check" not in first_prompt
+        assert "## Failed acceptance check" in retry_prompt
+        assert "Your previous proposal was run on the unchanged code." in retry_prompt
+        blocks = [
+            p.split("## Current acceptance block\n\n```yaml\n")[1].split("```")[0] for p in prompts
+        ]
+        assert blocks[0] == blocks[1]
+        assert "verify:" not in blocks[0]
+        assert "Step: broken" in retry_prompt
+        assert first_command in retry_prompt and "base-check-failure" in retry_prompt
+        ledger = Ledger(data_dir / "helmraiser.db")
+        task_id = out["written_task_ids"][0]
+        draft = ledger.get_scout_draft(task_id)
+        assert draft["proposal"]["verify"][0]["name"] == "replacement"
+        assert draft["preflight"]["summary"] == ("fail(1)" if second_fails else "green")
+        fm = parse_frontmatter(Path(out["written_paths"][0]).read_text())["frontmatter"]
+        assert fm["verify"][0]["run"] == second_command
+        assert fm["status"] == "draft" and "intake" not in fm
+        assert ledger.get_task(task_id)["snapshot"] == Path(out["written_paths"][0]).read_text()
+        note = "re-proposed after a failed acceptance check: broken"
+        assert note in draft["intake_notes"]
+        assert note in Path(out["report_path"]).read_text()
+        listing = runner.invoke(
+            app, ["drafts", "list", "--all", "--json", "--data-dir", str(data_dir)]
+        )
+        assert listing.exit_code == 0, listing.output
+        assert note in listing.output
+
+    @pytest.mark.parametrize("mode", ["mixed", "retry-error", "no-steps"])
+    def test_retry_feedback_diagnostics_and_failure_fallback(
+        self, tmp_project, tmp_path, fake_pi, scout_srt_log, cli_config, monkeypatch, mode
+    ):
+        from helmraiser.loop import intake as intake_logic
+
+        feedbacks = []
+        build_prompt = intake_logic.build_intake_prompt
+
+        def capture(spec, config, feedback=None):
+            feedbacks.append(feedback)
+            return build_prompt(spec, config, feedback)
+
+        monkeypatch.setattr(intake_logic, "build_intake_prompt", capture)
+        proposal = intake_proposal(name="first").replace(
+            "evidence: []",
+            "  - name: blocked\n    run: echo blocked\n"
+            "  - name: okay\n    run: true\n"
+            "  - name: missing\n    run: pytest tests/new_test.py\nevidence: []",
+        )
+        fake_pi.write_script(
+            {
+                "sessions": {
+                    "*-scout": {
+                        "text": json.dumps(
+                            [
+                                candidate(id="one", title="One", files=["tests/new_test.py"]),
+                                candidate(id="two", title="Two", files=["tests/new_test.py"]),
+                            ]
+                        )
+                    },
+                    "*-intake": [
+                        {"text": proposal},
+                        {
+                            "text": (
+                                "not yaml"
+                                if mode == "retry-error"
+                                else intake_proposal(name="second")
+                            )
+                        },
+                        {"text": intake_proposal(name="later")},
+                    ],
+                }
+            }
+        )
+        seen = []
+
+        def preflight(repo, steps, **kwargs):
+            seen.append(steps[0].name)
+            if mode == "no-steps":
+                return {"commands": [], "error": "infrastructure unavailable"}
+            return {
+                "commands": [
+                    {
+                        "name": step.name,
+                        "exit_code": 0 if step.name in {"okay", "second", "later"} else 1,
+                        "seconds": 0.1,
+                        "output": (
+                            "Could not find 'tests/new_test.py'"
+                            if step.name == "missing"
+                            else "diagnostic"
+                        ),
+                        "tail": (
+                            "PREFIX" + "x" * 2000
+                            if step.name == "first"
+                            else (
+                                "Could not find 'tests/new_test.py'"
+                                if step.name == "missing"
+                                else "diagnostic"
+                            )
+                        ),
+                        "hints": ["sandbox hint"] if step.name == "blocked" else [],
+                    }
+                    for step in steps
+                ],
+                "error": None,
+            }
+
+        monkeypatch.setattr("helmraiser.loop.scout.run_preflight_steps", preflight)
+        data_dir = tmp_path / "data"
+        result = run_scout(tmp_project, data_dir, "--force", "--max", "2")
+        assert result.exit_code == 0, result.output
+        out = json.loads(result.output)
+        ledger = Ledger(data_dir / "helmraiser.db")
+        first = ledger.get_scout_draft(out["written_task_ids"][0])
+        if mode == "no-steps":
+            assert len(feedbacks) == 2 and feedbacks == [None, None]
+            assert seen == ["first", "second"]
+            return
+        assert len(feedbacks) == 3
+        feedback = feedbacks[1]
+        assert "Step: first" in feedback and "Step: blocked" in feedback
+        assert "Step: okay" not in feedback and "Step: missing" not in feedback
+        assert "Command: echo blocked" in feedback
+        assert "PREFIX" not in feedback and "x" * 2000 in feedback
+        note = "re-proposed after a failed acceptance check: first, blocked"
+        assert note in first["intake_notes"]
+        assert note in Path(out["report_path"]).read_text()
+        later = ledger.get_scout_draft(out["written_task_ids"][1])
+        assert later["intake_status"] == "proposed"
+        if mode == "retry-error":
+            assert seen == ["first", "later"]
+            assert first["intake_status"] == "intake_failed"
+            assert first["preflight"]["summary"] == "fail(1)"
+            fm = parse_frontmatter(Path(out["written_paths"][0]).read_text())["frontmatter"]
+            assert fm["verify"][0]["name"] == "first"
+        else:
+            assert seen == ["first", "second", "later"]
+            assert first["preflight"]["summary"] == "green"
 
     def test_scout_preflights_drafts_serially_with_step_timeouts(
         self,
@@ -910,7 +1086,7 @@ class TestScoutCommand:
                     "*-scout": {"text": json.dumps(candidates)},
                     "*-intake": [
                         {"text": intake_proposal(name=f"step-{n}", timeout=10 + n)}
-                        for n in range(4)
+                        for n in (0, 1, 2, 2, 3, 3)
                     ],
                 }
             }
@@ -930,7 +1106,7 @@ class TestScoutCommand:
             active = True
             step = steps[0]
             seen.append((step.name, step.timeout))
-            index = len(seen) - 1
+            index = int(step.name.removeprefix("step-"))
             hints = ["sandbox hint"] if index == 2 else []
             payload = {
                 "commands": [
@@ -955,7 +1131,7 @@ class TestScoutCommand:
         result = run_scout(tmp_project, data_dir, "--force", "--max", "4")
 
         assert result.exit_code == 0, result.output
-        assert seen == [(f"step-{n}", 10 + n) for n in range(4)]
+        assert seen == [(f"step-{n}", 10 + n) for n in (0, 1, 2, 2, 3, 3)]
         ledger = Ledger(data_dir / "helmraiser.db")
         preflights = [
             ledger.get_scout_draft(task_id)["preflight"]
@@ -967,6 +1143,10 @@ class TestScoutCommand:
             "sandbox(1)",
             "fail(1)",
         ]
+        for n, task_id in enumerate(json.loads(result.output)["written_task_ids"]):
+            notes = ledger.get_scout_draft(task_id)["intake_notes"]
+            retry_note = f"re-proposed after a failed acceptance check: step-{n}"
+            assert (retry_note in notes) == (n >= 2)
         for n, preflight in enumerate(preflights):
             assert preflight["steps"] == [
                 {

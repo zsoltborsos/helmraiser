@@ -10,7 +10,6 @@ import re
 import subprocess
 import sys
 import time
-from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -85,7 +84,8 @@ class IntakeResult(Protocol):
     errors: list[str]
 
 
-IntakeCallback = Callable[[TaskSpec], IntakeResult]
+class IntakeCallback(Protocol):
+    def __call__(self, spec: TaskSpec, *, feedback: str | None = None) -> IntakeResult: ...
 
 
 class ScoutError(Exception):
@@ -837,41 +837,65 @@ def execute_scout(
             ledger.create_scout_draft(spec.task_id, scout_id, candidate_dict(candidate))
             written_ids.append(spec.task_id)
             written_paths.append(str(path))
-            try:
-                intake_outcome = intake(spec)
-                if intake_outcome.errors:
-                    raise ValueError("; ".join(intake_outcome.errors))
-            except Exception as exc:
+            original_spec = spec
+            feedback = None
+            intake_notes: list[str] = []
+            for attempt in range(2):
+                try:
+                    intake_outcome = (
+                        intake(original_spec)
+                        if feedback is None
+                        else intake(original_spec, feedback=feedback)
+                    )
+                    if intake_outcome.errors:
+                        raise ValueError("; ".join(intake_outcome.errors))
+                except Exception as exc:
+                    ledger.set_scout_draft_intake(
+                        spec.task_id,
+                        status="intake_failed",
+                        proposal=None,
+                        error=str(exc),
+                        notes=intake_notes,
+                    )
+                    break
+                intake_notes = list(dict.fromkeys([*intake_notes, *intake_outcome.notes]))
+                write_task(intake_outcome.spec, path)
+                ledger.upsert_task(intake_outcome.spec, path.read_text(encoding="utf-8"))
                 ledger.set_scout_draft_intake(
                     spec.task_id,
-                    status="intake_failed",
-                    proposal=None,
-                    error=str(exc),
+                    status="proposed",
+                    proposal=intake_outcome.proposal,
+                    error=None,
+                    notes=intake_notes,
                 )
-                preparation = ledger.get_scout_draft(spec.task_id)
-                if preparation is not None:
-                    preparations.append(preparation)
-                continue
-            write_task(intake_outcome.spec, path)
-            ledger.upsert_task(intake_outcome.spec, path.read_text(encoding="utf-8"))
-            ledger.set_scout_draft_intake(
-                spec.task_id,
-                status="proposed",
-                proposal=intake_outcome.proposal,
-                error=None,
-                notes=intake_outcome.notes,
-            )
-            try:
-                preflight_payload = run_preflight_steps(
-                    repo,
-                    list(intake_outcome.spec.verify),
-                    config=config,
-                    data_dir=data_dir,
+                try:
+                    preflight_payload = run_preflight_steps(
+                        repo,
+                        list(intake_outcome.spec.verify),
+                        config=config,
+                        data_dir=data_dir,
+                    )
+                    preflight = normalize_scout_preflight(repo, preflight_payload, candidate.files)
+                except PreflightError as exc:
+                    preflight = failed_scout_preflight(str(exc))
+                ledger.set_scout_draft_preflight(spec.task_id, preflight)
+                failed = [
+                    (step, check)
+                    for step, check in zip(
+                        preflight["steps"], intake_outcome.spec.verify, strict=False
+                    )
+                    if step["class"] in {"fail", "sandbox"}
+                ]
+                if attempt or not failed:
+                    break
+                intake_notes.append(
+                    "re-proposed after a failed acceptance check: "
+                    + ", ".join(step["name"] for step, _ in failed)
                 )
-                preflight = normalize_scout_preflight(repo, preflight_payload, candidate.files)
-            except PreflightError as exc:
-                preflight = failed_scout_preflight(str(exc))
-            ledger.set_scout_draft_preflight(spec.task_id, preflight)
+                feedback = "\n\n".join(
+                    f"Step: {step['name']}\nCommand: {check.run}\nOutput:\n{step['tail'][-2000:]}"
+                    for step, check in failed
+                )
             preparation = ledger.get_scout_draft(spec.task_id)
             if preparation is not None:
                 preparations.append(preparation)

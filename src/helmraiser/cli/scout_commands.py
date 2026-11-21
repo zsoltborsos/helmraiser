@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import subprocess
-from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from typing import NoReturn
@@ -17,6 +16,7 @@ from helmraiser.isolation.process import ProcessIsolation
 from helmraiser.ledger.db import Ledger, ScoutRequestUnavailable, default_data_dir
 from helmraiser.loop.intake import IntakeOutcome, get_intake_adapter, run_intake
 from helmraiser.loop.scout import (
+    IntakeCallback,
     ScoutError,
     configured_focus_projects,
     configured_paused_projects,
@@ -155,10 +155,10 @@ def get_scout_adapter(config: dict, repo: Path) -> PiJsonAdapter:
     return PiJsonAdapter(pi_bin=str(config.get("pi_bin") or "pi"), argv_wrapper=isolation.wrap)
 
 
-def _intake_callback(config: dict, data_dir: Path) -> Callable[[TaskSpec], IntakeOutcome]:
+def _intake_callback(config: dict, data_dir: Path) -> IntakeCallback:
     adapter = get_intake_adapter(config)
 
-    def propose(spec: TaskSpec) -> IntakeOutcome:
+    def propose(spec: TaskSpec, *, feedback: str | None = None) -> IntakeOutcome:
         missing = missing_models(config, ("intake",), spec)
         if missing and validate_task(replace(spec, status="queued")):
             raise ValueError(models_not_configured_message(missing))
@@ -170,6 +170,7 @@ def _intake_callback(config: dict, data_dir: Path) -> Callable[[TaskSpec], Intak
             data_dir=data_dir,
             allow_auto=False,
             approve=False,
+            feedback=feedback,
         )
 
     return propose

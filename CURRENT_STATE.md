@@ -1,6 +1,6 @@
 # Helmraiser — Current State
 
-Intake prompts accept optional failed-check diagnostics without changing standalone intake scheduling.
+Scout draft preparation re-proposes once on fail/sandbox checks using real diagnostics, retains the final proposal/preflight and a note naming first-attempt failures; standalone intake does not retry.
 
 Intake prompts request fast targeted verify checks, full-suite/coverage evidence without duplicate checks, optional task-size context, and size-aware proposed budgets while preserving existing budgets.
 

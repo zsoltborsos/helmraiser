@@ -171,6 +171,11 @@ and editor-based intake; an intake-model proposal cannot set or change the origi
 If the task file already has a valid acceptance block, intake does not ask the model.
 Intake never proposes `policy: auto` unless you pass `--allow-auto`. It never proposes
 `sandbox: host` either: it removes `sandbox` from every proposed step, with a note.
+The intake prompt includes a project environment section with the effective setup command
+(task setup overrides the project default) and sorted, merged environment variable names,
+never their values. Verify and evidence run from the repository root after setup, with no
+virtual environment activated: use worktree tool paths such as `.venv/bin/python` or the
+project's own runner such as `npm test`.
 The intake prompt says that verify and evidence run the project's tests and commands and
 never read, grep, parse or check the existence of source files. A proposed step that still
 does (it greps or reads with `grep`, `rg`, `cat`, `readFileSync`, `open` or

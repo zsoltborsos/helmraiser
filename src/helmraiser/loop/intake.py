@@ -29,7 +29,7 @@ from helmraiser.pi.protocol import PiAdapter, PiEvent, PiRequest
 from helmraiser.project_notes import project_notes_for_body, project_notes_section
 from helmraiser.task.loader import TaskLoadError, parse_task, profile_models, spec_to_frontmatter
 from helmraiser.task.model import ISOLATIONS, ModelSpec, TaskSpec, VerifyStep
-from helmraiser.task.project import load_project_defaults
+from helmraiser.task.project import effective_env, effective_setup, load_project_defaults
 from helmraiser.task.schema import validate_task
 from helmraiser.task.structural import (
     body_outside_paths_warnings,
@@ -92,6 +92,29 @@ def get_intake_adapter(config: dict[str, Any]) -> PiAdapter | None:
 
 
 def build_intake_prompt(spec: TaskSpec, config: dict[str, Any]) -> str:
+    defaults = load_project_defaults(spec.project)
+    setup = effective_setup(spec, defaults)
+    env_names = sorted(effective_env(spec, defaults))
+    environment_prompt = (
+        "## Project environment\n\n"
+        + (
+            f"Effective setup command:\n\n```sh\n{setup}\n```\n\n"
+            if setup
+            else "The project has no setup command.\n\n"
+        )
+        + (
+            "Environment variables applied to every step: "
+            + ", ".join(f"`{name}`" for name in env_names)
+            + ".\n\n"
+            if env_names
+            else ""
+        )
+        + "Verify and evidence steps run from the repository root after setup, "
+        "with no virtual environment activated. Call tools that setup installs by "
+        "their path in the worktree (for example `.venv/bin/python` or "
+        "`node_modules/.bin/vitest`) or through the project's own runner "
+        "(for example `npm test`).\n\n"
+    )
     profiles = profile_models(spec.project, config)
     profiles_prompt = "\n".join(
         f"- {role}: {profiles[role].render()}"
@@ -137,6 +160,7 @@ def build_intake_prompt(spec: TaskSpec, config: dict[str, Any]) -> str:
         "## Current acceptance block\n\n"
         f"```yaml\n{current_yaml}```\n\n"
         f"{notes_prompt}"
+        f"{environment_prompt}"
         "## Configured model profiles\n\n"
         f"{profiles_prompt}\n\n"
         "## Answer format\n\n"

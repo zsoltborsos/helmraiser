@@ -514,6 +514,64 @@ class TestIntakeProtection:
         assert "Preserve the file's explicit policy" in explicit_prompt
 
 
+class TestIntakeProjectEnvironment:
+    @pytest.mark.parametrize(
+        ("project_setup", "task_setup"),
+        [
+            ("python3 -m venv .venv", None),
+            ("project-setup-sentinel", "task-setup-sentinel"),
+            (None, "task-only-setup-sentinel"),
+            (None, None),
+        ],
+    )
+    def test_setup(self, tmp_project: Path, project_setup: str | None, task_setup: str | None):
+        if project_setup is not None:
+            project_toml(tmp_project, f'[defaults]\nsetup = "{project_setup}"\n')
+        spec = parse_task(DRAFT.format(project=tmp_project), tmp_project / "t.md", {})
+        prompt = build_intake_prompt(replace(spec, setup=task_setup), {})
+        section = prompt.split("## Project environment\n\n")[1].split(
+            "## Configured model profiles"
+        )[0]
+        assert prompt.index("## Project environment") < prompt.index("## Configured model profiles")
+        setup = task_setup or project_setup
+        if setup is not None:
+            assert f"Effective setup command:\n\n```sh\n{setup}\n```" in section
+            assert "The project has no setup command." not in section
+        else:
+            assert "The project has no setup command." in section
+            assert "```" not in section
+        if task_setup and project_setup:
+            assert project_setup not in prompt
+        assert "Environment variables applied to every step:" not in prompt
+        assert (
+            "Verify and evidence steps run from the repository root after setup, "
+            "with no virtual environment activated. Call tools that setup installs by "
+            "their path in the worktree (for example `.venv/bin/python` or "
+            "`node_modules/.bin/vitest`) or through the project's own runner "
+            "(for example `npm test`)."
+        ) in prompt
+
+    def test_environment_names_without_values(self, tmp_project: Path):
+        project_toml(
+            tmp_project,
+            '[defaults.env]\nZETA = "project-zeta-secret"\nSHARED = "project-shared-secret"\n',
+        )
+        spec = parse_task(DRAFT.format(project=tmp_project), tmp_project / "t.md", {})
+        prompt = build_intake_prompt(
+            replace(spec, env={"ALPHA": "task-alpha-secret", "SHARED": "task-shared-secret"}),
+            {},
+        )
+        assert ("Environment variables applied to every step: `ALPHA`, `SHARED`, `ZETA`.") in prompt
+        assert prompt.count("`SHARED`") == 1
+        for value in (
+            "project-zeta-secret",
+            "project-shared-secret",
+            "task-alpha-secret",
+            "task-shared-secret",
+        ):
+            assert value not in prompt
+
+
 class TestIntakeModels:
     @pytest.mark.parametrize("config", [{}, {"intake": {}}, {"intake": {"avoid_models": []}}])
     def test_default_prompt_has_no_avoidance(self, tmp_project: Path, config: dict):

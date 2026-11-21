@@ -759,6 +759,72 @@ class TestIntakeModels:
 
 
 class TestIntakeCheck:
+    @pytest.mark.parametrize("kind", ["verify", "evidence"])
+    @pytest.mark.parametrize(
+        "code,hints,classification",
+        [(1, [], "expected red"), (0, [], "fail"), (1, ["sandbox hint"], "sandbox")],
+    )
+    @pytest.mark.parametrize("as_json", [False, True])
+    def test_marked_check_queue(
+        self, tmp_project, data_dir, ledger, monkeypatch, kind, code, hints, classification, as_json
+    ):
+        def run(repo, steps, **kwargs):
+            return {
+                "commands": [
+                    {
+                        "name": step.name,
+                        "red_on_base": step.red_on_base,
+                        "exit_code": code if step.red_on_base else 0,
+                        "hints": hints if step.red_on_base else [],
+                        "tail": "existing README.md check",
+                    }
+                    for step in steps
+                ]
+            }
+
+        monkeypatch.setattr(intake_logic, "run_preflight_steps", run)
+        use_adapter(monkeypatch, ScriptedPiAdapter({}))
+        content = COMPLETE.replace(
+            "policy: review\n",
+            "policy: review\nevidence:\n  - name: evidence\n    run: echo evidence\n    artifacts: [out.txt]\n    criteria: works\n",
+        )
+        fm = parse_frontmatter(content.format(project=tmp_project))["frontmatter"]
+        fm[kind][0]["red_on_base"] = True
+        path = write_task(tmp_project, serialize_frontmatter(fm, "Check existing README.md."))
+        original = path.read_bytes()
+        if classification != "expected red":
+            self.no_ledger(monkeypatch)
+        result = invoke(
+            "intake",
+            str(path),
+            "--check",
+            "--yes",
+            *(["--json"] if as_json else []),
+            data_dir=data_dir,
+        )
+        assert result.exit_code == (0 if classification == "expected red" else 2), result.output
+        if as_json:
+            out = json.loads(result.output)
+            step = next(
+                s
+                for s in out["check"]["steps"]
+                if s["name"] == ("tests" if kind == "verify" else "evidence")
+            )
+            assert step["class"] == classification
+            text = step["tail"]
+        else:
+            assert classification in result.output
+            text = result.output
+        if code == 0:
+            assert "declared red on base but passed on the unchanged code" in text
+        if classification == "expected red":
+            saved = parse_frontmatter(path.read_text())["frontmatter"]
+            assert saved[kind][0]["red_on_base"] is True
+            assert saved["status"] == "queued"
+            assert saved["intake"]["approved_at"]
+        else:
+            assert path.read_bytes() == original
+
     @staticmethod
     def preflight(monkeypatch, *classes):
         payload = {
@@ -896,17 +962,21 @@ class TestIntakeCheck:
         else:
             assert "tests: green" in result.output
 
+    @pytest.mark.parametrize("red_on_base", [False, True])
     @pytest.mark.parametrize("failure", [False, True])
     @pytest.mark.parametrize("propose", [False, True])
     def test_check_only_model_proposal_saves_unstamped_draft(
-        self, tmp_project, data_dir, monkeypatch, failure, propose
+        self, tmp_project, data_dir, monkeypatch, failure, propose, red_on_base
     ):
         self.preflight(monkeypatch, "fail" if failure else "green")
         self.no_ledger(monkeypatch)
         path = write_task(tmp_project, DRAFT)
-        adapter = ScriptedPiAdapter(
-            {"intake": PiScript(final_text=PROPOSAL.format(policy="review", isolation="process"))}
-        )
+        proposal = PROPOSAL.format(policy="review", isolation="process")
+        if red_on_base:
+            proposal = proposal.replace(
+                "    timeout: 120", "    timeout: 120\n    red_on_base: true"
+            )
+        adapter = ScriptedPiAdapter({"intake": PiScript(final_text=proposal)})
         use_adapter(monkeypatch, adapter)
         result = invoke(
             "intake",
@@ -926,6 +996,7 @@ class TestIntakeCheck:
         assert fm["status"] == "draft"
         assert "intake" not in fm
         assert [step["name"] for step in fm["verify"]] == ["tests", "lint"]
+        assert fm["verify"][0].get("red_on_base", False) is red_on_base
         assert not (data_dir / "helmraiser.db").exists()
 
     def test_proposal_failed_queue_check_leaves_original(self, tmp_project, data_dir, monkeypatch):
@@ -2341,6 +2412,11 @@ class TestStructuralSteps:
             "text the task removes no longer appears in that document, for example "
             "`! grep -n 'old wording' README.md`."
         ) in prompt
+        instruction = "Set `red_on_base: true` on a step that checks the task's change against a file that already exists, such as the stale-text check above or an assertion on current command output, so it must fail before the change. Leave it unset on every other step."
+        assert instruction in prompt
+        assert prompt.index(instruction) > prompt.index("Exception:")
+        assert "{name, run, timeout, red_on_base (optional)}" in prompt
+        assert "{name, run, artifacts, criteria, red_on_base (optional)}" in prompt
         assert "TAP's\n  summary always prints `# skipped 0` and `# todo 0`" in prompt
 
 

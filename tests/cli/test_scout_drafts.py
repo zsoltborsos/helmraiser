@@ -274,6 +274,19 @@ class TestScoutInputs:
 
 class TestScoutPreflightClassification:
     @pytest.mark.parametrize(
+        "code,hints,expected",
+        [(1, [], "expected red"), (0, [], "fail"), (1, ["sandbox hint"], "sandbox")],
+    )
+    def test_declared_red(self, tmp_project, code, hints, expected):
+        result = {"red_on_base": True, "exit_code": code, "hints": hints, "tail": "original"}
+        assert classify_preflight_step(tmp_project, result, ()) == expected
+        normalized = normalize_scout_preflight(tmp_project, {"commands": [result]}, ())
+        assert normalized["steps"][0]["class"] == expected
+        if code == 0:
+            assert "cannot detect the change" in normalized["steps"][0]["tail"]
+        assert result["tail"] == "original"
+
+    @pytest.mark.parametrize(
         ("output", "files", "expected"),
         [
             ("Could not find 'src/config.test.ts'", ("src/config.test.ts",), "expected red"),
@@ -843,6 +856,39 @@ class TestScoutCommand:
         assert prepared is not None and prepared["intake_status"] == "proposed"
         assert prepared["preflight"]["summary"] == "green"
         assert calls == ["tests"]
+
+    @pytest.mark.parametrize(
+        "command,expected",
+        [("test ! -f README.md", "expected red"), ("test -f README.md", "fail(1)")],
+    )
+    def test_scout_marked_existing_file_check(
+        self, tmp_project, tmp_path, fake_pi, scout_srt_log, cli_config, command, expected
+    ):
+        proposal = intake_proposal().replace(
+            "run: pytest tests/new_test.py", f"red_on_base: true\n    run: {command}"
+        )
+        fake_pi.write_script(
+            {
+                "sessions": {
+                    "*-scout": {"text": json.dumps([candidate(files=["README.md"])])},
+                    "*-intake": {"text": proposal},
+                }
+            }
+        )
+        data_dir = tmp_path / "data"
+        result = run_scout(tmp_project, data_dir, "--force", "--max", "1")
+        assert result.exit_code == 0, result.output
+        task_id = json.loads(result.output)["written_task_ids"][0]
+        draft = Ledger(data_dir / "helmraiser.db").get_scout_draft(task_id)
+        assert draft["preflight"]["summary"] == expected
+        if expected == "fail(1)":
+            assert "cannot detect the change" in draft["preflight"]["steps"][0]["tail"]
+        paths = list((tmp_project / ".helmraiser/tasks").glob("*.md"))
+        assert len(paths) == 1
+        fm = parse_frontmatter(paths[0].read_text())["frontmatter"]
+        assert fm["verify"][0]["red_on_base"] is True
+        assert fm["status"] == "draft"
+        assert "intake" not in fm
 
     def test_scout_preflights_drafts_serially_with_step_timeouts(
         self,

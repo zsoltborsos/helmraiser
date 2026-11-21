@@ -46,6 +46,8 @@ class VerifyResult:
     sandbox: str = SANDBOX_NONE  # srt, none or host (loop/shell.py)
     log: str | None = None  # full output of a failed step, when written
     hints: list[str] = field(default_factory=list)  # environment hints of a failed step
+    timed_out: bool = False
+    error: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -96,6 +98,8 @@ def run_step(
         sandbox=sandbox,
         log=log,
         hints=hints,
+        timed_out=res.timed_out,
+        error=res.error,
     )
 
 

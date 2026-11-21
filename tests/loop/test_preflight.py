@@ -18,7 +18,7 @@ import pytest
 
 from helmraiser.config import DEFAULT_CONFIG
 from helmraiser.isolation.process import ProcessIsolation
-from helmraiser.loop import intake, preflight, services
+from helmraiser.loop import intake, preflight, services, verify
 from helmraiser.loop.hints import (
     DENIED_HINT,
     NOT_PERMITTED_HINT,
@@ -33,6 +33,7 @@ from helmraiser.loop.preflight import (
     run_preflight,
     run_preflight_steps,
 )
+from helmraiser.loop.shell import ShellResult
 from helmraiser.task.loader import TaskLoadError, parse_task, render_task
 from helmraiser.task.model import EvidenceStep, VerifyStep, project_slug
 from helmraiser.task.project import worktree_manager
@@ -296,6 +297,42 @@ class TestIntakeAcceptanceCheck:
         else:
             assert step["tail"] == tail
 
+    @pytest.mark.parametrize("kind", ["verify", "evidence"])
+    @pytest.mark.parametrize(
+        "shell,expected",
+        [
+            (ShellResult(None, 1, "partial output", timed_out=True), "fail"),
+            (ShellResult(None, 0, "cannot launch", error="cannot launch"), "fail"),
+            (ShellResult(1, 0, "regression"), "expected red"),
+            (ShellResult(0, 0, ""), "fail"),
+            (ShellResult(1, 0, "bwrap: Operation not permitted"), "sandbox"),
+            (
+                ShellResult(None, 1, "bwrap: Operation not permitted", timed_out=True),
+                "sandbox",
+            ),
+        ],
+    )
+    def test_marked_execution_status(
+        self, tmp_project, tmp_path, config, srt_log, monkeypatch, kind, shell, expected
+    ):
+        spec = self.spec(tmp_project)
+        marked = replace(getattr(spec, kind)[0], red_on_base=True)
+        spec = replace(spec, **{"verify": (), "evidence": (), kind: (marked,)})
+        monkeypatch.setattr(verify, "run_shell", lambda *args: shell)
+
+        result = intake.check_acceptance(spec, config=config, data_dir=tmp_path / "data")
+
+        assert result["summary"] == (
+            f"{expected}(1)" if expected in ("fail", "sandbox") else expected
+        )
+        step = result["steps"][0]
+        assert step["class"] == expected
+        assert ("passed on the unchanged code" in step["tail"]) is (shell.exit_code == 0)
+        assert shell.output in step["tail"]
+        if shell.timed_out:
+            assert "timed out after" in step["tail"]
+        assert step["hint"] == (NOT_PERMITTED_HINT if expected == "sandbox" else None)
+
     def test_duplicate_names_keep_markers(self, tmp_project, tmp_path, config, srt_log):
         payload = preflight.run_preflight_steps(
             tmp_project,
@@ -480,6 +517,32 @@ class TestRunPreflight:
             "first line\ncomplete output",
             "earlier line\nsecond output",
         ]
+
+    @pytest.mark.parametrize(
+        "shell",
+        [
+            ShellResult(None, 1, "partial output", timed_out=True),
+            ShellResult(None, 0, "cannot launch", error="cannot launch"),
+        ],
+    )
+    def test_execution_status_payload_and_serialization(
+        self, tmp_project, tmp_path, config, srt_log, monkeypatch, shell
+    ):
+        monkeypatch.setattr(verify, "run_shell", lambda *args: shell)
+        step = VerifyStep("marked", "mocked", red_on_base=True)
+        payload = run_preflight_steps(
+            tmp_project, [step], config=config, data_dir=tmp_path / "data"
+        )
+        command = payload["commands"][0]
+        assert command["timed_out"] is shell.timed_out
+        assert command["error"] == shell.error
+        result = verify.run_step(step, tmp_project, "serialization", 40)
+        assert result.timed_out is shell.timed_out
+        assert result.error == shell.error
+        assert verify.VerifyResult.from_dict(result.as_dict()) == result
+        legacy = result.as_dict()
+        del legacy["timed_out"], legacy["error"]
+        assert verify.VerifyResult.from_dict(legacy) == replace(result, timed_out=False, error=None)
 
     def test_setup_env_and_commands_under_the_verify_sandbox_settings(
         self, tmp_project: Path, tmp_path: Path, config: dict, srt_log: Path

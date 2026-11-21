@@ -83,6 +83,12 @@ def classify_preflight_step(
     if result.get("hints"):
         return "sandbox"
     if result.get("red_on_base"):
+        if (
+            result.get("timed_out")
+            or result.get("error") is not None
+            or result.get("exit_code") is None
+        ):
+            return "fail"
         return "expected red"
     output = str(result.get("output") or "")
     for line in output.splitlines():
@@ -101,7 +107,11 @@ def normalize_scout_preflight(
         classification = classify_preflight_step(repo, result, candidate_files)
         hints = result.get("hints") or []
         tail = str(result.get("tail") or "")
-        if classification == "fail" and result.get("red_on_base"):
+        if (
+            classification == "fail"
+            and result.get("red_on_base")
+            and (result.get("passed") or result.get("exit_code") == 0)
+        ):
             diagnostic = (
                 "Step was declared red on base but passed on the unchanged code, "
                 "so it cannot detect the change."
@@ -311,6 +321,8 @@ def run_preflight_steps(
                     "command": step.run,
                     "exit_code": result.exit_code,
                     "passed": result.passed,
+                    "timed_out": result.timed_out,
+                    "error": result.error,
                     **({"red_on_base": True} if step.red_on_base else {}),
                     "seconds": result.seconds,
                     "sandbox": result.sandbox,

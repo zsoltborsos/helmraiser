@@ -2335,6 +2335,12 @@ class TestStructuralSteps:
         prompt = build_intake_prompt(spec, {})
         assert "never read, grep, parse or assert on source files" in prompt
         assert "documentation is the reviewer's job" in prompt
+        assert (
+            "Exception: when the task changes only documentation files (Markdown or plain "
+            "text, not help strings or other text inside code), one step may check that the stale "
+            "text the task removes no longer appears in that document, for example "
+            "`! grep -n 'old wording' README.md`."
+        ) in prompt
         assert "TAP's\n  summary always prints `# skipped 0` and `# todo 0`" in prompt
 
 

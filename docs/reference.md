@@ -177,7 +177,10 @@ never their values. Verify and evidence run from the repository root after setup
 virtual environment activated: use worktree tool paths such as `.venv/bin/python` or the
 project's own runner such as `npm test`.
 The intake prompt says that verify and evidence run the project's tests and commands and
-never read, grep, parse or check the existence of source files. A proposed step that still
+never read, grep, parse or check the existence of source files. For documentation-only
+Markdown or plain-text tasks, one step may check that removed stale wording no longer
+appears in the affected document; this excludes help strings and other text embedded in code.
+A proposed step that still
 does (it greps or reads with `grep`, `rg`, `cat`, `readFileSync`, `open` or
 `Path(…).read_text()`, parses with `createSourceFile` or `ast.parse`, or runs `test -f`
 on a path under `src/`, `lib/`, `app/`, `packages/` and the like, or with a source-file

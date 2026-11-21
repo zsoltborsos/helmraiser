@@ -24,7 +24,7 @@ from helmraiser.loop import intake as intake_logic
 from helmraiser.loop import preflight as preflight_logic
 from helmraiser.loop.intake import _intake_model_overrides, build_intake_prompt
 from helmraiser.loop.preflight import PreflightError
-from helmraiser.task.loader import parse_task, resolve_models
+from helmraiser.task.loader import parse_task, render_task, resolve_models
 from helmraiser.task.model import Budget, TaskSpec
 from helmraiser.utils.markdown import parse_frontmatter, serialize_frontmatter
 from tests.loop.test_preflight import assert_cleaned_up, project_toml, srt_calls
@@ -515,6 +515,78 @@ class TestIntakeProtection:
 
 
 class TestIntakeProportionateAcceptance:
+    @staticmethod
+    def current_block(prompt: str) -> dict:
+        section = prompt.split("## Current acceptance block\n\n", 1)[1]
+        return yaml.safe_load(section.split("```yaml\n", 1)[1].split("```", 1)[0])
+
+    @pytest.mark.parametrize(
+        ("budget_fm", "explicit", "expected"),
+        [
+            ({}, False, Budget(5.0, 90, 4)),
+            ({"budget": {}}, True, Budget(5.0, 90, 4)),
+            ({"budget": {"max_minutes": 30}}, True, Budget(5.0, 30, 4)),
+            (
+                {"budget": {"max_cost_usd": 2.5, "max_minutes": 30, "max_iterations": 3}},
+                True,
+                Budget(2.5, 30, 3),
+            ),
+        ],
+    )
+    def test_current_budget_visibility(self, tmp_project: Path, budget_fm, explicit, expected):
+        config = {"budget": {"max_cost_usd": 5.0, "max_minutes": 90, "max_iterations": 4}}
+        parsed = parse_frontmatter(DRAFT.format(project=tmp_project))
+        spec = parse_task(
+            serialize_frontmatter({**parsed["frontmatter"], **budget_fm}, parsed["body"]),
+            tmp_project / "t.md",
+            config,
+        )
+        assert spec.budget_explicit is explicit
+        assert spec.budget == expected
+        current = self.current_block(build_intake_prompt(spec, config))
+        if explicit:
+            assert current["budget"] == {
+                "max_cost_usd": expected.max_cost_usd,
+                "max_minutes": expected.max_minutes,
+                "max_iterations": expected.max_iterations,
+            }
+        else:
+            assert "budget" not in current
+        assert spec.budget == expected
+
+    def test_merged_budget_stays_explicit(self, tmp_project: Path, data_dir: Path, isolated_config):
+        spec = parse_task(DRAFT.format(project=tmp_project), tmp_project / "t.md", isolated_config)
+        assert spec.budget_explicit is False
+        adapter = ScriptedPiAdapter(
+            {"intake": PiScript(final_text=PROPOSAL.format(policy="review", isolation="process"))}
+        )
+        outcome = intake_logic.run_intake(
+            spec,
+            config=isolated_config,
+            adapter=adapter,
+            model=spec.models["intake"],
+            data_dir=data_dir,
+            allow_auto=False,
+        )
+        assert len(adapter.calls) == 1
+        assert not outcome.errors
+        assert outcome.spec.budget == Budget(2.5, 30, 3)
+        assert outcome.spec.budget_explicit is True
+        current = self.current_block(build_intake_prompt(outcome.spec, isolated_config))
+        text = render_task(outcome.spec)
+        fm = parse_frontmatter(text)["frontmatter"]
+        assert (
+            fm["budget"]
+            == current["budget"]
+            == {
+                "max_cost_usd": 2.5,
+                "max_minutes": 30,
+                "max_iterations": 3,
+            }
+        )
+        assert "budget_explicit" not in fm
+        assert parse_task(text, spec.source_path, isolated_config) == outcome.spec
+
     def test_prompt_describes_check_placement_and_budget(self, tmp_project: Path):
         spec = parse_task(DRAFT.format(project=tmp_project), tmp_project / "t.md", {})
         prompt = build_intake_prompt(spec, {})

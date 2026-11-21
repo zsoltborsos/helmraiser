@@ -2,7 +2,7 @@
 
 Scout draft preparation re-proposes once on fail/sandbox checks using real diagnostics, retains the final proposal/preflight and a note naming first-attempt failures; standalone intake does not retry.
 
-Task specs distinguish explicit task-file budget mappings from resolved budget defaults without changing budget resolution or serialization.
+Intake shows a current budget only when the task explicitly sets a budget mapping; merged budgets remain explicit, while resolved defaults and budget serialization are unchanged.
 
 Intake prompts request fast targeted verify checks, full-suite/coverage evidence without duplicate checks, optional task-size context, and size-aware proposed budgets while preserving existing budgets.
 

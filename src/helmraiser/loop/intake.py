@@ -142,7 +142,9 @@ def build_intake_prompt(spec: TaskSpec, config: dict[str, Any], feedback: str | 
     current = {
         key: value
         for key, value in spec_to_frontmatter(spec).items()
-        if key in PROPOSAL_KEYS and (value or key == "plan")
+        if key in PROPOSAL_KEYS
+        and (value or key == "plan")
+        and (key != "budget" or spec.budget_explicit)
     }
     current_yaml = yaml.safe_dump(current, sort_keys=False) if current else "(none)\n"
     notes = project_notes_for_body(spec.project, spec.body)

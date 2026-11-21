@@ -103,8 +103,11 @@ step: approval is not a trial CI run.
 
 While awaiting **merge** approval, fix with
 `helmraiser rework <run> --note "<feedback>"`, never by editing the run branch by
-hand. Treat delivery approval as final: PR delivery removes the worktree and
-records delivery before the PR merges. Plan/scope approvals instead resume work.
+hand. PR delivery removes the worktree and records delivery before the PR merges.
+While the PR remains OPEN, `helmraiser rework <run> --note '<feedback>'` restores
+its worktree and hands the same run back for implementation and governed checks;
+subsequent approval updates the original PR. Closed or merged PRs cannot be
+reworked. Plan/scope approvals instead resume work.
 Use `helmraiser land <run>` for governed PR landing.
 See [Policies](../../docs/reference.md#policies) and
 [Reworking a run awaiting merge approval](../../docs/reference.md#reworking-a-run-awaiting-merge-approval).

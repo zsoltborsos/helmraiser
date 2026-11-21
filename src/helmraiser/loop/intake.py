@@ -365,7 +365,10 @@ def check_acceptance(spec: TaskSpec, *, config: dict[str, Any], data_dir: Path) 
     """Preflight verify then evidence on HEAD, without pi or ledger access."""
     steps = [
         *spec.verify,
-        *(VerifyStep(step.name, step.run, step.timeout, step.sandbox) for step in spec.evidence),
+        *(
+            VerifyStep(step.name, step.run, step.timeout, step.sandbox, step.red_on_base)
+            for step in spec.evidence
+        ),
     ]
     try:
         payload = run_preflight_steps(spec.project, steps, config=config, data_dir=data_dir)

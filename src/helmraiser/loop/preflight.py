@@ -79,9 +79,11 @@ def classify_preflight_step(
 ) -> str:
     """Classify one preflight command, requiring same-line missing-target evidence."""
     if result.get("passed") or result.get("exit_code") == 0:
-        return "green"
+        return "fail" if result.get("red_on_base") else "green"
     if result.get("hints"):
         return "sandbox"
+    if result.get("red_on_base"):
+        return "expected red"
     output = str(result.get("output") or "")
     for line in output.splitlines():
         for path in candidate_files:
@@ -98,6 +100,13 @@ def normalize_scout_preflight(
     for result in payload.get("commands") or []:
         classification = classify_preflight_step(repo, result, candidate_files)
         hints = result.get("hints") or []
+        tail = str(result.get("tail") or "")
+        if classification == "fail" and result.get("red_on_base"):
+            diagnostic = (
+                "Step was declared red on base but passed on the unchanged code, "
+                "so it cannot detect the change."
+            )
+            tail = f"{tail}\n{diagnostic}" if tail else diagnostic
         steps.append(
             {
                 "name": str(result.get("name") or result.get("command") or "command"),
@@ -105,7 +114,7 @@ def normalize_scout_preflight(
                 "seconds": float(result.get("seconds") or 0.0),
                 "class": classification,
                 "hint": str(hints[0]) if hints else None,
-                "tail": str(result.get("tail") or ""),
+                "tail": tail,
             }
         )
     error = payload.get("error")
@@ -302,6 +311,7 @@ def run_preflight_steps(
                     "command": step.run,
                     "exit_code": result.exit_code,
                     "passed": result.passed,
+                    **({"red_on_base": True} if step.red_on_base else {}),
                     "seconds": result.seconds,
                     "sandbox": result.sandbox,
                     "output": result.tail,

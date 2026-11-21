@@ -213,6 +213,57 @@ class TestThrowawayWorktree:
 
 
 class TestIntakeAcceptanceCheck:
+    @pytest.mark.parametrize("kind", ["verify", "evidence"])
+    @pytest.mark.parametrize(
+        "code,hints,expected",
+        [(1, [], "expected red"), (0, [], "fail"), (1, ["sandbox hint"], "sandbox")],
+    )
+    @pytest.mark.parametrize("tail", ["", "original output"])
+    def test_declared_red(
+        self, tmp_project, tmp_path, monkeypatch, kind, code, hints, expected, tail
+    ):
+        spec = self.spec(tmp_project)
+        spec = replace(spec, **{kind: (replace(getattr(spec, kind)[0], red_on_base=True),)})
+        payload = {"commands": []}
+
+        def run(repo, steps, **kwargs):
+            marked = next(step for step in steps if step.red_on_base)
+            payload["commands"] = [
+                {
+                    "name": marked.name,
+                    "red_on_base": marked.red_on_base,
+                    "exit_code": code,
+                    "hints": hints,
+                    "tail": tail,
+                }
+            ]
+            return payload
+
+        monkeypatch.setattr(intake, "run_preflight_steps", run)
+        result = intake.check_acceptance(spec, config={}, data_dir=tmp_path)
+        step = result["steps"][0]
+        assert step["class"] == expected
+        assert payload["commands"][0]["tail"] == tail
+        if code == 0:
+            assert step["tail"].startswith(tail)
+            assert "declared red on base but passed on the unchanged code" in step["tail"]
+        else:
+            assert step["tail"] == tail
+
+    def test_duplicate_names_keep_markers(self, tmp_project, tmp_path, config, srt_log):
+        payload = preflight.run_preflight_steps(
+            tmp_project,
+            [VerifyStep("same", "true", red_on_base=True), VerifyStep("same", "true")],
+            config=config,
+            data_dir=tmp_path / "data",
+        )
+        first, second = payload["commands"]
+        assert first["red_on_base"] is True
+        assert "red_on_base" not in second
+        assert payload["ok"] and first["passed"] and first["exit_code"] == 0
+        result = preflight.normalize_scout_preflight(tmp_project, payload, ())
+        assert [step["class"] for step in result["steps"]] == ["fail", "green"]
+
     def spec(self, project, *, paths=(), body=""):
         return replace(
             parse_task(

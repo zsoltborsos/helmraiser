@@ -1,6 +1,6 @@
 # Helmraiser — Current State
 
-Verify/evidence steps parse, preserve, and strictly validate optional boolean `red_on_base` markers.
+Verify/evidence steps strictly validate and preserve `red_on_base`; shared intake/scout preflight treats marked failures as expected red (sandbox hints take precedence) and rejects marked passes.
 
 - Scout drafts omit delivery and inherit the project default (fallback: merge); intake prompts show effective setup, environment variable names only, explicit-tool-path guidance, and a documentation-only stale-text check exception.
 

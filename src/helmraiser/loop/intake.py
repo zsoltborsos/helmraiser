@@ -144,6 +144,7 @@ def build_intake_prompt(spec: TaskSpec, config: dict[str, Any]) -> str:
     avoid_prompt = (
         f"Never propose these models: {', '.join(avoid_models)}.\n" if avoid_models else ""
     )
+    size_prompt = f"Task size: {spec.extra['size']}\n\n" if "size" in spec.extra else ""
     return (
         f'You are preparing the acceptance block for Helmraiser task "{spec.title}" '
         f"(id {spec.id}) in the repository at {spec.project}.\n"
@@ -156,6 +157,7 @@ def build_intake_prompt(spec: TaskSpec, config: dict[str, Any]) -> str:
             else ""
         )
         + "## Task\n\n"
+        f"{size_prompt}"
         f"{spec.body.strip()}\n\n"
         "## Current acceptance block\n\n"
         f"```yaml\n{current_yaml}```\n\n"
@@ -170,6 +172,11 @@ def build_intake_prompt(spec: TaskSpec, config: dict[str, Any]) -> str:
         "  root that exit 0 only when the task is done.\n"
         "- evidence: list of {name, run, artifacts, criteria, red_on_base (optional)}; commands write files into\n"
         "  $HELMRAISER_EVIDENCE_DIR and criteria say what a reviewer must see in them.\n"
+        "Verify runs after every implementation attempt and must stay fast: the tests "
+        "that cover the changed code, plus the project's lint or type checks when the "
+        "task changes code. Put the project's full test suite (and its coverage gate) "
+        "in evidence, which runs once after verify passes, never in verify. "
+        "Do not repeat a check in both.\n"
         "- verify and evidence run the project's tests and commands and show behaviour.\n"
         "  They never read, grep, parse or assert on source files' text, and never\n"
         "  check that a file or an import exists; reading the code and its\n"
@@ -189,7 +196,10 @@ def build_intake_prompt(spec: TaskSpec, config: dict[str, Any]) -> str:
         "- Never set `sandbox` on a verify or evidence step: they run inside the sandbox.\n"
         "- policy: review or approve-plan-first (never auto).\n"
         "- isolation: process (the default sandbox). Propose vm only when the task needs\n"
-        "  it; never propose none. budget: {max_cost_usd, max_minutes, max_iterations}.\n"
+        "  it; never propose none. budget: {max_cost_usd, max_minutes, max_iterations}, "
+        "sized to the task: for size S propose at most max_cost_usd 3, max_minutes 60 and "
+        "max_iterations 3; for M at most 6, 120 and 4; for L or unknown size, "
+        "size it to the work. Preserve an existing budget.\n"
         "- models: implement, fallback, review, plan as provider/id[:thinking]; review must\n"
         "  differ from implement and never be weaker. Propose only deliberate\n"
         "  deviations from configured profiles; omit `models:` when no deviation is needed.\n"

@@ -514,6 +514,49 @@ class TestIntakeProtection:
         assert "Preserve the file's explicit policy" in explicit_prompt
 
 
+class TestIntakeProportionateAcceptance:
+    def test_prompt_describes_check_placement_and_budget(self, tmp_project: Path):
+        spec = parse_task(DRAFT.format(project=tmp_project), tmp_project / "t.md", {})
+        prompt = build_intake_prompt(spec, {})
+        checks = (
+            "Verify runs after every implementation attempt and must stay fast: the tests "
+            "that cover the changed code, plus the project's lint or type checks when the "
+            "task changes code. Put the project's full test suite (and its coverage gate) "
+            "in evidence, which runs once after verify passes, never in verify. "
+            "Do not repeat a check in both."
+        )
+        budget = (
+            "budget: {max_cost_usd, max_minutes, max_iterations}, sized to the task: "
+            "for size S propose at most max_cost_usd 3, max_minutes 60 and "
+            "max_iterations 3; for M at most 6, 120 and 4; for L or unknown size, "
+            "size it to the work. Preserve an existing budget."
+        )
+        for guidance in (checks, budget):
+            assert guidance in prompt
+            assert prompt.index(guidance) > prompt.index("## Answer format")
+
+    @pytest.mark.parametrize("size", ["S", "M", "L"])
+    def test_prompt_shows_task_size_before_body(self, tmp_project: Path, size: str):
+        spec = parse_task(
+            DRAFT.format(project=tmp_project).replace(
+                "status: draft", f"status: draft\nsize: {size}"
+            ),
+            tmp_project / "t.md",
+            {},
+        )
+        assert spec.extra["size"] == size
+        prompt = build_intake_prompt(spec, {})
+        section = prompt.split("## Task\n\n")[1].split("## Current acceptance block")[0]
+        assert section == f"Task size: {size}\n\n{spec.body.strip()}\n\n"
+
+    def test_prompt_omits_task_size_when_unspecified(self, tmp_project: Path):
+        spec = parse_task(DRAFT.format(project=tmp_project), tmp_project / "t.md", {})
+        prompt = build_intake_prompt(spec, {})
+        assert "Task size:" not in prompt
+        section = prompt.split("## Task\n\n")[1].split("## Current acceptance block")[0]
+        assert section == f"{spec.body.strip()}\n\n"
+
+
 class TestIntakeProjectEnvironment:
     @pytest.mark.parametrize(
         ("project_setup", "task_setup"),

@@ -1,5 +1,7 @@
 # Helmraiser — Current State
 
+Intake prompts request fast targeted verify checks, full-suite/coverage evidence without duplicate checks, optional task-size context, and size-aware proposed budgets while preserving existing budgets.
+
 Verify/evidence steps strictly validate and preserve `red_on_base`; shared intake/scout preflight treats marked failures as expected red (sandbox hints take precedence) and rejects marked passes.
 
 - Scout drafts omit delivery and inherit the project default (fallback: merge); intake prompts show effective setup, environment variable names only, explicit-tool-path guidance, and a documentation-only stale-text check exception.

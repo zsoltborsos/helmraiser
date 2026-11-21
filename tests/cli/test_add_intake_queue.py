@@ -2111,6 +2111,30 @@ class TestBodyOutsidePaths:
         (row,) = ledger.list_tasks()
         assert parse_task(row["snapshot"], task, {}).paths == ("src/a.py",)
 
+    @pytest.mark.parametrize(
+        "body,expected",
+        [
+            ("Evidence:\n- tests/test_old.py\n", False),
+            ("## Project notes (Owner)\ntests/test_old.py\n", False),
+            (
+                "## Change\nEdit tests/test_old.py.\n\nEvidence:\n- tests/test_old.py\n\n## Project notes (Owner)\ntests/test_old.py",
+                True,
+            ),
+        ],
+    )
+    def test_excluded_body_sections(self, task, data_dir, ledger, monkeypatch, body, expected):
+        use_adapter(monkeypatch, None)
+        task.write_text(task.read_text().replace("Edit tests/test_old.py.", body))
+        result = invoke("intake", str(task), "--propose", "--json", data_dir=data_dir)
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert payload["notes"].count(self.NOTE) == int(expected)
+        assert payload["status"] == "draft"
+        (row,) = ledger.list_tasks()
+        for text in (task.read_text(), row["snapshot"]):
+            spec = parse_task(text, task, {})
+            assert spec.paths == ("src/a.py",) and spec.status == "draft"
+
     def test_add_does_not_run_body_warning_checks(self, task, data_dir, ledger, monkeypatch):
         def unexpected(*args, **kwargs):
             pytest.fail("add must not scan body paths")

@@ -8,7 +8,7 @@ Scout draft preparation re-proposes once on fail/sandbox checks using real diagn
 
 Intake shows a current budget only when the task explicitly sets a budget mapping; merged budgets remain explicit, while resolved defaults and budget serialization are unchanged.
 
-Intake prompts request fast targeted verify checks, full-suite/coverage evidence without duplicate checks, optional task-size context, and size-aware proposed budgets while preserving existing budgets.
+Intake prompts request fast targeted verify checks, full-suite/coverage evidence without duplicate checks, optional task-size context, and proposed budgets of $3/60 minutes/3 iterations for S and $6/120 minutes/4 iterations for M; L or unknown sizes are sized to the work, and existing budgets are preserved.
 
 Intake prompts list declared services and their sorted provided variable names without service configuration or values, and instruct steps to use those variables rather than start services.
 

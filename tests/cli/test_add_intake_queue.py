@@ -599,8 +599,8 @@ class TestIntakeProportionateAcceptance:
         )
         budget = (
             "budget: {max_cost_usd, max_minutes, max_iterations}, sized to the task: "
-            "for size S propose at most max_cost_usd 3, max_minutes 60 and "
-            "max_iterations 3; for M at most 6, 120 and 4; for L or unknown size, "
+            "for size S propose max_cost_usd 3, max_minutes 60 and "
+            "max_iterations 3; for M propose 6, 120 and 4; for L or unknown size, "
             "size it to the work. Preserve an existing budget."
         )
         for guidance in (checks, budget):

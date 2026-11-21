@@ -200,7 +200,7 @@ type checks when code changes. Put the full test suite and its coverage gate onl
 evidence, which runs once after verify passes; do not duplicate checks in both.
 When frontmatter supplies `size`, the task section shows `Task size: S` (or the supplied
 value) before the task body; without size, no line is added. Proposed budgets for size S
-should be at most $3, 60 minutes and 3 iterations; for M, at most $6, 120 minutes and
+should be $3, 60 minutes and 3 iterations; for M, $6, 120 minutes and
 4 iterations. For L or unknown size, size the budget to the work. Preserve an existing
 budget. These are instructions to the intake model, not validated limits.
 

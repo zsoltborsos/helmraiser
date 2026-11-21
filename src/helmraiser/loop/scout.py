@@ -42,6 +42,7 @@ from helmraiser.task.loader import TaskLoadError, origin_from_text, parse_task, 
 from helmraiser.task.model import ID_PATTERN, ModelSpec, TaskSpec
 from helmraiser.task.project import load_project_defaults, worktree_manager
 from helmraiser.task.schema import validate_task
+from helmraiser.task.paths import matches_paths, parse_paths
 from helmraiser.utils.markdown import parse_frontmatter, serialize_frontmatter
 
 SCOUT_TOOLS = ("read", "grep", "find", "ls")
@@ -806,6 +807,13 @@ def execute_scout(
         seen_ids = {str(row["id"]) for row in existing}
         seen_titles = {_normalized_title(str(row["title"])) for row in existing}
         task_dir = repo / ".helmraiser" / "tasks"
+        pending: list[tuple[str, tuple[str, ...]]] = []
+        for row in sorted(existing, key=lambda row: str(row["id"])):
+            if row["status"] == "draft":
+                declarations = parse_frontmatter(str(row["snapshot"]))["frontmatter"].get("paths")
+                if declarations:
+                    pending.append((str(row["id"]), parse_paths(declarations)))
+        accepted: list[tuple[str, tuple[str, ...]]] = []
         prepared = []
         for candidate in candidates:
             if candidate.needs_owner_ruling:
@@ -821,12 +829,30 @@ def execute_scout(
                 seen_ids.add(candidate.id)
                 seen_titles.add(title_key)
                 continue
+            files = tuple(dict.fromkeys(candidate.files))
+            conflict = None
+            for other_id, patterns in pending:
+                shared = [file for file in files if matches_paths(file, patterns)]
+                if shared:
+                    conflict = (other_id, shared)
+                    break
+            if conflict is None:
+                for other_id, other_files in accepted:
+                    shared = [file for file in files if file in other_files]
+                    if shared:
+                        conflict = (other_id, shared)
+                        break
+            if conflict is not None:
+                other_id, shared = conflict
+                skipped.append(f"{candidate.id}: overlaps {other_id} on {', '.join(shared)}")
+                continue
             text = render_draft(candidate, repo, scout_id, project_notes, lens=lens)
             spec = parse_task(text, path.resolve(), config)
             errors = validate_task(spec)
             if errors:
                 raise ScoutError(f"rendered draft {candidate.id} is invalid: {'; '.join(errors)}")
             prepared.append((candidate, path, text, spec))
+            accepted.append((candidate.id, files))
             seen_ids.add(candidate.id)
             seen_titles.add(title_key)
             if len(prepared) >= limit:

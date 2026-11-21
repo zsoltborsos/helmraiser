@@ -730,7 +730,7 @@ class TestScoutCommand:
                 needs_owner_ruling=True,
                 ruling_question="A or B?",
             ),
-            candidate(id="two", title="Two", size="M", files=["tests/new_test.py"]),
+            candidate(id="two", title="Two", size="M", files=["tests/second_test.py"]),
         ]
         fake_pi.write_script(
             {
@@ -741,22 +741,25 @@ class TestScoutCommand:
                         "tokens_in": 11,
                         "tokens_out": 22,
                     },
-                    "*-intake": {"text": intake_proposal()},
+                    "*-intake": [
+                        {"text": intake_proposal()},
+                        {"text": intake_proposal().replace("new_test.py", "second_test.py")},
+                    ],
                 }
             }
         )
         data_dir = tmp_path / "data"
         monkeypatch.setattr(
             "helmraiser.loop.scout.run_preflight_steps",
-            lambda *args, **kwargs: {
+            lambda repo, steps, **kwargs: {
                 "commands": [
                     {
                         "name": "tests",
                         "exit_code": 1,
                         "passed": False,
                         "seconds": 0.2,
-                        "output": "ERROR: file or directory not found: tests/new_test.py",
-                        "tail": "ERROR: file or directory not found: tests/new_test.py",
+                        "output": f"ERROR: file or directory not found: {steps[0].run.split()[-1]}",
+                        "tail": f"ERROR: file or directory not found: {steps[0].run.split()[-1]}",
                         "hints": [],
                     }
                 ],
@@ -832,7 +835,10 @@ class TestScoutCommand:
                 "sessions": {
                     "*-scout": {
                         "text": json.dumps(
-                            [candidate(id="bad", title="Bad"), candidate(id="good", title="Good")]
+                            [
+                                candidate(id="bad", title="Bad"),
+                                candidate(id="good", title="Good", files=["good.py"]),
+                            ]
                         )
                     },
                     "*-intake": [{"text": "not yaml"}, {"text": intake_proposal()}],
@@ -988,7 +994,7 @@ class TestScoutCommand:
                         "text": json.dumps(
                             [
                                 candidate(id="one", title="One", files=["tests/new_test.py"]),
-                                candidate(id="two", title="Two", files=["tests/new_test.py"]),
+                                candidate(id="two", title="Two", files=["tests/later_test.py"]),
                             ]
                         )
                     },
@@ -1082,7 +1088,11 @@ class TestScoutCommand:
     ):
         cli_config["routing"]["scout"]["max_drafts_per_run"] = 4
         candidates = [
-            candidate(id=f"task-{n}", title=f"Task {n}", files=["tests/new_test.py"])
+            candidate(
+                id=f"task-{n}",
+                title=f"Task {n}",
+                files=["tests/new_test.py" if n == 1 else f"tests/new_{n}.py"],
+            )
             for n in range(4)
         ]
         fake_pi.write_script(
@@ -1271,6 +1281,77 @@ class TestScoutCommand:
         ]
         assert len(payload["skipped_duplicates"]) == 2
 
+    @pytest.mark.parametrize(
+        "pending", [None, "literal", "glob", "directory", "legacy", "done", "other"]
+    )
+    def test_overlap_skips_and_disjoint_candidate_fills_cap(
+        self, tmp_project, tmp_path, fake_pi, scout_srt_log, cli_config, monkeypatch, pending
+    ):
+        data_dir = tmp_path / "data"
+        ledger = Ledger(data_dir / "helmraiser.db")
+        if pending is not None:
+            repo = tmp_path / "other" if pending == "other" else tmp_project
+            seed_draft(ledger, repo, id="existing", title="Existing", files=["a.py", "b.py"])
+            row = ledger.list_tasks()[0]
+            path = Path(row["source_path"])
+            parsed = parse_frontmatter(row["snapshot"])
+            fm = parsed["frontmatter"]
+            fm["source"] = "manual"
+            if pending == "glob":
+                fm["paths"] = ["*.py"]
+            elif pending == "directory":
+                fm["paths"] = ["src/"]
+            elif pending == "legacy":
+                fm.pop("paths")
+            elif pending == "done":
+                fm["status"] = "failed"
+            snapshot = serialize_frontmatter(fm, parsed["body"])
+            ledger.upsert_task(parse_task(snapshot, path, {}), snapshot)
+            path.write_text(row["snapshot"].replace("a.py", "unrelated.py"))
+        files = ["src/a.py"] if pending == "directory" else ["b.py", "a.py", "b.py"]
+        fake_pi.write_script(
+            {
+                "sessions": {
+                    "*-scout": {
+                        "text": json.dumps(
+                            [
+                                candidate(id="one", title="One", files=files),
+                                candidate(id="two", title="Two", files=files),
+                                candidate(id="three", title="Three", files=["disjoint.txt"]),
+                            ]
+                        )
+                    },
+                    "*-intake": {"text": intake_proposal()},
+                }
+            }
+        )
+        calls = []
+        monkeypatch.setattr(
+            "helmraiser.loop.scout.run_preflight_steps",
+            lambda *a, **kw: calls.append(True) or {"commands": [], "error": None},
+        )
+        result = run_scout(tmp_project, data_dir, "--force", "--max", "3")
+        assert result.exit_code == 0, result.output
+        out = json.loads(result.output)
+        blocked = pending in ("literal", "glob", "directory")
+        shared = "src/a.py" if pending == "directory" else "b.py, a.py"
+        expected = (
+            [f"one: overlaps existing on {shared}", f"two: overlaps existing on {shared}"]
+            if blocked
+            else [f"two: overlaps one on {shared}"]
+        )
+        assert out["skipped_duplicates"] == expected
+        report = Path(out["report_path"]).read_text()
+        assert all(message in report for message in expected)
+        written = [Path(p).stem for p in out["written_paths"]]
+        assert written == (["three"] if blocked else ["one", "three"])
+        assert len(calls) == len(written)
+        assert len([c for c in fake_pi.calls() if c["session_id"].endswith("-intake")]) == len(
+            written
+        )
+        assert not (tmp_project / ".helmraiser/tasks/two.md").exists()
+        assert "two" not in [row["id"] for row in ledger.list_tasks()]
+
     def test_focus_and_pause_gates_refuse_without_starting(
         self,
         tmp_project: Path,
@@ -1307,7 +1388,10 @@ class TestScoutCommand:
                 "sessions": {
                     "*-scout": {
                         "text": json.dumps(
-                            [candidate(id=str(n), title=f"Task {n}") for n in range(1, 6)]
+                            [
+                                candidate(id=str(n), title=f"Task {n}", files=[f"file{n}.py"])
+                                for n in range(1, 6)
+                            ]
                         )
                     }
                 }

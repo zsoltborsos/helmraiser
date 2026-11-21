@@ -1,6 +1,6 @@
 # Helmraiser — Current State
 
-Scout drafts declare candidate files as ordered, deduplicated paths.
+Scout drafts declare candidate files as ordered, deduplicated paths and skip overlaps with accepted candidates or pending drafts.
 
 Preflight hints respect each step’s actual sandbox mode: host permission failures remain ordinary failures, sandboxed permission failures retain their hints, and host loopback hints use non-sandbox wording.
 

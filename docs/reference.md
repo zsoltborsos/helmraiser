@@ -183,6 +183,7 @@ The intake prompt says that verify and evidence run the project's tests and comm
 never read, grep, parse or check the existence of source files. For documentation-only
 Markdown or plain-text tasks, one step may check that removed stale wording no longer
 appears in the affected document; this excludes help strings and other text embedded in code.
+The intake prompt also requests `$HELMRAISER_BASE_SHA` rather than literal base commit IDs, suitable step timeouts following project notes (defaults: 300 seconds for verify and 600 for evidence), only configured lint and type commands, and checks covering every part of the described change.
 Intake is instructed to set `red_on_base: true` only on steps that check the task's
 change against an existing file, such as that stale-text check or an assertion on current
 command output, so the step must fail before the change.

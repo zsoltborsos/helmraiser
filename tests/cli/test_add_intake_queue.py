@@ -587,6 +587,23 @@ class TestIntakeProportionateAcceptance:
         assert "budget_explicit" not in fm
         assert parse_task(text, spec.source_path, isolated_config) == outcome.spec
 
+    @pytest.mark.parametrize("feedback", [None, "Use project notes for step durations."])
+    def test_prompt_consistency_rules(self, tmp_project: Path, feedback):
+        spec = parse_task(DRAFT.format(project=tmp_project), tmp_project / "t.md", {})
+        prompt = build_intake_prompt(spec, {}, feedback=feedback)
+        rules = (
+            "Refer to the base commit as `$HELMRAISER_BASE_SHA`, never as a literal commit id.",
+            "Give every step a timeout that fits it: the defaults are 300 seconds for verify and "
+            "600 for evidence, and a full test suite usually needs more; follow the project notes "
+            "when they state a duration.",
+            "Run the project's own configured lint and type commands; never add lint rules the "
+            "project does not configure.",
+            "Together, the steps must check every part of the change the task describes.",
+        )
+        answer_format = prompt.split("## Answer format\n\n", 1)[1]
+        for rule in rules:
+            assert answer_format.count(f"- {rule}\n") == 1
+
     def test_prompt_describes_check_placement_and_budget(self, tmp_project: Path):
         spec = parse_task(DRAFT.format(project=tmp_project), tmp_project / "t.md", {})
         prompt = build_intake_prompt(spec, {})

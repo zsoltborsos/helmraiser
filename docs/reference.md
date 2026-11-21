@@ -343,6 +343,11 @@ Valid non-ruling candidates become `.helmraiser/tasks/<id>.md` files with `statu
 `source: scout <scout-id>`. Drafts omit delivery and inherit the project's default,
 falling back to `merge` when none is configured. Existing IDs and normalized titles are skipped. Candidates
 that need an owner ruling appear only in the report.
+Draft `paths` contain the candidate's files in first-occurrence order, without duplicates.
+Candidates overlapping earlier accepted candidates or ledger-recorded pending drafts of
+any kind are skipped, with `<id>: overlaps <other id> on <file>, <file>` in the report.
+Pending declarations use normal path matching (including globs and directories); the
+first conflict is chosen by pending task ID, then same-run acceptance order.
 
 Each generated draft then receives the same acceptance proposal as `intake --propose`
 and remains `status: draft` without an approval stamp or queueing. Helmraiser preflights
@@ -444,8 +449,11 @@ which is outside paths: add it if the change needs to edit it`.
 Intake also adds an advisory note (`notes` in `--json`), never an error, when
 `budget.max_cost_usd` is $20 or more, suggesting smaller tasks linked with `depends_on`.
 Intake also adds one note listing tracked files and directories named in the body
-that `paths` does not cover. Fenced code blocks count; URLs do not. There is no body
-note when `paths` is omitted or the project is not a git repository. The note is
+that `paths` does not cover. Fenced code blocks count; URLs do not. The appended
+`## Project notes (` section through EOF is excluded. A standalone `Evidence:` line
+and its following list are excluded until a blank line or Markdown ATX heading
+(one to six `#` characters followed by whitespace or end of line); that heading is
+checked normally. There is no body note when `paths` is omitted or the project is not a git repository. The note is
 advisory and does not change the declared paths.
 Intake detects tracked tests outside `paths` that import or are named after in-scope
 JS/TS or Python source files. New queueing through `--yes` appends all candidates

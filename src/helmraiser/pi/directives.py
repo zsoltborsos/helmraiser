@@ -106,6 +106,7 @@ a non-empty ruling_question whenever the work requires an owner decision.
 - Make "change" name every edit the verify hints check, and nothing the code contradicts; read the code before stating how it behaves.
 - A candidate that only changes tests never asks to edit production code; prove a test can fail with a mutation check outside the worktree instead.
 - Put findings that touch the same file into one candidate.
+- When a candidate removes information from logs, errors or other output, its "change" also says what must remain (for example fixed labels, counts, durations or class names).
 """
 
 

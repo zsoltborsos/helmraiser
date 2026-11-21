@@ -2,6 +2,8 @@
 
 Intake prompts request fast targeted verify checks, full-suite/coverage evidence without duplicate checks, optional task-size context, and size-aware proposed budgets while preserving existing budgets.
 
+Intake prompts list declared services and their sorted provided variable names without service configuration or values, and instruct steps to use those variables rather than start services.
+
 Verify/evidence steps strictly validate and preserve `red_on_base`; shared intake/scout preflight treats marked failures as expected red (sandbox hints take precedence) and rejects marked passes.
 The tests scout lens requests per-test mutation checks marked `red_on_base`, without worktree edits, plus changed-test verification and full-suite/coverage evidence.
 

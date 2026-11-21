@@ -614,6 +614,76 @@ class TestIntakeProjectEnvironment:
         ):
             assert value not in prompt
 
+    def test_services_show_names_without_values(self, tmp_project: Path):
+        spec = parse_task(DRAFT.format(project=tmp_project), tmp_project / "t.md", {})
+        baseline = build_intake_prompt(spec, {})
+        project_toml(
+            tmp_project,
+            """
+[[services]]
+name = "postgres"
+image = "postgres:16"
+port = 5432
+env = { POSTGRES_PASSWORD = "service-postgres-secret" }
+[services.provides]
+ZETA_DATABASE_URL = "postgresql://user:zeta-secret@{host}:{port}/db"
+DATABASE_URL = "postgresql://user:provided-password@{host}:{port}/db"
+
+[[services]]
+name = "redis"
+image = "redis:7"
+port = 6379
+env = { REDIS_PASSWORD = "service-redis-secret" }
+provides = { REDIS_URL = "redis://:redis-provided-secret@{host}:{port}/0" }
+""",
+        )
+        prompt = build_intake_prompt(spec, {})
+        section = prompt.split("## Project environment\n\n")[1].split(
+            "## Configured model profiles"
+        )[0]
+        block = (
+            "Declared services:\n\n"
+            "- `postgres`: `DATABASE_URL`, `ZETA_DATABASE_URL`\n"
+            "- `redis`: `REDIS_URL`\n\n"
+            "Helmraiser starts these services before verify and evidence and sets the listed "
+            "variables for every step. Use those variables; never start containers or services "
+            "from a step.\n\n"
+        )
+        assert prompt.count(block) == 1
+        assert block in section
+        assert section.index(block) < section.index("Verify and evidence steps run")
+        for hidden in (
+            "postgres:16",
+            "redis:7",
+            "POSTGRES_PASSWORD",
+            "REDIS_PASSWORD",
+            "service-postgres-secret",
+            "service-redis-secret",
+            "postgresql://user:zeta-secret@{host}:{port}/db",
+            "postgresql://user:provided-password@{host}:{port}/db",
+            "redis://:redis-provided-secret@{host}:{port}/0",
+            "zeta-secret",
+            "provided-password",
+            "redis-provided-secret",
+        ):
+            assert hidden not in prompt
+        for port in ("5432", "6379"):
+            assert port not in section
+        assert prompt.replace(block, "", 1) == baseline
+
+    @pytest.mark.parametrize("configuration", [None, "services = []\n"])
+    def test_no_services_omits_service_context(self, tmp_project: Path, configuration: str | None):
+        if configuration is not None:
+            project_toml(tmp_project, configuration)
+        spec = parse_task(DRAFT.format(project=tmp_project), tmp_project / "t.md", {})
+        prompt = build_intake_prompt(spec, {})
+        assert "Declared services:" not in prompt
+        assert (
+            "Helmraiser starts these services before verify and evidence and sets the listed "
+            "variables for every step. Use those variables; never start containers or services "
+            "from a step."
+        ) not in prompt
+
 
 class TestIntakeModels:
     @pytest.mark.parametrize("config", [{}, {"intake": {}}, {"intake": {"avoid_models": []}}])

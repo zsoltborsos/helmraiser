@@ -95,6 +95,18 @@ def build_intake_prompt(spec: TaskSpec, config: dict[str, Any]) -> str:
     defaults = load_project_defaults(spec.project)
     setup = effective_setup(spec, defaults)
     env_names = sorted(effective_env(spec, defaults))
+    services_prompt = (
+        "Declared services:\n\n"
+        + "\n".join(
+            f"- `{service.name}`: " + ", ".join(f"`{name}`" for name in sorted(service.provides))
+            for service in defaults.services
+        )
+        + "\n\nHelmraiser starts these services before verify and evidence and sets the listed "
+        "variables for every step. Use those variables; never start containers or services "
+        "from a step.\n\n"
+        if defaults.services
+        else ""
+    )
     environment_prompt = (
         "## Project environment\n\n"
         + (
@@ -109,6 +121,7 @@ def build_intake_prompt(spec: TaskSpec, config: dict[str, Any]) -> str:
             if env_names
             else ""
         )
+        + services_prompt
         + "Verify and evidence steps run from the repository root after setup, "
         "with no virtual environment activated. Call tools that setup installs by "
         "their path in the worktree (for example `.venv/bin/python` or "

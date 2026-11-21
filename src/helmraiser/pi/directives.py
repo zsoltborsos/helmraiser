@@ -101,6 +101,11 @@ have exactly these keys: "id", "title", "why", "evidence", "files", "change",
 a non-empty list of relative "file:line" strings; files is a non-empty list of
 relative paths; size is "S", "M", or "L". Set needs_owner_ruling true and provide
 a non-empty ruling_question whenever the work requires an owner decision.
+
+- Cite evidence as "file:line" and name the symbol when there is one (for example "src/api.py:206 DiaryExcerpt"), so the citation survives small edits.
+- Make "change" name every edit the verify hints check, and nothing the code contradicts; read the code before stating how it behaves.
+- A candidate that only changes tests never asks to edit production code; prove a test can fail with a mutation check outside the worktree instead.
+- Put findings that touch the same file into one candidate.
 """
 
 

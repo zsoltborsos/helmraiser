@@ -1,5 +1,7 @@
 # Helmraiser — Current State
 
+Scout directives request symbol-qualified citations, self-consistent changes and checks, test-only mutation checks outside the worktree, and grouping findings that touch the same file.
+
 Scout drafts declare ordered, deduplicated paths and skip overlaps with accepted candidates or pending drafts; body-path advisories exclude Evidence lists and appended project notes.
 
 Preflight hints respect each step’s actual sandbox mode: host permission failures remain ordinary failures, sandboxed permission failures retain their hints, and host loopback hints use non-sandbox wording.

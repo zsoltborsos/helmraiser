@@ -60,8 +60,8 @@ EXPECTED_SHA256 = {
     "plan_approval": "c269f2a7c0a83734eaa25cec0e66a8c9fa8f32cbbcfda9a0f2395385e21b401a",
     "review": "b630dce1903d04c0e6448e10b79ac05c14f7d9d562b34bd3c838007abe5798a1",
     "review_context": "82628690fdb0df1e278c8bdd6a5182df861e2a0a8bc936b8f674da3c67136701",
-    "scout": "36e931a917f8cdba60ceee587e4b998b1039a1a6d2fa711eab40a4aa1c55c93f",
-    "scout_exclusions": "2bc8a23fad1f5f4128f23c8ff50f75b16ed7e4db464f26a1f3d02d5c313f58ea",
+    "scout": "673ba00344180faec1222770470459ae3d4d54b00e3414197e7a8b965e0301a0",
+    "scout_exclusions": "2715ef5a8928a606d3716b80f912cdd4aae279307117491c314b25c245c1229e",
 }
 
 

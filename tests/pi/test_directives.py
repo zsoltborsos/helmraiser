@@ -177,6 +177,14 @@ class TestImplementDirectives:
         assert "`BLOCKED:`" in text
         assert "Run them yourself before you stop" in text
 
+    def test_shell_environment_limits_are_not_blockers(self):
+        text = " ".join(_implement().split())
+        assert "Your shell is stricter than Helmraiser's verify sandbox." in text
+        assert "environment limits (denied socket, port, process or path), not your change" in text
+        assert "commit and stop without `BLOCKED:`" in text
+        assert "Helmraiser runs verify." in text
+        assert "Answer `BLOCKED:` only for task or code problems." in text
+
     def test_out_of_memory_rule(self):
         text = _implement()
         assert "heap out of memory" in text

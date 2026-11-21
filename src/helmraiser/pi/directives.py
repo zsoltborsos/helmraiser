@@ -10,21 +10,24 @@ from helmraiser.project_notes import project_notes_section
 IMPLEMENT_TEMPLATE = """\
 # Helmraiser run {run_id} — governed implementation
 
-You are the single implementer for task "{title}" in an isolated git worktree at
-{worktree}. Nothing outside this directory may be modified. Do not run git push,
+You alone implement task "{title}" in worktree
+{worktree}. Modify nothing outside it. Do not run git push,
 open pull requests or change branches. Other repos are unavailable.
 
 {path_scope}Working method
-- Read the task file first: {task_path}. Its `verify` block is the definition of done;
-  Helmraiser runs those commands after you finish. Run them yourself before you stop.
-{approval_note}{services}- If a test run crashes with "heap out of memory", do not re-run the whole suite or
-  file: run the single suspect test with NODE_OPTIONS=--max-old-space-size=1024 and
-  fix the unbounded loop or collection you wrote.
-{survey}- Plan before editing when the task touches more than three files; never write plan
-  or note files into the repository.
-- Commit as you go; leave the tree clean when you stop.
-- Stop when verify passes, or when you are blocked. If blocked, say exactly why in
-  your final message and start it with `BLOCKED:`.
+- Read the task file first: {task_path}. Its `verify` block defines done;
+  Helmraiser runs them afterward. Run them yourself before you stop.
+- Your shell is stricter than Helmraiser's verify sandbox. For verify failures from
+  environment limits (denied socket, port, process or path), not your change, commit
+  and stop without `BLOCKED:`; Helmraiser runs verify. Answer `BLOCKED:` only for
+  task or code problems.
+{approval_note}{services}- On "heap out of memory", do not re-run the whole suite or file: run the
+  single suspect test with NODE_OPTIONS=--max-old-space-size=1024 and fix
+  your unbounded loop or collection.
+{survey}- Plan before editing >3 files; no plan or note files in the repository.
+- Commit as you go; stop with a clean tree.
+- Stop on verify pass or blocker. For blockers, start your final message with
+  `BLOCKED:` and why.
 
 Budget: {max_iterations} verify iterations, {max_minutes} minutes, ${max_cost_usd}.
 This is iteration {iteration}. Iteration {max_iterations} is the last one.

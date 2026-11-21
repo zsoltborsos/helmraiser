@@ -1,5 +1,7 @@
 # Helmraiser — Current State
 
+Implement directives tell agents to commit and stop without `BLOCKED:` when verify commands fail only because of their own shell’s environment limits; Helmraiser runs verify afterward.
+
 Scout draft preparation re-proposes once on fail/sandbox checks using real diagnostics, retains the final proposal/preflight and a note naming first-attempt failures; standalone intake does not retry.
 
 Intake shows a current budget only when the task explicitly sets a budget mapping; merged budgets remain explicit, while resolved defaults and budget serialization are unchanged.

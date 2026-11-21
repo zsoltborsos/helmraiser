@@ -1082,6 +1082,41 @@ class TestIntakeCheck:
             "refusing to queue" in out["error"] if refusal == "caps" else "active" in out["error"]
         )
 
+    @pytest.mark.parametrize("kind", ["verify", "evidence"])
+    @pytest.mark.parametrize("queue", [False, True])
+    def test_marked_existing_file_executes_on_base(
+        self, tmp_project, data_dir, isolated_config, intake_srt_log, monkeypatch, kind, queue
+    ):
+        use_adapter(monkeypatch, ScriptedPiAdapter({}))
+        if not queue:
+            self.no_ledger(monkeypatch)
+        step = "  - name: change-check\n    run: test ! -f README.md\n    red_on_base: true\n"
+        content = COMPLETE.replace("    run: pytest -q", "    run: 'true'")
+        if kind == "verify":
+            content = content.replace("  - name: tests\n    run: 'true'\n", step)
+        else:
+            content = content.replace(
+                "policy: review\n",
+                "policy: review\nevidence:\n"
+                + step
+                + "    artifacts: [out.txt]\n    criteria: works\n",
+            )
+        path = write_task(tmp_project, content)
+        original = path.read_bytes()
+        result = invoke(
+            "intake",
+            str(path),
+            "--check",
+            "--json",
+            *(["--yes"] if queue else []),
+            data_dir=data_dir,
+        )
+        assert result.exit_code == 0, result.output
+        assert json.loads(result.output)["check"]["summary"] == "expected red"
+        assert srt_calls(intake_srt_log)
+        if not queue:
+            assert path.read_bytes() == original
+
     def test_cli_executes_on_head_with_setup_and_cleanup(
         self, tmp_project, tmp_path, data_dir, isolated_config, intake_srt_log, monkeypatch
     ):

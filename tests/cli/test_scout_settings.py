@@ -9,7 +9,7 @@ from helmraiser.ledger.db import Ledger
 
 
 @pytest.mark.parametrize("command", [["set", "docs", "--auto", "off"], ["reset", "docs"]])
-@pytest.mark.parametrize("invalid_lens", ["docs", "tests"])
+@pytest.mark.parametrize("invalid_lens", ["docs", "tests", "guardrails"])
 def test_failed_settings_leave_overrides_unchanged(tmp_path, monkeypatch, command, invalid_lens):
     config = {"routing": {"scout": {"lenses": {invalid_lens: {"cooldown_hours": 0}}}}}
     monkeypatch.setattr(scout_commands, "load_config", lambda: config)
@@ -24,6 +24,7 @@ def test_failed_settings_leave_overrides_unchanged(tmp_path, monkeypatch, comman
     with Ledger(tmp_path / "helmraiser.db") as ledger:
         assert ledger.scout_lens_override("docs") == before
         assert ledger.scout_lens_override("tests") == {}
+        assert ledger.scout_lens_override("guardrails") == {}
 
 
 def test_reset_validates_uncovered_config_before_deleting(tmp_path, monkeypatch):
@@ -64,25 +65,34 @@ def test_set_can_override_invalid_config(tmp_path, monkeypatch):
         assert ledger.scout_lens_override("docs") == {"auto": True}
 
 
-def test_settings(tmp_path):
+@pytest.mark.parametrize("lens", ["docs", "tests", "guardrails"])
+def test_settings(tmp_path, lens):
     runner = CliRunner()
     args = ["--json", "--data-dir", str(tmp_path)]
     result = runner.invoke(app, ["drafts", "settings", *args])
     assert result.exit_code == 0, result.output
-    assert json.loads(result.output)["lenses"]["docs"]["auto"] is False
-    result = runner.invoke(app, ["drafts", "settings", "set", "docs", "--auto", "on", *args])
+    lenses = json.loads(result.output)["lenses"]
+    assert list(lenses) == ["state", "docs", "tests", "guardrails"]
+    assert lenses[lens]["auto"] is False
+    assert lenses[lens]["source"]["auto"] == "default"
+    result = runner.invoke(app, ["drafts", "settings", "--data-dir", str(tmp_path)])
     assert result.exit_code == 0, result.output
-    row = json.loads(result.output)["lenses"]["docs"]
+    assert "guardrails: auto=False (default)" in result.output
+    result = runner.invoke(app, ["drafts", "settings", "set", lens, "--auto", "on", *args])
+    assert result.exit_code == 0, result.output
+    row = json.loads(result.output)["lenses"][lens]
     assert row["auto"] is True
     assert row["source"]["auto"] == "ledger"
-    result = runner.invoke(app, ["drafts", "settings", "reset", "docs", *args])
+    result = runner.invoke(app, ["drafts", "settings", "reset", lens, *args])
     assert result.exit_code == 0
-    assert json.loads(result.output)["lenses"]["docs"]["source"]["auto"] == "default"
+    assert json.loads(result.output)["lenses"][lens]["source"]["auto"] == "default"
     for options in (
         ["bad"],
-        ["docs"],
-        ["docs", "--cooldown-hours", "0"],
-        ["docs", "--auto", "bad"],
+        [lens],
+        [lens, "--cooldown-hours", "0"],
+        [lens, "--auto", "bad"],
     ):
         result = runner.invoke(app, ["drafts", "settings", "set", *options, *args])
         assert result.exit_code == 2, result.output
+        if options == ["bad"]:
+            assert "state, docs, tests, guardrails" in result.output

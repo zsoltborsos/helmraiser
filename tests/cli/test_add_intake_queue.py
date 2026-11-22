@@ -979,15 +979,31 @@ class TestIntakeCheck:
         [(1, [], "expected red"), (0, [], "fail"), (1, ["sandbox hint"], "sandbox")],
     )
     @pytest.mark.parametrize("as_json", [False, True])
+    @pytest.mark.parametrize("marker", [None, "absent marker", "existing README.md check"])
     def test_marked_check_queue(
-        self, tmp_project, data_dir, ledger, monkeypatch, kind, code, hints, classification, as_json
+        self,
+        tmp_project,
+        data_dir,
+        ledger,
+        monkeypatch,
+        kind,
+        code,
+        hints,
+        classification,
+        as_json,
+        marker,
     ):
+        if classification == "expected red" and marker != "existing README.md check":
+            classification = "fail"
+
         def run(repo, steps, **kwargs):
             return {
                 "commands": [
                     {
                         "name": step.name,
                         "red_on_base": step.red_on_base,
+                        "red_output": step.red_output,
+                        "output": "existing README.md check",
                         "exit_code": code if step.red_on_base else 0,
                         "hints": hints if step.red_on_base else [],
                         "tail": "existing README.md check",
@@ -1004,6 +1020,8 @@ class TestIntakeCheck:
         )
         fm = parse_frontmatter(content.format(project=tmp_project))["frontmatter"]
         fm[kind][0]["red_on_base"] = True
+        if marker is not None:
+            fm[kind][0]["red_output"] = marker
         path = write_task(tmp_project, serialize_frontmatter(fm, "Check existing README.md."))
         original = path.read_bytes()
         if classification != "expected red":
@@ -1029,11 +1047,18 @@ class TestIntakeCheck:
         else:
             assert classification in result.output
             text = result.output
+        if code == 1 and not hints and classification == "fail":
+            assert (
+                "has no red_output"
+                if marker is None
+                else "expected red_output text was not in the output"
+            ) in text
         if code == 0:
             assert "declared red on base but passed on the unchanged code" in text
         if classification == "expected red":
             saved = parse_frontmatter(path.read_text())["frontmatter"]
             assert saved[kind][0]["red_on_base"] is True
+            assert saved[kind][0]["red_output"] == "existing README.md check"
             assert saved["status"] == "queued"
             assert saved["intake"]["approved_at"]
         else:
@@ -1331,7 +1356,7 @@ class TestIntakeCheck:
         use_adapter(monkeypatch, ScriptedPiAdapter({}))
         if not queue:
             self.no_ledger(monkeypatch)
-        step = "  - name: change-check\n    run: test ! -f README.md\n    red_on_base: true\n"
+        step = "  - name: change-check\n    run: test ! -f README.md || (echo intended; exit 1)\n    red_on_base: true\n    red_output: intended\n"
         content = COMPLETE.replace("    run: pytest -q", "    run: 'true'")
         if kind == "verify":
             content = content.replace("  - name: tests\n    run: 'true'\n", step)
@@ -2760,8 +2785,13 @@ class TestStructuralSteps:
         instruction = "Set `red_on_base: true` on a step that checks the task's change against a file that already exists, such as the stale-text check above or an assertion on current command output, so it must fail before the change. Leave it unset on every other step."
         assert instruction in prompt
         assert prompt.index(instruction) > prompt.index("Exception:")
-        assert "{name, run, timeout, red_on_base (optional)}" in prompt
-        assert "{name, run, artifacts, criteria, red_on_base (optional)}" in prompt
+        assert "{name, run, timeout, red_on_base (optional), red_output (optional)}" in prompt
+        assert "Every red_on_base step must set `red_output`" in prompt
+        assert "`Error`" in prompt and "`FAILED`" in prompt
+        assert (
+            "{name, run, artifacts, criteria, red_on_base (optional), red_output (optional)}"
+            in prompt
+        )
         assert "TAP's\n  summary always prints `# skipped 0` and `# todo 0`" in prompt
 
 

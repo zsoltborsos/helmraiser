@@ -21,6 +21,7 @@ from helmraiser.loop.scout import (
     classify_preflight_step,
     collect_scout_inputs,
     draft_acceptance_scope_hash,
+    drop_draft,
     normalize_scout_preflight,
     parse_candidates,
     render_draft,
@@ -1927,12 +1928,15 @@ class TestDraftCommands:
 
         assert result.exit_code == 0, result.output
         assert path.exists()
+        assert json.loads(result.output)["class"] is None
+        assert "drop_class" not in parse_frontmatter(path.read_text())["frontmatter"]
         updated = parse_task(path.read_text(), path, {})
         assert updated.status == "dropped" and updated.body == before_body
         assert updated.extra["source"].startswith("scout ") and updated.extra["size"] == "M"
         row = ledger.get_task(task_id)
         assert row is not None and row["status"] == "dropped"
         assert "Already handled elsewhere" in row["snapshot"]
+        assert "drop_class" not in parse_frontmatter(row["snapshot"])["frontmatter"]
 
         other = seed_draft(ledger, repo, id="bare", title="Bare")
         bare = runner.invoke(
@@ -1948,6 +1952,89 @@ class TestDraftCommands:
             ],
         )
         assert bare.exit_code == 0 and ledger.get_task(other)["status"] == "dropped"
+        assert "[class=unclassified]" in bare.output
+
+    @pytest.mark.parametrize("classification", ["wrong", "unwanted", "duplicate", "unusable"])
+    @pytest.mark.parametrize("as_json", [True, False])
+    def test_drop_class(self, tmp_path: Path, classification: str, as_json: bool):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        data = tmp_path / "data"
+        ledger = Ledger(data / "helmraiser.db")
+        task_id = seed_draft(ledger, repo, id="classified")
+        path = repo / ".helmraiser/tasks/classified.md"
+        body = parse_frontmatter(path.read_text())["body"]
+        result = runner.invoke(
+            app,
+            [
+                "drafts",
+                "drop",
+                task_id,
+                "--reason",
+                "Owner reason",
+                "--class",
+                classification,
+                "--data-dir",
+                str(data),
+                *(["--json"] if as_json else []),
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        for text in (path.read_text(), ledger.get_task(task_id)["snapshot"]):
+            parsed = parse_frontmatter(text)
+            assert parsed["frontmatter"]["drop_class"] == classification
+            assert parsed["frontmatter"]["drop_reason"] == "Owner reason"
+            assert parsed["frontmatter"]["status"] == "dropped"
+            assert parsed["body"] == body
+        if as_json:
+            assert json.loads(result.output)["class"] == classification
+        else:
+            assert f"[class={classification}]" in result.output
+
+    @pytest.mark.parametrize("classification", ["invalid", ""])
+    def test_invalid_class_leaves_draft_unchanged(self, tmp_path: Path, classification: str):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        data = tmp_path / "data"
+        ledger = Ledger(data / "helmraiser.db")
+        task_id = seed_draft(ledger, repo, id="invalid")
+        path = repo / ".helmraiser/tasks/invalid.md"
+        before = path.read_bytes()
+        row = ledger.get_task(task_id)
+        result = runner.invoke(
+            app,
+            [
+                "drafts",
+                "drop",
+                task_id,
+                "--reason",
+                "reason",
+                "--class",
+                classification,
+                "--data-dir",
+                str(data),
+            ],
+        )
+        assert result.exit_code == 2
+        for value in ("wrong", "unwanted", "duplicate", "unusable"):
+            assert value in result.output
+        with pytest.raises(ScoutError, match="drop class"):
+            drop_draft(ledger, row, "reason", drop_class=classification)
+        missing = runner.invoke(
+            app,
+            [
+                "drafts",
+                "drop",
+                task_id,
+                "--class",
+                "wrong",
+                "--data-dir",
+                str(data),
+            ],
+        )
+        assert missing.exit_code == 2
+        assert path.read_bytes() == before
+        assert ledger.get_task(task_id) == row
 
     def test_drop_rejects_blank_unknown_ambiguous_and_non_draft(self, tmp_path: Path):
         data_dir = tmp_path / "data"

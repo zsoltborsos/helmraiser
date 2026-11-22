@@ -16,6 +16,7 @@ from helmraiser.isolation.process import ProcessIsolation
 from helmraiser.ledger.db import Ledger, ScoutRequestUnavailable, default_data_dir
 from helmraiser.loop.intake import IntakeOutcome, get_intake_adapter, run_intake
 from helmraiser.loop.scout import (
+    DROP_CLASSES,
     IntakeCallback,
     ScoutError,
     configured_focus_projects,
@@ -287,6 +288,9 @@ def drafts_request(
 def drafts_drop(
     task: str = typer.Argument(..., help="Full ledger task id or a unique bare id"),
     reason: str = typer.Option(..., "--reason", help="Why the draft is being dropped"),
+    drop_class: str | None = typer.Option(
+        None, "--class", help=f"Drop classification: {', '.join(DROP_CLASSES)}"
+    ),
     as_json: bool = typer.Option(False, "--json", help="Machine-readable output"),
     data_dir: Path | None = typer.Option(None, "--data-dir", help="Override HELMRAISER_DATA_DIR"),
 ) -> None:
@@ -295,19 +299,23 @@ def drafts_drop(
     ledger = Ledger(base / "helmraiser.db")
     try:
         row = resolve_draft(ledger, task)
-        dropped = drop_draft(ledger, row, reason)
+        dropped = drop_draft(ledger, row, reason, drop_class=drop_class)
     except ScoutError as exc:
         _fail(str(exc), as_json=as_json, code=EXIT_VALIDATION)
     payload = {
         "task_id": dropped["task_id"],
         "status": "dropped",
         "reason": dropped["drop_reason"],
+        "class": dropped["drop_class"],
         "dropped_at": dropped["dropped_at"],
     }
     if as_json:
         typer.echo(json.dumps(payload))
     else:
-        typer.echo(f"dropped {payload['task_id']}: {payload['reason']}")
+        typer.echo(
+            f"dropped {payload['task_id']} [class={payload['class'] or 'unclassified'}]: "
+            f"{payload['reason']}"
+        )
 
 
 def scout(

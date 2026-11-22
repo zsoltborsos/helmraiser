@@ -47,6 +47,7 @@ from helmraiser.task.schema import validate_task
 from helmraiser.utils.markdown import parse_frontmatter, serialize_frontmatter
 
 SCOUT_TOOLS = ("read", "grep", "find", "ls")
+DROP_CLASSES = ("wrong", "unwanted", "duplicate", "unusable")
 _CANDIDATE_KEYS = frozenset(
     {
         "id",
@@ -605,8 +606,15 @@ def resolve_draft(ledger: Ledger, task: str) -> dict[str, Any]:
 
 
 def drop_draft(
-    ledger: Ledger, row: dict[str, Any], reason: str, now: float | None = None
+    ledger: Ledger,
+    row: dict[str, Any],
+    reason: str,
+    now: float | None = None,
+    *,
+    drop_class: str | None = None,
 ) -> dict[str, Any]:
+    if drop_class is not None and drop_class not in DROP_CLASSES:
+        raise ScoutError(f"drop class must be one of: {', '.join(DROP_CLASSES)}")
     reason = reason.strip()
     if not reason:
         raise ScoutError("drop reason must not be blank")
@@ -622,6 +630,8 @@ def drop_draft(
     timestamp = time.time() if now is None else now
     frontmatter["status"] = "dropped"
     frontmatter["drop_reason"] = reason
+    if drop_class is not None:
+        frontmatter["drop_class"] = drop_class
     frontmatter["dropped_at"] = datetime.fromtimestamp(timestamp, tz=UTC).isoformat()
     updated = serialize_frontmatter(frontmatter, str(parsed["body"])) + "\n"
     dropped = parse_task(updated, source.resolve(), {})
@@ -631,7 +641,12 @@ def drop_draft(
     source.write_text(updated, encoding="utf-8")
     ledger.upsert_task(dropped, updated)
     result = dict(row)
-    result.update(status="dropped", drop_reason=reason, dropped_at=frontmatter["dropped_at"])
+    result.update(
+        status="dropped",
+        drop_reason=reason,
+        drop_class=drop_class,
+        dropped_at=frontmatter["dropped_at"],
+    )
     return result
 
 

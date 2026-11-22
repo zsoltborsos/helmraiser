@@ -1,5 +1,7 @@
 # Helmraiser — Current State
 
+Sandbox placeholder cleanup removes only untracked empty root mount points, preserving tracked and non-empty paths.
+
 Intake's full-suite placement rule explicitly defers to project notes and otherwise requests one evidence run, not separate base and change runs.
 
 Intake evidence criteria are limited to evidence artifacts, the diff and verify output, never the pull-request body or other inputs; scout candidates removing information from logs, errors or other output must say what remains.

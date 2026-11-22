@@ -158,7 +158,8 @@ def test_grid_and_unavailable(ledger, tmp_path, monkeypatch):
     assert len(data["scouts"]) == len(LENSES)
     assert all(
         r["in_focus"]
-        and r["scouts"] == 0
+        and r["scouts"] == r["succeeded"] == r["failed"] == r["running"] == 0
+        and r["drafts_written"] == 0
         and r["last_scout_ok"] is None
         and r["next_eligible_at"] is None
         and r["dropped_by_class"]
@@ -265,6 +266,40 @@ def test_bulk_query_count(ledger, make_task):
     large, data = count()
     assert small == large
     assert data["runs"]["overall"]["landed"] == 2000
+
+
+@pytest.mark.parametrize("outcome", ["running", "succeeded", "failed"])
+def test_scout_draft_rows_count_before_completion(
+    ledger, make_task, tmp_project, monkeypatch, outcome
+):
+    monkeypatch.setattr(stats, "head_commit", lambda p: "head")
+    ledger.create_scout(
+        {
+            "id": "scout",
+            "project": str(tmp_project),
+            "model": "fake",
+            "started_at": NOW - 100,
+            "outcome": outcome,
+            "report_path": "unused",
+            "drafts_written": [],
+        }
+    )
+    for i in range(2):
+        task = make_task(task_id=f"in-progress-{i}")
+        ledger.set_task_status(task.task_id, "draft")
+        ledger.create_scout_draft(task.task_id, "scout", {})
+
+    data = build(ledger)
+    row = next(r for r in data["scouts"] if r["lens"] == "state")
+    assert row["drafts_written"] == row["pending"] == 2
+    assert row["scouts"] == 1
+    assert row["running"] == int(outcome == "running")
+    assert row["succeeded"] == int(outcome == "succeeded")
+    assert row["failed"] == int(outcome == "failed")
+    assert row["scouts"] == row["succeeded"] + row["failed"] + row["running"]
+    for empty in data["scouts"]:
+        if empty["lens"] != "state":
+            assert empty["scouts"] == empty["running"] == empty["drafts_written"] == 0
 
 
 def test_scout_cohorts_hashes_and_weekly(ledger, make_task, tmp_project, monkeypatch):

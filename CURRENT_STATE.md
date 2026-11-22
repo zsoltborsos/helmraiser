@@ -37,6 +37,7 @@ The guardrails scout lens finds unenforced project-stated rules and ineffective 
 
 - Scout drafts omit delivery and inherit the project default (fallback: merge); intake prompts show effective setup, environment variable names only, explicit-tool-path guidance, and a documentation-only stale-text check exception.
 
+- Scout stats count draft rows even before scout completion and report running scouts alongside succeeded and failed counts.
 - Draft drops accept an optional class (wrong, unwanted, duplicate, unusable), stored with the reason, shown in CLI/JSON output, passed to later scouts, and counted by class (including unclassified) in stats.
 - Scout lenses have CLI/JSON settings with ledger overrides, per-project/lens automatic cadence, and scout-only draft listings by default (`--all` includes manual drafts).
 

@@ -1640,8 +1640,11 @@ places, or `null` for a zero denominator. Timestamps are UTC ISO strings.
   with historical scouts; an explicit project filter returns only that project's
   complete lens grid. Each row contains:
   - `project`, `lens`, `in_focus`; `auto` and `cooldown_hours` from lens settings.
-  - Window scout counts `scouts`, `succeeded`, `failed`; `drafts_written` counts
-    written drafts, and `cost_usd` sums scout costs.
+  - Window scout counts `scouts`, `succeeded`, `failed`, `running`: `running`
+    counts scouts whose outcome is neither succeeded nor failed, so
+    `scouts = succeeded + failed + running`. `drafts_written` counts the cohort's
+    `scout_drafts` rows, including drafts written by scouts still running (before
+    their final written-ID list is saved). `cost_usd` sums scout costs.
   - Current draft outcomes for that scout cohort: `pending` (not ever-queued under
     the definition below),
     `queued` (queued, running or awaiting approval), `landed` (any landed run),

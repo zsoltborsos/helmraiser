@@ -1122,6 +1122,8 @@ The `isolation` level applies per task:
   ChatGPT and opencode endpoints plus `github.com`).
 - `vm`: reserved. It always reports unavailable.
 
+Helmraiser removes untracked empty srt mount-point placeholders at the worktree root after sandboxed steps, including timeouts, and before automatic commits, preserving tracked and non-empty paths.
+
 Helmraiser sets repository-local `maintenance.auto=false` before fresh runs: automatic
 ref packing can remove branch-ref directories bind-mounted into live sessions. The
 watch worker runs `git maintenance run --auto` during its hourly sweep only when the

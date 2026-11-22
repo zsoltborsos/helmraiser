@@ -1,6 +1,6 @@
 # Helmraiser — Current State
 
-Sandbox placeholder cleanup removes only untracked empty root mount points, preserving tracked and non-empty paths.
+Sandbox placeholder cleanup removes untracked empty root mount points after sandboxed steps (including timeouts) and before automatic commits, preserving tracked and non-empty paths.
 
 Intake's full-suite placement rule explicitly defers to project notes and otherwise requests one evidence run, not separate base and change runs.
 

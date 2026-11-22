@@ -186,7 +186,9 @@ appears in the affected document; this excludes help strings and other text embe
 The intake prompt also requests `$HELMRAISER_BASE_SHA` rather than literal base commit IDs, suitable step timeouts following project notes (defaults: 300 seconds for verify and 600 for evidence), only configured lint and type commands, and checks covering every part of the described change.
 Intake is instructed to set `red_on_base: true` only on steps that check the task's
 change against an existing file, such as that stale-text check or an assertion on current
-command output, so the step must fail before the change.
+command output, so the step must fail before the change. Each such step must name
+`red_output`: short fixed text unique to the intended failure (not generic `Error` or
+`FAILED`), such as an assertion message or script-generated marker.
 A proposed step that still
 does (it greps or reads with `grep`, `rg`, `cat`, `readFileSync`, `open` or
 `Path(…).read_text()`, parses with `createSourceFile` or `ast.parse`, or runs `test -f`
@@ -251,8 +253,11 @@ project setup and services, and the verify sandbox settings. No extra pi session
 beyond intake's model when a proposal is needed. Each step reports `name: class`:
 `green`, `expected red`, `sandbox`, or `fail`; failures include the diagnostic excerpt
 and any sandbox hint. Exit 0 means all steps are green or expected red; otherwise it
-exits 2 without queueing. A step with `red_on_base: true` is expected red when it fails,
-unless a sandbox hint makes it `sandbox`. If it passes, it is `fail`: the diagnostic says
+exits 2 without queueing. A step with `red_on_base: true` is expected red only after a
+completed nonzero exit whose captured output contains its `red_output` as a literal,
+case-sensitive substring. Missing or mismatched markers produce `fail` with a tail
+diagnostic; legacy tasks without the field still load. Timeouts and launch failures
+remain failures, and sandbox hints retain precedence. If it passes, it is `fail`: the diagnostic says
 it was declared red on base but passed on unchanged code, so it cannot detect the change.
 This diagnostic appears in human failure output and JSON `check.steps[].tail`.
 For unmarked steps, expected red requires a known missing-target diagnostic for a
@@ -363,7 +368,10 @@ its proposed verify steps first, followed by evidence steps, serially in one pre
 on unchanged committed code, using project setup and services, the verify sandbox
 settings, a throwaway worktree, and each step's own timeout. Results are classified as
 `green`, `expected red` (a missing path the task says it creates, or an explicitly
-`red_on_base: true` step that fails without a sandbox hint), `sandbox`, or `fail`.
+`red_on_base: true` step with a completed nonzero exit and its literal `red_output`
+in captured output, without a sandbox hint), `sandbox`, or `fail`. Missing/mismatched
+markers fail with a tail diagnostic; marked passes, timeouts and launch failures are
+not expected red. Sandbox hints retain precedence.
 Marked passing steps are `fail` with the same diagnostic as intake checks.
 If any step is `fail` or `sandbox`, scout asks intake once more using the original
 acceptance-free draft and those steps' names, commands, and real diagnostics (the last
@@ -436,8 +444,8 @@ punctuation-only input prints an empty line. Leave `test_slug.py` unchanged.
 | `delivery` | no | `merge` (default) or `pr`; new PR runs safely synchronize the base from its configured upstream (see [Policies](#policies)) |
 | `base` | no | Local branch from which to create the run worktree and target delivery; defaults to the primary checkout's current branch; PR synchronization never resets an ahead/diverged base |
 | `isolation` | no | `process` (default), `none` or `vm`; intake keeps the file's isolation unless the proposal is stronger |
-| `verify` | to queue | List of `{name, run, timeout, sandbox, red_on_base}` (`red_on_base` is an optional boolean, default false; timeout defaults to 300 s); a bare string is also accepted |
-| `evidence` | for `auto` | List of `{name, run, artifacts, criteria, timeout, sandbox, red_on_base}` (`red_on_base` is an optional boolean, default false; timeout defaults to 600 s); commands write into `$HELMRAISER_EVIDENCE_DIR`. The marker affects base acceptance checks only, never implementation-run success criteria (also true for verify) |
+| `verify` | to queue | List of `{name, run, timeout, sandbox, red_on_base, red_output}` (`red_on_base` is an optional boolean, default false; optional `red_output` must be a non-whitespace string and is allowed only with `red_on_base: true`; timeout defaults to 300 s); a bare string is also accepted |
+| `evidence` | for `auto` | List of `{name, run, artifacts, criteria, timeout, sandbox, red_on_base, red_output}` (`red_on_base` is an optional boolean, default false; optional `red_output` must be a non-whitespace string and is allowed only with `red_on_base: true`; timeout defaults to 600 s); commands write into `$HELMRAISER_EVIDENCE_DIR`. Both red fields affect base acceptance checks only, never implementation-run success criteria (also true for verify) |
 | `models` | no | Per-task profile override, e.g. `implement: provider/id:thinking`; overrides the project's `[models]` and the config's `profiles` |
 | `budget` | no | Per-task override of `max_cost_usd`, `max_minutes`, `max_iterations` |
 | `setup` | no | Shell command run in the fresh worktree; a retry restart re-runs it unless the same command's latest attempt passed |

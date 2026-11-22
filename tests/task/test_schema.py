@@ -59,6 +59,20 @@ def test_red_output_validation(tmp_path, kind, value, marked):
         assert any(f"{kind} step 'check': red_output" in error for error in errors)
 
 
+@pytest.mark.parametrize("kind", ["verify", "evidence"])
+@pytest.mark.parametrize("raw", ['""', '"  "', "42", "true", "[]", "{}"])
+def test_yaml_red_output_not_coerced(tmp_path, kind, raw):
+    spec = parse_task(
+        f"---\nid: demo\nproject: {tmp_path}\n{kind}:\n  - name: check\n    run: echo check\n    red_on_base: true\n    red_output: {raw}\n---\nGoal",
+        tmp_path / "task.md",
+        {},
+    )
+    assert any(
+        f"{kind} step 'check': red_output must be a non-empty string" in e
+        for e in validate_task(spec)
+    )
+
+
 class TestDraft:
     def test_minimal_draft_is_valid(self, tmp_path: Path):
         spec = make_spec(tmp_path, verify=(), models={})

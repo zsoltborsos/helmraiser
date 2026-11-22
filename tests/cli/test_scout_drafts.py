@@ -891,18 +891,20 @@ class TestScoutCommand:
         assert calls == ["tests"]
 
     @pytest.mark.parametrize(
-        "command,expected",
+        "command,marker,expected",
         [
-            ("test ! -f README.md || { echo intended; exit 1; }", "expected red"),
-            ("test -f README.md", "fail(1)"),
+            ("test ! -f README.md || { echo intended; exit 1; }", "intended", "expected red"),
+            ("test -f README.md", "intended", "fail(1)"),
+            ("echo ERR_MODULE_NOT_FOUND; exit 1", None, "fail(1)"),
+            ("echo ERR_MODULE_NOT_FOUND; exit 1", "intended", "fail(1)"),
         ],
     )
     def test_scout_marked_existing_file_check(
-        self, tmp_project, tmp_path, fake_pi, scout_srt_log, cli_config, command, expected
+        self, tmp_project, tmp_path, fake_pi, scout_srt_log, cli_config, command, marker, expected
     ):
         proposal = intake_proposal().replace(
             "run: pytest tests/new_test.py",
-            f"red_on_base: true\n    red_output: intended\n    run: {command}",
+            f"red_on_base: true\n    red_output: {marker or 'null'}\n    run: {command}",
         )
         fake_pi.write_script(
             {
@@ -919,7 +921,18 @@ class TestScoutCommand:
         draft = Ledger(data_dir / "helmraiser.db").get_scout_draft(task_id)
         assert draft["preflight"]["summary"] == expected
         if expected == "fail(1)":
-            assert "cannot detect the change" in draft["preflight"]["steps"][0]["tail"]
+            diagnostic = (
+                "cannot detect the change"
+                if command == "test -f README.md"
+                else (
+                    "has no red_output"
+                    if marker is None
+                    else "expected red_output text was not in the output"
+                )
+            )
+            assert diagnostic in draft["preflight"]["steps"][0]["tail"]
+            report = Path(json.loads(result.output)["report_path"]).read_text()
+            assert diagnostic in report
         paths = list((tmp_project / ".helmraiser/tasks").glob("*.md"))
         assert len(paths) == 1
         fm = parse_frontmatter(paths[0].read_text())["frontmatter"]

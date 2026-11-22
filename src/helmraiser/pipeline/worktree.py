@@ -739,8 +739,18 @@ class WorktreeManager:
 
     def salvage_uncommitted(self, worktree_path: Path) -> None:
         """Commit uncommitted agent work for recovery."""
+        # Import lazily: isolation's package imports task/project worktree helpers.
+        from helmraiser.isolation.placeholders import remove_placeholders
+
         if self._git("status", "--porcelain", cwd=worktree_path).stdout.strip():
+            names = remove_placeholders(worktree_path)
             self._git("add", "-A", cwd=worktree_path)
+            if names:
+                staged = self._git("diff", "--cached", "--quiet", cwd=worktree_path, check=False)
+                if staged.returncode == 0:
+                    return
+                if staged.returncode != 1:
+                    staged.check_returncode()
             self._git(
                 "commit",
                 "-m",

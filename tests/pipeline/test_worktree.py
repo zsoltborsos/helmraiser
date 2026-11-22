@@ -884,3 +884,59 @@ def test_restore_pr_fast_forwards_retained_local_branch(repo, tmp_path):
         worktree_path=str(tree),
     )
     assert restored["head_commit"] == git(tree, "rev-parse", "HEAD") == head
+
+
+@pytest.mark.parametrize("ordinary", [False, True])
+def test_salvage_excludes_placeholders(repo, ordinary):
+    from helmraiser.isolation.placeholders import PLACEHOLDER_NAMES
+
+    manager = WorktreeManager(repo)
+    tree = manager.create("topic", str(uuid.uuid4()))
+    before = git(tree, "rev-parse", "HEAD")
+    for name in PLACEHOLDER_NAMES:
+        (tree / name).touch()
+    if ordinary:
+        (tree / "work.txt").write_text("agent work")
+    manager.salvage_uncommitted(tree)
+    assert not set(PLACEHOLDER_NAMES) & set(git(tree, "ls-files").splitlines())
+    assert (git(tree, "rev-parse", "HEAD") != before) == ordinary
+    assert not git(tree, "status", "--porcelain")
+
+
+def test_salvage_preserves_legitimate_candidates(repo):
+    manager = WorktreeManager(repo)
+    tree = manager.create("topic", str(uuid.uuid4()))
+    (tree / ".gitmodules").touch()
+    git(tree, "add", ".gitmodules")
+    git(tree, "commit", "-m", "tracked candidate")
+    (tree / ".mcp.json").write_text("legitimate config")
+    (tree / ".bashrc").touch()
+    manager.salvage_uncommitted(tree)
+    assert git(tree, "ls-files", ".gitmodules", ".mcp.json").splitlines() == [
+        ".gitmodules",
+        ".mcp.json",
+    ]
+    assert not (tree / ".bashrc").exists()
+
+
+def test_salvage_cleanup_failure_never_stages(repo, monkeypatch):
+    from helmraiser.isolation import placeholders
+
+    manager = WorktreeManager(repo)
+    tree = manager.create("topic", str(uuid.uuid4()))
+    (tree / ".bashrc").touch()
+    real_git = manager._git
+    calls = []
+
+    def observe(*args, **kwargs):
+        calls.append(args)
+        return real_git(*args, **kwargs)
+
+    def fail(cwd):
+        raise PermissionError("busy")
+
+    monkeypatch.setattr(manager, "_git", observe)
+    monkeypatch.setattr(placeholders, "remove_placeholders", fail)
+    with pytest.raises(PermissionError):
+        manager.salvage_uncommitted(tree)
+    assert not any(args[0] in ("add", "commit") for args in calls)

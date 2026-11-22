@@ -408,6 +408,7 @@ def test_requested_gate_skips_disabled_and_head_but_not_safety_gates(
         (None, False, {}, None),
     ],
 )
+@pytest.mark.parametrize("lens", ["state", "docs", "tests", "guardrails"])
 def test_pending_status_wait_reasons_retain_request(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -415,11 +416,12 @@ def test_pending_status_wait_reasons_retain_request(
     paused: bool,
     worker: dict[str, Any],
     expected: str | None,
+    lens: str,
 ) -> None:
     project = tmp_path / "repo"
     project.mkdir()
     ledger = Ledger(tmp_path / "db")
-    ledger.request_scouts([str(project)], requested_at=10.0)
+    ledger.request_scouts([str(project)], lens=lens, requested_at=10.0)
     if paused:
         ledger.pause_queue("reason")
 
@@ -434,7 +436,7 @@ def test_pending_status_wait_reasons_retain_request(
         {
             "project": str(project.resolve()),
             "requested_at": "1970-01-01T00:00:10+00:00",
-            "lens": "state",
+            "lens": lens,
             "wait_reason": expected,
         }
     ]
@@ -803,8 +805,9 @@ def test_child_failure_before_scout_record_consumes_request_with_recent_failure(
     assert "adapter unavailable" in Path(recent[0]["report"]).read_text()
 
 
+@pytest.mark.parametrize("lens", ["state", "docs", "tests", "guardrails"])
 def test_scout_status_running_recent_shape_and_cutoff(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lens: str
 ) -> None:
     project = tmp_path / "repo"
     project.mkdir()
@@ -820,6 +823,7 @@ def test_scout_status_running_recent_shape_and_cutoff(
         ledger.create_scout(
             {
                 "id": scout_id,
+                "lens": lens,
                 "project": str(project),
                 "model": "p/m",
                 "started_at": started,
@@ -844,11 +848,12 @@ def test_scout_status_running_recent_shape_and_cutoff(
     assert payload["focus_projects"] == [str(project.resolve())]
     assert payload["paused_projects"] == [str(project.resolve())]
     assert payload["running"][0]["scout_id"] == "running"
+    assert payload["running"][0]["lens"] == lens
     assert [row["scout_id"] for row in payload["recent"]] == ["new", "success"]
     assert payload["recent"][0] == {
         "project": str(project.resolve()),
         "scout_id": "new",
-        "lens": "state",
+        "lens": lens,
         "ended_at": "1970-01-03T07:33:10+00:00",
         "ok": False,
         "drafts": 2,
@@ -894,12 +899,12 @@ def test_unknown_lens(command, json_mode, tmp_project):
         app, [*command, str(tmp_project), "--lens", "bogus", *(["--json"] if json_mode else [])]
     )
     assert result.exit_code == 2
-    assert "state, docs, tests" in result.output
+    assert "state, docs, tests, guardrails" in result.output
 
 
 def test_request_lenses_and_cancellation(tmp_project, tmp_path, monkeypatch):
     monkeypatch.setattr(scout_commands, "load_config", lambda: config_for(tmp_project))
-    for lens in ["state", "docs", "tests"]:
+    for lens in ["state", "docs", "tests", "guardrails"]:
         result = invoke_request(tmp_path, str(tmp_project), "--lens", lens, "--json")
         assert result.exit_code == 0
         assert json.loads(result.output)["requested"] == [str(tmp_project)]
@@ -908,12 +913,15 @@ def test_request_lenses_and_cancellation(tmp_project, tmp_path, monkeypatch):
     assert "already pending" in result.output
     assert invoke_request(tmp_path, str(tmp_project), "--cancel", "--lens", "state").exit_code == 0
     ledger = Ledger(tmp_path / "helmraiser.db")
-    assert [r["lens"] for r in ledger.list_scout_requests()] == ["docs", "tests"]
+    assert [r["lens"] for r in ledger.list_scout_requests()] == ["docs", "tests", "guardrails"]
+    from helmraiser.loop.scout_lenses import scout_lens_settings
+
+    assert scout_lens_settings(config_for(tmp_project), ledger)["guardrails"]["auto"] is False
     assert invoke_request(tmp_path, str(tmp_project), "--cancel").exit_code == 0
     assert ledger.list_scout_requests() == []
 
 
-@pytest.mark.parametrize("lens", ["docs", "tests"])
+@pytest.mark.parametrize("lens", ["docs", "tests", "guardrails"])
 def test_child_resolves_requested_lens(tmp_project, tmp_path, monkeypatch, lens):
     from tests.mocks.scripted_pi_adapter import PiScript, ScriptedPiAdapter
 
@@ -945,7 +953,7 @@ def test_child_resolves_requested_lens(tmp_project, tmp_path, monkeypatch, lens)
     assert ledger.get_scout_request(request["id"])["started_at"] is not None
 
 
-@pytest.mark.parametrize("lens", [None, "docs"])
+@pytest.mark.parametrize("lens", [None, "docs", "tests", "guardrails"])
 def test_child_only_running_lens_and_legacy_fallback(tmp_path, lens):
     ledger = Ledger(tmp_path / "ledger.db")
     child = {"kind": "scout", "scout_id": "child", "project": "/one", "started_at": 10}
@@ -992,7 +1000,7 @@ def test_same_project_lens_requests_never_overlap(tmp_path, monkeypatch):
     assert ledger.list_scout_requests() == []
 
 
-@pytest.mark.parametrize("lens", [None, "docs", "tests"])
+@pytest.mark.parametrize("lens", [None, "docs", "tests", "guardrails"])
 def test_ordinary_scout_gate_error_includes_lens(
     tmp_project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lens: str | None
 ) -> None:

@@ -6,7 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from helmraiser.isolation.placeholders import PLACEHOLDER_NAMES, remove_placeholders
+from helmraiser.isolation.placeholders import (
+    PLACEHOLDER_NAMES,
+    PlaceholderCleanupError,
+    remove_placeholders,
+)
 
 
 def git(repo, *args):
@@ -93,6 +97,27 @@ def test_busy_propagates(repo, monkeypatch):
     with pytest.raises(OSError, match="mounted"):
         remove_placeholders(repo)
     assert (repo / ".bashrc").exists()
+
+
+@pytest.mark.parametrize("error_number", [errno.EBUSY, errno.EACCES, errno.EIO])
+def test_partial_cleanup_error_carries_removed_names(repo, monkeypatch, error_number):
+    (repo / ".gitconfig").touch()
+    (repo / ".gitmodules").touch()
+    real_unlink = Path.unlink
+
+    def unlink(path, *args, **kwargs):
+        if path.name == ".gitmodules":
+            raise OSError(error_number, "cannot remove", str(path))
+        return real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    with pytest.raises(PlaceholderCleanupError) as caught:
+        remove_placeholders(repo)
+    assert caught.value.removed_names == [".gitconfig"]
+    assert caught.value.errno == error_number
+    assert isinstance(caught.value.__cause__, OSError)
+    assert not (repo / ".gitconfig").exists()
+    assert (repo / ".gitmodules").exists()
 
 
 def test_index_error(repo, monkeypatch):

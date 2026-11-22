@@ -36,7 +36,7 @@ from typing import Any, NoReturn
 from helmraiser.code_snapshot import without_snapshot
 from helmraiser.isolation import Isolation, ProcessIsolation, for_level
 from helmraiser.isolation.environment import command_environment
-from helmraiser.isolation.placeholders import remove_placeholders
+from helmraiser.isolation.placeholders import PlaceholderCleanupError, remove_placeholders
 from helmraiser.isolation.process import tracked_denial_warnings, tracked_denials
 from helmraiser.isolation.setup import prepare_setup
 from helmraiser.ledger.db import Ledger
@@ -2561,12 +2561,18 @@ class GovernedRun:
         ):
             return True
         assert self.worktree is not None
+        cleanup_failed = False
         try:
             names = remove_placeholders(self.worktree)
+        except PlaceholderCleanupError as exc:
+            names = exc.removed_names
+            cleanup_failed = True
         except (OSError, subprocess.SubprocessError):
             return False
         if names:
             self._event("sandbox_placeholders_removed", {"cwd": str(self.worktree), "names": names})
+        if cleanup_failed:
+            return False
         if self._git("add", "-A").returncode != 0:
             return False
         if names:

@@ -1,6 +1,8 @@
 """Scope failures use normal iteration accounting and repair feedback."""
 
+import errno
 import subprocess
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
@@ -241,6 +243,34 @@ def test_commit_placeholders_only(make_task, make_run, tmp_path):
         (tmp_path / name).touch()
     assert run._commit_all("no empty commit")
     assert run._git("rev-parse", "HEAD").stdout == before
+
+
+def test_partial_cleanup_logs_before_refusing_staging(make_task, make_run, tmp_path, monkeypatch):
+    cwd = tmp_path / "partial-repo"
+    cwd.mkdir()
+    git(cwd, "init")
+    (cwd / ".gitconfig").touch()
+    (cwd / ".gitmodules").touch()
+    run, _ = make_run(make_task(), adapter(PiScript()))
+    run.worktree = cwd
+    run._event = Mock()
+    spy = Mock()
+    monkeypatch.setattr(run, "_git", spy)
+    real_unlink = Path.unlink
+
+    def unlink(path, *args, **kwargs):
+        if path == cwd / ".gitmodules":
+            raise OSError(errno.EBUSY, "mounted")
+        return real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", unlink)
+    assert not run._commit_all("must not stage")
+    spy.assert_not_called()
+    run._event.assert_called_once_with(
+        "sandbox_placeholders_removed", {"cwd": str(cwd), "names": [".gitconfig"]}
+    )
+    assert not (cwd / ".gitconfig").exists()
+    assert (cwd / ".gitmodules").exists()
 
 
 def test_commit_cleanup_failure_never_stages(make_task, make_run, tmp_path, monkeypatch):

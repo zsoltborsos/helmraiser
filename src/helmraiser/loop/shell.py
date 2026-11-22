@@ -19,7 +19,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from helmraiser.isolation.placeholders import remove_placeholders
+from helmraiser.isolation.placeholders import PlaceholderCleanupError, remove_placeholders
 from helmraiser.isolation.retry import SandboxLaunch
 from helmraiser.ledger.event_logger import EventLogger
 
@@ -127,15 +127,18 @@ def _run(
         finally:
             if isinstance(launch, SandboxLaunch):
                 launch.cleanup()
+                names = []
                 try:
                     names = remove_placeholders(cwd)
-                    if names:
-                        EventLogger(launch.settings_path.parent).log(
-                            "sandbox_placeholders_removed",
-                            kind=launch.kind,
-                            cwd=str(cwd),
-                            names=names,
-                        )
+                except PlaceholderCleanupError as exc:
+                    names = exc.removed_names
                 except (OSError, subprocess.SubprocessError):
                     pass  # Cleanup must not replace the command's result.
+                if names:
+                    EventLogger(launch.settings_path.parent).log(
+                        "sandbox_placeholders_removed",
+                        kind=launch.kind,
+                        cwd=str(cwd),
+                        names=names,
+                    )
     raise AssertionError("sandbox launch attempts exhausted")

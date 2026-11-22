@@ -25,11 +25,19 @@ PLACEHOLDER_NAMES = (
 )
 
 
+class PlaceholderCleanupError(OSError):
+    """A removal failed after zero or more successful removals."""
+
+    def __init__(self, error: OSError, removed_names: list[str]) -> None:
+        super().__init__(error.errno, error.strerror, error.filename)
+        self.removed_names = list(removed_names)
+
+
 def remove_placeholders(worktree: Path) -> list[str]:
     """Remove only unindexed, empty regular files/directories at a worktree root.
 
-    Unexpected errors propagate: automatic staging must fail closed. Callers that
-    only perform best-effort post-command cleanup may suppress these errors.
+    Removal errors carry successful removals in PlaceholderCleanupError so callers
+    can log partial cleanup. Automatic staging must still fail closed.
     """
 
     def git(*args: str) -> subprocess.CompletedProcess[str]:
@@ -51,7 +59,7 @@ def remove_placeholders(worktree: Path) -> list[str]:
     )
     indexed.check_returncode()
     tracked = indexed.stdout.split("\0")
-    removed = []
+    removed: list[str] = []
     for name in PLACEHOLDER_NAMES:
         if any(p == name or p.startswith(name + "/") for p in tracked):
             continue
@@ -70,6 +78,6 @@ def remove_placeholders(worktree: Path) -> list[str]:
         except OSError as exc:
             if exc.errno in (errno.ENOTEMPTY, errno.EEXIST):
                 continue
-            raise
+            raise PlaceholderCleanupError(exc, removed) from exc
         removed.append(name)
     return removed

@@ -34,9 +34,9 @@ from pathlib import Path
 from typing import Any, NoReturn
 
 from helmraiser.code_snapshot import without_snapshot
-from helmraiser.isolation.placeholders import remove_placeholders
 from helmraiser.isolation import Isolation, ProcessIsolation, for_level
 from helmraiser.isolation.environment import command_environment
+from helmraiser.isolation.placeholders import remove_placeholders
 from helmraiser.isolation.process import tracked_denial_warnings, tracked_denials
 from helmraiser.isolation.setup import prepare_setup
 from helmraiser.ledger.db import Ledger

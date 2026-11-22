@@ -21,6 +21,7 @@ from helmraiser.loop.scout import (
     classify_preflight_step,
     collect_scout_inputs,
     draft_acceptance_scope_hash,
+    draft_drop_class,
     drop_draft,
     normalize_scout_preflight,
     parse_candidates,
@@ -151,11 +152,19 @@ class TestScoutInputs:
         assert len(log) == 40
         assert "commit 44" in log[0]
 
+    @pytest.mark.parametrize("classification", [None, "wrong", "unwanted", "duplicate", "unusable"])
     def test_prompt_contains_tasks_drop_reason_and_exclusions(
-        self, tmp_project: Path, tmp_path: Path
+        self, tmp_project: Path, tmp_path: Path, classification: str | None
     ):
         ledger = Ledger(tmp_path / "ledger.db")
-        snapshot = "---\nid: old\ndrop_reason: Already fixed\n---\n"
+        snapshot = serialize_frontmatter(
+            {
+                "id": "old",
+                "drop_reason": "Already fixed",
+                **({"drop_class": classification} if classification is not None else {}),
+            },
+            "",
+        )
         from tests.ledger.test_db import make_spec
 
         ledger.upsert_task(
@@ -164,6 +173,29 @@ class TestScoutInputs:
         inputs = collect_scout_inputs(tmp_project, ledger, ("private",))
         prompt = build_scout_prompt(inputs, 3)
         assert "Old title" in prompt and "Already fixed" in prompt and "private" in prompt
+        expected = [
+            {
+                "id": ledger.list_tasks()[0]["id"],
+                "title": "Old title",
+                "reason": "Already fixed",
+                "class": classification,
+            }
+        ]
+        assert inputs["dropped_drafts"] == expected
+        assert json.loads(prompt.split("Scout inputs:\n", 1)[1])["dropped_drafts"] == expected
+
+    @pytest.mark.parametrize(
+        "frontmatter",
+        [
+            {},
+            {"drop_class": None},
+            {"drop_class": "unknown"},
+            {"drop_class": 12},
+            {"drop_class": []},
+        ],
+    )
+    def test_unknown_drop_class(self, frontmatter):
+        assert draft_drop_class(frontmatter) is None
 
     def test_project_notes_are_in_scout_prompt(self, tmp_project: Path, tmp_path: Path):
         ledger = Ledger(tmp_path / "ledger.db")
@@ -2088,6 +2120,8 @@ class TestDraftCommands:
                 task_id,
                 "--reason",
                 "Already handled elsewhere",
+                "--class",
+                "duplicate",
                 "--data-dir",
                 str(data_dir),
             ],
@@ -2117,6 +2151,10 @@ class TestDraftCommands:
         prompt_path = Path(scout_call["argv"][-1].removeprefix("@"))
         prompt = prompt_path.read_text()
         assert "Remember this" in prompt and "Already handled elsewhere" in prompt
+        assert (
+            json.loads(prompt.split("Scout inputs:\n", 1)[1])["dropped_drafts"][0]["class"]
+            == "duplicate"
+        )
 
 
 class _FakeLedger:

@@ -206,6 +206,11 @@ def _logbook_brief(repo: Path) -> dict[str, list[str]] | None:
     return filtered
 
 
+def draft_drop_class(frontmatter: dict[str, Any]) -> str | None:
+    value = frontmatter.get("drop_class")
+    return value if isinstance(value, str) and value in DROP_CLASSES else None
+
+
 def collect_scout_inputs(
     repo: Path,
     ledger: Ledger,
@@ -229,6 +234,7 @@ def collect_scout_inputs(
                 "id": str(row["id"]),
                 "title": str(row["title"]),
                 "reason": str(frontmatter.get("drop_reason") or ""),
+                "class": draft_drop_class(frontmatter),
             }
         )
     return {

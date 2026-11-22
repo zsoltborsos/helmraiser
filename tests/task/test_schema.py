@@ -42,6 +42,23 @@ def queued(project: Path, **overrides) -> TaskSpec:
     return make_spec(project, **overrides)
 
 
+@pytest.mark.parametrize("kind", ["verify", "evidence"])
+@pytest.mark.parametrize("value", [None, "specific [failure].*", "", "  ", 1, True, [], {}])
+@pytest.mark.parametrize("marked", [False, True])
+def test_red_output_validation(tmp_path, kind, value, marked):
+    base = (
+        VerifyStep("check", "false")
+        if kind == "verify"
+        else EvidenceStep("check", "false", (), "proof")
+    )
+    step = replace(base, red_on_base=marked, red_output=value)
+    errors = validate_task(make_spec(tmp_path, **{kind: (step,)}))
+    valid = value is None or (isinstance(value, str) and bool(value.strip()) and marked)
+    assert (not errors) is valid
+    if errors:
+        assert any(f"{kind} step 'check': red_output" in error for error in errors)
+
+
 class TestDraft:
     def test_minimal_draft_is_valid(self, tmp_path: Path):
         spec = make_spec(tmp_path, verify=(), models={})

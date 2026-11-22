@@ -85,6 +85,17 @@ def validate_task(task: TaskSpec) -> list[str]:
             errors.append(f"evidence step '{evidence.name}': red_on_base must be a boolean")
         if not evidence.run.strip():
             errors.append(f"evidence step '{evidence.name}' has an empty run command")
+    for kind, acceptance_steps in (("verify", task.verify), ("evidence", task.evidence)):
+        for step in acceptance_steps:
+            if step.red_output is not None:
+                if not isinstance(step.red_output, str) or not step.red_output.strip():
+                    errors.append(
+                        f"{kind} step '{step.name}': red_output must be a non-empty string"
+                    )
+                if step.red_on_base is not True:
+                    errors.append(
+                        f"{kind} step '{step.name}': red_output requires red_on_base: true"
+                    )
     steps = [("verify", s.name, s.sandbox) for s in task.verify] + [
         ("evidence", e.name, e.sandbox) for e in task.evidence
     ]

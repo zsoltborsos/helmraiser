@@ -466,7 +466,8 @@ def _js_import_matches(source: str, test: str, specifier: str) -> bool:
         if relative
         else (lambda candidate: _path_suffix(source_path, candidate))
     )
-    if target.suffix:
+    js_suffixes = _RELATED_SOURCE_SUFFIXES - {".py"}
+    if target.suffix in js_suffixes:
         suffixes = {target.suffix} | {
             ".js": {".ts", ".tsx"},
             ".mjs": {".mts"},
@@ -474,8 +475,8 @@ def _js_import_matches(source: str, test: str, specifier: str) -> bool:
         }.get(target.suffix, set())
         return any(matches(target.with_suffix(suffix)) for suffix in suffixes)
     return any(
-        matches(target.with_suffix(suffix)) or matches(target / ("index" + suffix))
-        for suffix in _RELATED_SOURCE_SUFFIXES - {".py"}
+        matches(PurePosixPath(str(target) + suffix)) or matches(target / ("index" + suffix))
+        for suffix in js_suffixes
     )
 
 

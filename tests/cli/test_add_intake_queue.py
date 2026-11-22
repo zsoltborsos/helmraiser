@@ -620,8 +620,10 @@ class TestIntakeProportionateAcceptance:
         checks = (
             "Verify runs after every implementation attempt and must stay fast: the tests "
             "that cover the changed code, plus the project's lint or type checks when the "
-            "task changes code. Put the project's full test suite (and its coverage gate) "
-            "in evidence, which runs once after verify passes, never in verify. "
+            "task changes code. Unless the project notes say otherwise, put the project's "
+            "full test suite (and its coverage gate) in evidence, which runs once after "
+            "verify passes, and not in verify; run it once, not once on the base "
+            "and again on the change. "
             "Do not repeat a check in both."
         )
         budget = (

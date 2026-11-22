@@ -1,5 +1,7 @@
 # Helmraiser — Current State
 
+Intake's full-suite placement rule explicitly defers to project notes and otherwise requests one evidence run, not separate base and change runs.
+
 Intake evidence criteria are limited to evidence artifacts, the diff and verify output, never the pull-request body or other inputs; scout candidates removing information from logs, errors or other output must say what remains.
 
 Scout directives request exact `file:line` evidence entries with symbol names in `why`, self-consistent changes and checks, test-only mutation checks outside the worktree, and grouping findings that touch the same file. Intake prompts request variable-based base references, duration-appropriate timeouts, configured lint/type commands, and complete change coverage.

@@ -50,7 +50,10 @@ breaks the named behaviour without changing any file in the worktree (for exampl
 script that patches it with a mock, or that runs the test against a modified copy of the
 source outside the worktree), runs only that test, and exits 0 only when the test fails.
 Say that the check is red_on_base: on the unchanged code the weak test survives the
-mutation, so the check fails until the test is strengthened.
+mutation, so the check fails until the test is strengthened. When the named test survives
+its mutation, print the fixed marker `MUTANT SURVIVED: <test name>` before exiting nonzero.
+Name that exact marker as the step's red_output in the hint. Never print the survival
+marker for runner-loading errors or other infrastructure failures.
 
 Verify hints: the mutation checks; the changed test files; the project's full test suite
 and its coverage gate, if it has one, as evidence. Coverage must not drop.

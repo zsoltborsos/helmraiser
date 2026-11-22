@@ -12,13 +12,16 @@ from typing import Any
 from helmraiser.config import load_config
 from helmraiser.ledger.db import Ledger
 from helmraiser.loop.scout import (
+    DROP_CLASSES,
     ScoutError,
     configured_focus_projects,
     draft_acceptance_scope_hash,
+    draft_drop_class,
     head_commit,
     scout_due_at,
 )
 from helmraiser.loop.scout_lenses import LENSES, scout_lens_settings
+from helmraiser.utils.markdown import parse_frontmatter
 
 WINDOWS = {"24h": 86400, "7d": 604800, "30d": 2592000, "90d": 7776000, "all": None}
 
@@ -191,6 +194,12 @@ def build_stats(
             last = max(full, key=lambda s: (s["started_at"], s["id"]), default=None)
             ds = [d for s in cohort for d in by_scout[s["id"]]]
             outcomes = Counter(outcome(d) for d in ds)
+            dropped_by_class = dict.fromkeys((*DROP_CLASSES, "unclassified"), 0)
+            for d in ds:
+                if outcome(d) == "dropped":
+                    frontmatter = parse_frontmatter(d["snapshot"]).get("frontmatter") or {}
+                    classification = draft_drop_class(frontmatter)
+                    dropped_by_class[classification or "unclassified"] += 1
             hashes: Counter[str] = Counter()
             for d in ds:
                 if not ever_queued(d):
@@ -229,6 +238,7 @@ def build_stats(
                     "cost_usd": sum(s["cost_usd"] for s in cohort),
                     **{k: outcomes[k] for k in ("pending", "queued", "landed", "dropped")},
                     "failed_drafts": outcomes["failed"],
+                    "dropped_by_class": dropped_by_class,
                     **{"queued_" + k: hashes[k] for k in ("unchanged", "changed", "unknown")},
                     "last_scout_ended_at": _iso(last["ended_at"]) if last else None,
                     "last_scout_ok": last["outcome"] == "succeeded" if last else None,

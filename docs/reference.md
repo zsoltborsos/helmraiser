@@ -396,8 +396,14 @@ with `scout`, otherwise `manual`. Drop accepts either kind. JSON also includes i
 normalized preflight steps, `task_id` (the argument `drafts drop` takes), `path` (the
 absolute ledger source path), and `origin` (the
 current file's `{kind, session}` mapping, or `null`). `helmraiser drafts drop <task>
---reason TEXT` keeps the
-file but marks it `dropped`; the reason is supplied to later scouts. To accept a draft,
+--reason TEXT [--class CLASS]` keeps the file but marks it `dropped`.
+`--reason` remains required. Optional classes are `wrong` (the finding is not real),
+`unwanted` (real, but not worth doing), `duplicate` (already tracked, already fixed,
+or the same as another draft), and `unusable` (real and wanted, but the draft needed
+too much rework to queue). The class is stored as `drop_class` next to `drop_reason`
+only when supplied. JSON output includes `"class"` or null; human output shows
+`class=CLASS` or `class=unclassified`. Later scouts receive the reason and class
+(null for missing or unrecognized stored values). To accept a draft,
 review it and run `helmraiser intake --yes <file>` as usual; nothing is automatically
 queued.
 
@@ -1398,7 +1404,7 @@ per command.
 | `helmraiser clean [--project PATH] [--dry-run] [--json] [--data-dir PATH]` | Removes clean superseded or old failed/aborted worktrees, keeping branches (see [Cleaning up failed runs’ worktrees](#cleaning-up-failed-runs-worktrees)) |
 | `helmraiser compare <run-a> <run-b> [--json]` / `helmraiser compare --variant-of <task> [--project P] [--json]` | Judges two runs blind, then reveals their setups (see [Comparing runs](#comparing-runs)) |
 | `helmraiser scout <repo> [--lens NAME] [--max N] [--force]` | Runs one read-only scout session and writes validated, non-ruling candidates as draft task files (see [Scout drafts](#scout-drafts)) |
-| `helmraiser drafts [--project P]` / `drafts drop <task> --reason TEXT` | Lists pending scout drafts, or retains one as dropped with its reason |
+| `helmraiser drafts [--project P]` / `drafts drop <task> --reason TEXT [--class CLASS]` | Lists pending scout drafts, or retains one as dropped with its reason and optional class |
 | `helmraiser drafts request <repo>…` / `drafts request --cancel <repo>…` | Requests safe worker-driven scouts for chosen focus projects, or cancels pending requests |
 | `helmraiser wait <ref>` | Blocks silently until owner attention or completion; one result object with `--json` (see [Waiting for a run](#waiting-for-a-run)) |
 | `helmraiser log <run> [-f] [--since-id N]` | A run's ledger events as a timeline, or JSONL with `--json`; `-f` follows until the run is terminal or awaiting approval (plan, scope or merge); invoke it again after resumption to continue following. |
@@ -1641,6 +1647,10 @@ places, or `null` for a zero denominator. Timestamps are UTC ISO strings.
     `queued` (queued, running or awaiting approval), `landed` (any landed run),
     `dropped`, and `failed_drafts` (latest run failed or aborted, no landed run).
     `failed` counts scouts, so the draft failure outcome uses `failed_drafts`.
+  - `dropped_by_class`: counts for `wrong`, `unwanted`, `duplicate`, `unusable`,
+    and `unclassified`, using the same cohort and dropped outcome (landed takes
+    precedence). Missing or unrecognized stored classes count as `unclassified`.
+    All five keys are present, even when zero.
   - `queued_unchanged`, `queued_changed`, `queued_unknown` classify **all
     ever-queued drafts**, including landed ones. Unknown means no baseline hash.
     SHA-256 covers only verify, evidence, paths, budget and body of the final

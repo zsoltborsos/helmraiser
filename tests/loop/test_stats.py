@@ -161,6 +161,14 @@ def test_grid_and_unavailable(ledger, tmp_path, monkeypatch):
         and r["scouts"] == 0
         and r["last_scout_ok"] is None
         and r["next_eligible_at"] is None
+        and r["dropped_by_class"]
+        == {
+            "wrong": 0,
+            "unwanted": 0,
+            "duplicate": 0,
+            "unusable": 0,
+            "unclassified": 0,
+        }
         for r in data["scouts"]
     )
 
@@ -340,6 +348,72 @@ def test_scout_cohorts_hashes_and_weekly(ledger, make_task, tmp_project, monkeyp
     # Future rows are not used as latest at a historical clock in production;
     # use a distinct lens for an old-only cohort instead.
     assert oldrow["scouts"] == 0
+
+
+def test_dropped_by_class(ledger, make_task, tmp_project, monkeypatch):
+    monkeypatch.setattr(stats, "head_commit", lambda p: "head")
+    proj = str(tmp_project)
+    other_lens = next(lens for lens in LENSES if lens != "state")
+    for sid, lens, ts in [
+        ("selected", "state", NOW - 100),
+        ("old", "state", NOW - 2 * 86400),
+        ("other", other_lens, NOW - 100),
+    ]:
+        ledger.create_scout(
+            {
+                "id": sid,
+                "project": proj,
+                "model": "fake",
+                "lens": lens,
+                "head_commit": "head",
+                "started_at": ts,
+                "ended_at": ts + 60,
+                "outcome": "succeeded",
+                "report_path": "unused",
+                "drafts_written": [],
+            }
+        )
+    classes = ["wrong", "wrong", "unwanted", "duplicate", "unusable", None, "unknown", 42]
+    cases = [("selected", value, "dropped", False) for value in classes]
+    cases += [
+        ("selected", "wrong", "draft", False),
+        ("selected", "wrong", "dropped", True),
+        ("old", "wrong", "dropped", False),
+        ("other", "wrong", "dropped", False),
+        ("selected", "missing", "dropped", False),
+    ]
+    for i, (sid, value, status, landed) in enumerate(cases):
+        task = make_task(task_id=f"drop-{i}")
+        snapshot = "---\nid: drop\n"
+        if value != "missing":
+            snapshot += "drop_class: " + json.dumps(value) + "\n"
+        snapshot += "---\nBody"
+        ledger.set_task_snapshot(task.task_id, snapshot)
+        ledger.create_scout_draft(task.task_id, sid, {})
+        ledger.set_task_status(task.task_id, status)
+        if landed:
+            seed_run(ledger, task.task_id, "landed-drop", "landed", started_at=NOW - 50)
+            with ledger._write() as db:
+                db.execute("UPDATE runs SET project=? WHERE run_id=?", (proj, "landed-drop"))
+    data = build(ledger, since="24h", project=proj)
+    row = next(r for r in data["scouts"] if r["lens"] == "state")
+    assert row["dropped_by_class"] == {
+        "wrong": 2,
+        "unwanted": 1,
+        "duplicate": 1,
+        "unusable": 1,
+        "unclassified": 4,
+    }
+    assert sum(row["dropped_by_class"].values()) == row["dropped"] == 9
+    assert row["landed"] == 1
+    assert all(r["project"] == proj for r in data["scouts"])
+    for r in data["scouts"]:
+        if r["lens"] not in {"state", other_lens}:
+            assert set(r["dropped_by_class"].values()) == {0}
+    unrelated = build(ledger, project="/unrelated")["scouts"]
+    assert len(unrelated) == len(LENSES)
+    assert all(r["project"] == "/unrelated" and r["dropped"] == 0 for r in unrelated)
+    assert all(set(r["dropped_by_class"].values()) == {0} for r in unrelated)
 
 
 def test_old_latest_scout(ledger, tmp_project, monkeypatch):

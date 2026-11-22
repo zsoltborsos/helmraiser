@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import math
 import os
@@ -565,6 +566,28 @@ def _configured_projects(values: Any) -> set[Path]:
     return {Path(str(value)).expanduser().resolve() for value in values}
 
 
+def draft_acceptance_scope_hash(snapshot: str) -> str:
+    """Canonical acceptance/scope fingerprint; null collections become empty.
+
+    Preserve list order and internal body whitespace. Only exact paths recorded
+    as intake-added related tests are removed; other intake metadata is ignored.
+    """
+    from helmraiser.utils.markdown import parse_frontmatter
+
+    parsed = parse_frontmatter(snapshot.replace("\r\n", "\n").replace("\r", "\n"))
+    if parsed["error"]:
+        raise ValueError(parsed["error"])
+    fm = parsed["frontmatter"]
+    added = (fm.get("intake") or {}).get("related_tests_added") or []
+    value = {key: fm.get(key) or [] for key in ("verify", "evidence", "paths")}
+    value["paths"] = [path for path in value["paths"] if path not in added]
+    value["budget"] = fm.get("budget") or {}
+    value["body"] = parsed["body"].strip()
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
 def configured_focus_projects(config: dict[str, Any]) -> tuple[Path, ...]:
     """Resolved focus projects in deterministic supervisor order."""
     return tuple(sorted(_configured_projects(_routing_scout(config).get("focus_projects"))))
@@ -586,21 +609,37 @@ def _nonnegative_number(value: Any, name: str) -> float:
 
 
 def scout_due_at(
-    repo: Path, ledger: Ledger, config: dict[str, Any], *, lens: str = "state"
+    repo: Path,
+    ledger: Ledger,
+    config: dict[str, Any],
+    *,
+    lens: str = "state",
+    scouts: list[dict[str, Any]] | None = None,
+    settings: dict[str, Any] | None = None,
+    current_head: str | None = None,
 ) -> float:
     from helmraiser.loop.scout_lenses import scout_lens_settings
 
-    cooldown = scout_lens_settings(config, ledger)[lens]["cooldown_hours"]
+    cooldown = (settings if settings is not None else scout_lens_settings(config, ledger))[lens][
+        "cooldown_hours"
+    ]
     successful = [
         row
-        for row in ledger.list_scouts(str(repo))
-        if row["outcome"] == "succeeded" and row.get("lens", "state") == lens
+        for row in (scouts if scouts is not None else ledger.list_scouts(str(repo)))
+        if (scouts is None or row["project"] == str(repo))
+        and row["outcome"] == "succeeded"
+        and row.get("lens", "state") == lens
     ]
     if not successful:
         return float("-inf")
     latest = max(successful, key=lambda row: float(row["ended_at"] or row["started_at"]))
     last_at = float(latest["ended_at"] or latest["started_at"])
-    return last_at + (cooldown * 3600 if latest.get("head_commit") == head_commit(repo) else 0)
+    return last_at + (
+        cooldown * 3600
+        if latest.get("head_commit")
+        == (current_head if current_head is not None else head_commit(repo))
+        else 0
+    )
 
 
 def scout_gate(
@@ -861,7 +900,12 @@ def execute_scout(
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text, encoding="utf-8")
             ledger.upsert_task(spec, text)
-            ledger.create_scout_draft(spec.task_id, scout_id, candidate_dict(candidate))
+            ledger.create_scout_draft(
+                spec.task_id,
+                scout_id,
+                candidate_dict(candidate),
+                acceptance_scope_sha256=draft_acceptance_scope_hash(text),
+            )
             written_ids.append(spec.task_id)
             written_paths.append(str(path))
             original_spec = spec
@@ -888,6 +932,9 @@ def execute_scout(
                 intake_notes = list(dict.fromkeys([*intake_notes, *intake_outcome.notes]))
                 write_task(intake_outcome.spec, path)
                 ledger.upsert_task(intake_outcome.spec, path.read_text(encoding="utf-8"))
+                ledger.set_scout_draft_hash(
+                    spec.task_id, draft_acceptance_scope_hash(path.read_text(encoding="utf-8"))
+                )
                 ledger.set_scout_draft_intake(
                     spec.task_id,
                     status="proposed",

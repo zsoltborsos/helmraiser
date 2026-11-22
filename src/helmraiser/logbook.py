@@ -68,40 +68,43 @@ def run_entries(run_ids: Iterable[str]) -> dict[str, list[RunEntry]]:
         return entries
     env = {**os.environ, **logbook_identity(None)}
     env.pop("LOGBOOK_SESSION", None)
-    for run_id in entries:
-        try:
-            result = subprocess.run(
-                [binary, "list", "--session", run_id, "--harness", HARNESS, "--json"],
-                env=env,
-                stdin=subprocess.DEVNULL,
-                capture_output=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=LIST_TIMEOUT_S,
-                shell=False,
-                check=False,
-            )
-            if result.returncode != 0:
+    try:
+        result = subprocess.run(
+            [binary, "list", "--harness", HARNESS, "--json"],
+            env=env,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=LIST_TIMEOUT_S,
+            shell=False,
+            check=False,
+        )
+        if result.returncode != 0:
+            return entries
+        parsed = json.loads(result.stdout)
+        if not isinstance(parsed, list):
+            return entries
+        for item in parsed:
+            if not isinstance(item, dict) or not isinstance(item.get("id"), str):
                 continue
-            parsed = json.loads(result.stdout)
-            if not isinstance(parsed, list):
+            author = item.get("author")
+            if not isinstance(author, dict):
                 continue
-            for item in parsed:
-                if not isinstance(item, dict) or not isinstance(item.get("id"), str):
-                    continue
-                entries[run_id].append(
-                    RunEntry(
-                        id=item["id"],
-                        **{
-                            key: item[key] if isinstance(item.get(key), str) else ""
-                            for key in ("kind", "scope", "status", "title")
-                        },
-                    )
+            session = author.get("session")
+            if not isinstance(session, str) or session not in entries:
+                continue
+            entries[session].append(
+                RunEntry(
+                    id=item["id"],
+                    **{
+                        key: item[key] if isinstance(item.get(key), str) else ""
+                        for key in ("kind", "scope", "status", "title")
+                    },
                 )
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            break  # Do not pay for another absent or hung CLI in this report.
-        except (OSError, ValueError, RecursionError):
-            continue
+            )
+    except (OSError, subprocess.TimeoutExpired, ValueError, RecursionError):
+        return entries
     return entries
 
 

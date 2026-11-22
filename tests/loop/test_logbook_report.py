@@ -58,10 +58,20 @@ def test_logbook_report_only_queries_selected_runs_once(
     report_runs("old-failed", "failed", age=10 * 86400)
     fake_lb.write_script(
         {
-            "list": {"stdout": "[]"},
-            **{
-                f"list@{run_id}": {"stdout": json.dumps([lb_entry(run_id + "-entry")])}
-                for run_id in ("landed", "awaiting", "failed", "aborted", "running", "old-landed")
+            "list": {
+                "stdout": json.dumps(
+                    [
+                        {**lb_entry(run_id + "-entry"), "author": {"session": run_id}}
+                        for run_id in (
+                            "landed",
+                            "awaiting",
+                            "failed",
+                            "aborted",
+                            "running",
+                            "old-landed",
+                        )
+                    ]
+                )
             },
         }
     )
@@ -79,7 +89,7 @@ def test_logbook_report_only_queries_selected_runs_once(
     assert set(ids) == {"landed", "awaiting", "failed", "aborted", "empty"}
     assert lookups == [ids]
     assert [call["argv"] for call in fake_lb.calls()] == [
-        ["list", "--session", run_id, "--harness", "helmraiser", "--json"] for run_id in ids
+        ["list", "--harness", "helmraiser", "--json"]
     ]
     for entry in included:
         assert entry["logbook_entries"] == (
@@ -105,8 +115,11 @@ def test_logbook_report_text_and_cli_json(
     ]
     fake_lb.write_script(
         {
-            "list": {"stdout": "[]"},
-            "list@with-entries": {"stdout": json.dumps(entries)},
+            "list": {
+                "stdout": json.dumps(
+                    [{**entry, "author": {"session": "with-entries"}} for entry in entries]
+                )
+            },
         }
     )
     monkeypatch.setattr(monitor, "load_config", lambda: config)
@@ -129,13 +142,21 @@ def test_logbook_report_text_and_cli_json(
     assert "- [untitled] handoff active global: (untitled)\n" in text
     assert "x" * 200 not in text
     assert text.index("[newest]") < text.index("[older]") < text.index("[untitled]")
-    assert len(fake_lb.calls()) == 4  # No cache across report invocations.
+    assert len(fake_lb.calls()) == 2  # No cache across report invocations.
 
 
 def test_logbook_report_caps_entries_in_lb_order(ledger, data_dir, config, report_runs, fake_lb):
     report_runs("many")
     entries = [lb_entry(f"entry-{i}") for i in range(25, 0, -1)]
-    fake_lb.write_script({"list@many": {"stdout": json.dumps(entries)}})
+    fake_lb.write_script(
+        {
+            "list": {
+                "stdout": json.dumps(
+                    [{**entry, "author": {"session": "many"}} for entry in entries]
+                )
+            }
+        }
+    )
     result = build_report(ledger, data_dir, 86400, config=config)
     run = result["landed"][0]
     assert run["logbook_entries"] == entries[:20]
@@ -161,12 +182,16 @@ def test_logbook_report_uses_cli_not_store_and_refreshes_status(
     summary.write_text("## Existing summary\n\n### Review: pass\n\nExisting detail\n")
     original_summary = summary.read_text()
     cli_entry = lb_entry("from-cli", status="active")
-    fake_lb.write_script({"list@run": {"stdout": json.dumps([cli_entry])}})
+    fake_lb.write_script(
+        {"list": {"stdout": json.dumps([{**cli_entry, "author": {"session": "run"}}])}}
+    )
     result = build_report(ledger, data_dir, 86400, config=config)
     assert result["landed"][0]["logbook_entries"] == [cli_entry]
     assert "from-file" not in render_report(result, "24h")
     cli_entry["status"] = "released"
-    fake_lb.write_script({"list@run": {"stdout": json.dumps([cli_entry])}})
+    fake_lb.write_script(
+        {"list": {"stdout": json.dumps([{**cli_entry, "author": {"session": "run"}}])}}
+    )
     refreshed = build_report(ledger, data_dir, 86400, config=config)
     text = render_report(refreshed, "24h")
     assert "[from-cli] handoff released global" in text
@@ -183,14 +208,14 @@ def test_logbook_report_missing_lb_is_indistinguishable_from_no_entries(
     fake_lb.write_script({"list": {"stdout": "[]"}})
     now = time.time()
     empty = build_report(ledger, data_dir, 86400, now=now, config=config)
-    assert len(fake_lb.calls()) == 3
+    assert len(fake_lb.calls()) == 1
     monkeypatch.setattr(logbook, "find_lb", lambda: None)
     missing = build_report(ledger, data_dir, 86400, now=now, config=config)
     assert missing == empty
     text = render_report(missing, "24h")
     assert "### Logbook entries" not in text
     assert "- logbook entries:" not in text
-    assert len(fake_lb.calls()) == 3
+    assert len(fake_lb.calls()) == 1
 
 
 def test_logbook_report_deeply_nested_json_fails_soft(
@@ -198,21 +223,17 @@ def test_logbook_report_deeply_nested_json_fails_soft(
 ):
     report_runs("deep-json")
     report_runs("healthy", "awaiting_approval")
-    healthy_entry = lb_entry("healthy-entry")
-    fake_lb.write_script(
-        {
-            "list@deep-json": {"stdout": "[" * 100000},
-            "list@healthy": {"stdout": json.dumps([healthy_entry])},
-        }
-    )
+    fake_lb.write_script({"list": {"stdout": "[" * 100000}})
     result = build_report(ledger, data_dir, 86400, config=config)
     assert result["landed"][0]["logbook_entries"] == []
-    assert result["awaiting"][0]["logbook_entries"] == [healthy_entry]
+    assert result["awaiting"][0]["logbook_entries"] == []
     text = render_report(result, "24h")
     assert "- run: `deep-json`" in text
-    assert "- [healthy-entry] handoff active global: A lesson" in text
-    assert text.count("### Logbook entries") == 1
-    assert [call["argv"][2] for call in fake_lb.calls()] == ["deep-json", "healthy"]
+    assert "- run: `healthy`" in text
+    assert "### Logbook entries" not in text
+    assert [call["argv"] for call in fake_lb.calls()] == [
+        ["list", "--harness", "helmraiser", "--json"]
+    ]
 
 
 def test_logbook_report_empty_window_has_no_calls(ledger, data_dir, config, fake_lb):

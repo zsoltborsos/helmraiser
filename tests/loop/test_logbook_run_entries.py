@@ -15,8 +15,7 @@ def test_logbook_run_entries_order_identity_and_distinct_ids(fake_lb, monkeypatc
     monkeypatch.setenv("LOGBOOK_SESSION", "reviewer-session")
     fake_lb.write_script(
         {
-            "list": {"stdout": "[]"},
-            "list@first": {
+            "list": {
                 "stdout": json.dumps(
                     [
                         {
@@ -27,8 +26,10 @@ def test_logbook_run_entries_order_identity_and_distinct_ids(fake_lb, monkeypatc
                             "title": "Already answered",
                             "author": {"harness": "helmraiser", "session": "first"},
                         },
+                        {"id": "second-entry", "author": {"session": "second"}},
                         {
                             "id": "older",
+                            "author": {"session": "first"},
                             "kind": "rule",
                             "scope": "project:/repo",
                             "status": "superseded",
@@ -37,7 +38,6 @@ def test_logbook_run_entries_order_identity_and_distinct_ids(fake_lb, monkeypatc
                     ]
                 )
             },
-            "list@second": {"stdout": '[{"id":"second-entry"}]'},
         }
     )
     result = logbook.run_entries(iter(["first", "second", "first", "empty"]))
@@ -51,9 +51,7 @@ def test_logbook_run_entries_order_identity_and_distinct_ids(fake_lb, monkeypatc
     with pytest.raises(FrozenInstanceError):
         result["first"][0].title = "changed"
     calls = fake_lb.calls()
-    assert [call["argv"] for call in calls] == [
-        ["list", "--session", run_id, "--harness", "helmraiser", "--json"] for run_id in result
-    ]
+    assert [call["argv"] for call in calls] == [["list", "--harness", "helmraiser", "--json"]]
     assert all(
         call["env"]
         == {
@@ -76,10 +74,34 @@ def test_logbook_run_entries_malformed_items_and_titles(fake_lb):
                         "not an object",
                         {},
                         {"id": 5},
-                        {"id": "missing-title"},
-                        {"id": "null-title", "title": None},
-                        {"id": "number-title", "title": 7, "kind": [], "scope": False},
-                        {"id": "good", "title": "Preserve\nraw title"},
+                        *[
+                            {"id": "ignored", "author": author}
+                            for author in (
+                                None,
+                                [],
+                                "run",
+                                {},
+                                {"session": None},
+                                {"session": 5},
+                                {"session": []},
+                                {"session": "other"},
+                            )
+                        ],
+                        {"id": "no-author"},
+                        {"id": "missing-title", "author": {"session": "run"}},
+                        {"id": "null-title", "title": None, "author": {"session": "run"}},
+                        {
+                            "id": "number-title",
+                            "title": 7,
+                            "kind": [],
+                            "scope": False,
+                            "author": {"session": "run"},
+                        },
+                        {
+                            "id": "good",
+                            "title": "Preserve\nraw title",
+                            "author": {"session": "run"},
+                        },
                     ]
                 )
             }
@@ -105,31 +127,25 @@ def test_logbook_run_entries_malformed_items_and_titles(fake_lb):
         {"stdout": '"text"'},
     ],
 )
-def test_logbook_run_entries_failure_is_local(fake_lb, response):
-    fake_lb.write_script(
-        {
-            "list@bad": response,
-            "list@good": {"stdout": '[{"id":"found"}]'},
-        }
-    )
-    result = logbook.run_entries(["bad", "good"])
-    assert result["bad"] == []
-    assert [entry.id for entry in result["good"]] == ["found"]
-    assert len(fake_lb.calls()) == 2
+def test_logbook_run_entries_bulk_failure(fake_lb, response):
+    fake_lb.write_script({"list": response})
+    assert logbook.run_entries(["first", "second", "third"]) == {
+        "first": [],
+        "second": [],
+        "third": [],
+    }
+    assert len(fake_lb.calls()) == 1
 
 
-def test_logbook_run_entries_another_session_is_not_queried(fake_lb):
+def test_logbook_run_entries_another_session_is_ignored(fake_lb):
     fake_lb.write_script(
         {
-            "list": {"stdout": "[]"},
-            "list@other-session": {"stdout": '[{"id":"not-ours"}]'},
+            "list": {"stdout": '[{"id":"not-ours","author":{"session":"other-session"}}]'},
         }
     )
     assert logbook.run_entries(["our-session"]) == {"our-session": []}
     assert fake_lb.calls()[0]["argv"] == [
         "list",
-        "--session",
-        "our-session",
         "--harness",
         "helmraiser",
         "--json",
@@ -164,42 +180,62 @@ def test_logbook_run_entries_disappeared_binary_stops(fake_lb, monkeypatch):
     assert fake_lb.calls() == []
 
 
-def test_logbook_run_entries_timeout_stops_remaining_calls(fake_lb, monkeypatch):
-    fake_lb.write_script(
-        {
-            "list@first": {"stdout": '[{"id":"before-timeout"}]'},
-            "list@hung": {"sleep": 5},
-            "list@last": {"stdout": '[{"id":"never-read"}]'},
-        }
-    )
+def test_logbook_run_entries_bulk_timeout(fake_lb, monkeypatch):
+    fake_lb.write_script({"list": {"sleep": 5}})
     monkeypatch.setattr(logbook, "LIST_TIMEOUT_S", 0.5)
-    result = logbook.run_entries(["first", "hung", "last"])
-    assert [entry.id for entry in result["first"]] == ["before-timeout"]
-    assert result["hung"] == result["last"] == []
-    assert [call["argv"][2] for call in fake_lb.calls()] == ["first", "hung"]
+    assert logbook.run_entries(["first", "hung", "last"]) == {"first": [], "hung": [], "last": []}
+    assert len(fake_lb.calls()) == 1
 
 
 def test_logbook_run_entries_oserror_and_subprocess_options(fake_lb, monkeypatch):
-    real_run = subprocess.run
     calls = []
 
-    def fail_first(argv, **kwargs):
+    def fail(argv, **kwargs):
         calls.append(argv)
         assert argv[0] == str(fake_lb.bin)
         assert kwargs["stdin"] == subprocess.DEVNULL
         assert kwargs["shell"] is False
         assert kwargs["timeout"] == logbook.LIST_TIMEOUT_S
-        if len(calls) == 1:
-            raise PermissionError("not executable")
-        return real_run(argv, **kwargs)
+        assert kwargs["capture_output"] is True
+        assert kwargs["encoding"] == "utf-8"
+        assert kwargs["errors"] == "replace"
+        assert kwargs["check"] is False
+        raise PermissionError("not executable")
 
-    fake_lb.write_script({"list": {"stdout": '[{"id":"success"}]'}})
-    monkeypatch.setattr(logbook.subprocess, "run", fail_first)
-    result = logbook.run_entries(["first", "second"])
-    assert result["first"] == []
-    assert result["second"][0].id == "success"
-    assert len(calls) == 2
-    assert len(fake_lb.calls()) == 1
+    monkeypatch.setattr(logbook.subprocess, "run", fail)
+    assert logbook.run_entries(["first", "second"]) == {"first": [], "second": []}
+    assert len(calls) == 1
+    assert fake_lb.calls() == []
+
+
+def test_logbook_run_entries_many_runs_one_process(fake_lb):
+    ids = [f"run-{i}" for i in range(60)]
+    transport = [
+        {"id": session, "author": {"session": session}}
+        for session in [ids[-1], "unrelated", ids[0], ids[30]]
+    ]
+    fake_lb.write_script({"list": {"stdout": json.dumps(transport)}})
+    expected = {run_id: [] for run_id in ids}
+    for session in (ids[-1], ids[0], ids[30]):
+        expected[session] = [logbook.RunEntry(session, "", "", "", "")]
+    assert logbook.run_entries(ids) == expected
+    assert [call["argv"] for call in fake_lb.calls()] == [
+        ["list", "--harness", "helmraiser", "--json"]
+    ]
+
+
+@pytest.mark.parametrize("error", [OSError, ValueError])
+def test_logbook_run_entries_lookup_failure(fake_lb, monkeypatch, error):
+    def fail():
+        raise error("lookup failed")
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("lookup failure must not start a process")
+
+    monkeypatch.setattr(logbook, "find_lb", fail)
+    monkeypatch.setattr(logbook.subprocess, "run", unexpected)
+    assert logbook.run_entries(["first", "second"]) == {"first": [], "second": []}
+    assert fake_lb.calls() == []
 
 
 def test_logbook_run_entries_empty_input_does_not_find_lb(monkeypatch):

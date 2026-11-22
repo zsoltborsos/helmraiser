@@ -34,6 +34,7 @@ from pathlib import Path
 from typing import Any, NoReturn
 
 from helmraiser.code_snapshot import without_snapshot
+from helmraiser.isolation.placeholders import remove_placeholders
 from helmraiser.isolation import Isolation, ProcessIsolation, for_level
 from helmraiser.isolation.environment import command_environment
 from helmraiser.isolation.process import tracked_denial_warnings, tracked_denials
@@ -2559,6 +2560,19 @@ class GovernedRun:
             self._rebase_in_progress() or (self.pr_url and self._merge_in_progress())
         ):
             return True
+        assert self.worktree is not None
+        try:
+            names = remove_placeholders(self.worktree)
+        except (OSError, subprocess.SubprocessError):
+            return False
+        if names:
+            self._event("sandbox_placeholders_removed", {"cwd": str(self.worktree), "names": names})
         if self._git("add", "-A").returncode != 0:
             return False
+        if names:
+            staged = self._git("diff", "--cached", "--quiet")
+            if staged.returncode == 0:
+                return True
+            if staged.returncode != 1:
+                return False
         return self._git("commit", "-q", "-m", message).returncode == 0

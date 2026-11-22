@@ -194,3 +194,64 @@ async def test_collection_error_fails_closed(make_task, make_run, monkeypatch, l
     outcome = await run.run()
     assert outcome.failure_reason == "verify_exhausted" and verify_spy.call_count == 0
     assert "Scope could not be established" in scope_events(ledger, run)[0]["payload"]["diagnostic"]
+
+
+async def test_placeholders_never_enter_scope(make_task, make_run, ledger, verify_spy):
+    from helmraiser.isolation.placeholders import PLACEHOLDER_NAMES
+
+    def create(cwd):
+        for name in PLACEHOLDER_NAMES:
+            (cwd / name).touch()
+
+    pi = adapter(PiScript(files=[("done.txt", "ok")]), {1: create})
+    run, _ = make_run(make_task(paths=("done.txt",)), pi)
+    outcome = await run.run()
+    assert outcome.status == "awaiting_approval"
+    assert verify_spy.call_count == 1
+    assert pi.calls_for("review")
+    assert not scope_events(ledger, run)
+    assert not set(PLACEHOLDER_NAMES) & set(run._git("ls-files").stdout.splitlines())
+    events = [e for e in ledger.events(run.run_id) if e["type"] == "sandbox_placeholders_removed"]
+    assert events[0]["payload"]["names"] == list(PLACEHOLDER_NAMES)
+    assert "sandbox_placeholders_removed" in (run.rundir.path / "events.jsonl").read_text()
+
+
+def test_commit_placeholders_only(make_task, make_run, tmp_path):
+    from helmraiser.isolation.placeholders import PLACEHOLDER_NAMES
+
+    tmp_path = tmp_path / "commit-repo"
+    tmp_path.mkdir()
+    git(tmp_path, "init")
+    git(
+        tmp_path,
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=t@t",
+        "commit",
+        "--allow-empty",
+        "-m",
+        "init",
+    )
+    run, _ = make_run(make_task(), adapter(PiScript()))
+    run.worktree = tmp_path
+    run._event = Mock()
+    before = run._git("rev-parse", "HEAD").stdout
+    for name in PLACEHOLDER_NAMES:
+        (tmp_path / name).touch()
+    assert run._commit_all("no empty commit")
+    assert run._git("rev-parse", "HEAD").stdout == before
+
+
+def test_commit_cleanup_failure_never_stages(make_task, make_run, tmp_path, monkeypatch):
+    run, _ = make_run(make_task(), adapter(PiScript()))
+    run.worktree = tmp_path
+    spy = Mock()
+    monkeypatch.setattr(run, "_git", spy)
+
+    def fail(cwd):
+        raise PermissionError("busy")
+
+    monkeypatch.setattr(runner, "remove_placeholders", fail)
+    assert not run._commit_all("must not stage")
+    spy.assert_not_called()

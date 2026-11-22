@@ -102,6 +102,12 @@ a non-empty list of relative "file:line" strings; files is a non-empty list of
 relative paths; size is "S", "M", or "L". Set needs_owner_ruling true and provide
 a non-empty ruling_question whenever the work requires an owner decision.
 
+verify_hints is a list of non-empty strings or objects. Each object requires a
+non-empty string command (run is a synonym); optional keys are timeout (positive
+integer), red_on_base (boolean), red_output (non-empty string), and purpose (string).
+Unknown hint-object keys are ignored. For a probe that must fail before the change,
+set red_on_base: true and red_output to a non-empty literal failure marker.
+
 - Keep each evidence entry exactly "file:line"; name the symbol at that line in "why" (for example "DiaryExcerpt in src/api.py"), so the finding survives small line shifts.
 - Make "change" name every edit the verify hints check, and nothing the code contradicts; read the code before stating how it behaves.
 - A candidate that only changes tests never asks to edit production code; prove a test can fail with a mutation check outside the worktree instead.

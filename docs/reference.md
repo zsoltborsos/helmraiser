@@ -1388,6 +1388,7 @@ per command.
 | `helmraiser doctor` | Pi version and profile authentication, isolation availability, and data directory and ledger readiness. A missing ledger is informational and is created on first use, not by doctor; an existing ledger must open successfully. The reserved `vm` row is informational (`reserved; not implemented`). It includes informational [Logbook diagnostics](#logbook-optional). It also reports informational pnpm store filesystem and setup-write warnings without affecting readiness. It also lists the environment names stripped from runs, orphaned worktree metadata and phantom ledger runs for the current repository; phantom runs are informational until the next `work` reconciles them. When the repository declares `[[services]]`, it checks that `docker info` answers (not ready otherwise) and lists orphaned service containers |
 | `helmraiser doctor --exposure [repo]` | Emits 12 stable component/probe rows (pi session, command, setup and service container × loopback, `~/.ssh` and SSH agent), or one JSON object. Loopback is a listener on a random host `127.0.0.1` (and `::1`) port, tried directly, through every proxy in the component's environment (HTTP `CONNECT`, forwarded `GET`, SOCKS5) and, from the container, through `host.docker.internal` and its gateway. Each row carries a positive control (`control: ok\|failed\|n/a`, `[control …]` in text): an allowed listener, a readable token file, or the same probe run on the host; a failed control makes the row `error`, never `blocked`. Exit 0 means every available target was blocked; 1 means exposed/error; 2 means evidence is incomplete because srt or Docker was skipped. An absent host SSH agent is a neutral skip. |
 | `helmraiser status` | Queue depth, running runs, runs waiting for the worker to resume them, awaiting approvals, held tasks with their holder runs or unmet-dependency reasons, failures and landings in the last 24 h (`--json`: `failed` and `landed` lists, by when the run ended), provider spend and subscription routing headroom. It also rewrites `status.json` |
+| `helmraiser stats [--since 24h\|7d\|30d\|90d\|all] [--project PATH] [--json]` | Read-only dashboard outcome, quality, cost, latency, scout funnel and weekly aggregates |
 | `helmraiser report [--since 24h\|7d\|30d] [--models [--by model\|setup]]` | Morning report in markdown: Landed, Awaiting your approval, Failed, Cost; `--models` appends a per-implement-model table, or per model setup with `--by setup` |
 | `helmraiser preflight <repo> [--run CMD]… [-- CMD…]` | Runs commands in a throwaway worktree of HEAD with the project's setup, services and the verify sandbox settings; prints each exit code, duration, output tail and hints for known sandbox failures. No ledger rows (see [Trying commands in the sandbox](#trying-commands-in-the-sandbox)) |
 | `helmraiser clean [--project PATH] [--dry-run] [--json] [--data-dir PATH]` | Removes clean superseded or old failed/aborted worktrees, keeping branches (see [Cleaning up failed runs’ worktrees](#cleaning-up-failed-runs-worktrees)) |
@@ -1574,6 +1575,92 @@ widget. It shows running and awaiting-approval counts from `status.json` and tur
 urgent when the queue is paused or a run awaits approval. It keeps the file fresh by
 running `helmraiser status --json` on a timer. Its panel lists runs and failures and
 has Approve and Reject buttons. See its README for installation, settings and IPC.
+
+### Stats
+
+```sh
+helmraiser stats [--since 24h|7d|30d|90d|all] [--project PATH] [--json] [--data-dir PATH]
+```
+
+The JSON is the contract for dashboards; dashboards need not read SQLite. Default
+window: `7d`. Unknown windows exit 2. Stats opens an existing current-schema ledger
+read-only (missing or old ledgers exit 1), never refreshes status files, and never
+reads run directories. Human output is a short plain-text summary. Project paths
+are expanded and resolved and filter every section. SQLite may create WAL reader
+sidecars; no ledger rows are changed.
+
+All sections are always present. Rates are fractions rounded to three decimal
+places, or `null` for a zero denominator. Timestamps are UTC ISO strings.
+
+- `window`: `since` is the selected window; `since_seconds` is its duration, or
+  `null` for `all`; `generated_at` is the captured computation time; `project` is
+  the resolved filter or `null`. Run and scout cohorts use their `started_at`.
+- `runs`: `overall` and sorted `by_project` rows (each with `project`) contain
+  `landed`, `failed`, `aborted`, `awaiting_approval`, and `active` counts. Active
+  includes every other nonterminal status.
+- `quality`:
+  - `first_time_right`: `{count, rate}` among landed runs. A qualifying run has
+    exactly one iteration, no merge `rework` decision, no scope approval row
+    (including pending) or `scope_requested` event, and no earlier run of the same
+    task, including outside the window. Equal starts are ordered by run ID.
+  - `rework_rate`: runs with a merge `rework` decision divided by runs with a
+    nonpending merge decision.
+  - `scope_request_rate`: runs with a scope approval row or `scope_requested`
+    event divided by all runs.
+  - `retried_tasks`: task identities with more than one run in the window.
+  - `review_verdicts`: counts of `pass`, `concerns`, `uncertain`, and `none`
+    (no recorded verdict).
+- `failures`: failed and aborted runs grouped by class. The class is the trimmed
+  prefix before the first colon in `failure_reason`, or the trimmed whole reason
+  without a colon; empty reasons or prefixes become `unknown`. Each class contains
+  `count` and up to three newest `run_ids`, ordered by start time then run ID.
+- `cost`: `total_usd` sums run costs; `plan_usd` sums plan costs;
+  `implement_usd` sums iteration costs; `other_usd` is total minus plan and
+  implement, floored at zero. Other covers review and anything not recorded
+  separately, **not** exclusively review. `per_landed_usd` is total cost divided
+  by landed count, or `null`.
+- `latency`: `active_minutes` and `approval_wait_minutes.{plan,scope,merge}` each
+  contain `median` and `p90`, or null values without samples. Active samples sum
+  numeric `run_end.active_minutes` per landed run, not wall-clock time; missing
+  recordings are not zero. Approval waits pair each awaiting-approval `run_end`
+  with its next unconsumed nonpending approval before the next wait episode;
+  the approval row determines the kind. Unanswered waits have no sample.
+  Percentiles linearly interpolate at `(n - 1) × p`.
+- `scouts`: grid rows for every lens and every configured focus project or project
+  with historical scouts; an explicit project filter returns only that project's
+  complete lens grid. Each row contains:
+  - `project`, `lens`, `in_focus`; `auto` and `cooldown_hours` from lens settings.
+  - Window scout counts `scouts`, `succeeded`, `failed`; `drafts_written` counts
+    written drafts, and `cost_usd` sums scout costs.
+  - Current draft outcomes for that scout cohort: `pending` (never queued),
+    `queued` (queued, running or awaiting approval), `landed` (any landed run),
+    `dropped`, and `failed_drafts` (latest run failed or aborted, no landed run).
+    `failed` counts scouts, so the draft failure outcome uses `failed_drafts`.
+  - `queued_unchanged`, `queued_changed`, `queued_unknown` classify **all
+    ever-queued drafts**, including landed ones. Unknown means no baseline hash.
+    SHA-256 covers only verify, evidence, paths, budget and body of the final
+    scout-prepared snapshot (initial rendering if preparation never succeeds).
+    Canonical compact JSON sorts mapping keys, preserves list ordering and
+    values, uses empty lists for absent/null verify/evidence/paths and an empty
+    mapping for absent/null budget. Body line endings become LF and outer
+    whitespace is stripped; internal whitespace is preserved. Exact paths in
+    `intake.related_tests_added` are removed; status, origin, intake stamps and
+    other fields are ignored. Comparison uses the ledger's current task snapshot;
+    immutable queue history and later re-intake edits cannot be reconstructed.
+  - `last_scout_ended_at`, `last_scout_ok` (succeeded), `last_scout_error` (or
+    null), `last_scout_drafts` count describe the latest scout regardless of the
+    window. All four are null with no scout.
+  - `next_eligible_at` comes from scout cooldown calculation; null means eligible
+    now when due time is minus infinity. Finite elapsed times remain timestamps.
+    This is cooldown only, not other start gates. An unavailable repository has
+    null next eligibility and a short `scheduling_error`; healthy rows have null
+    `scheduling_error`. Other projects' rows still return.
+- `weekly`: oldest-first UTC Monday ISO-week buckets, including zero weeks,
+  capped at the newest 26 overlapping weeks. `week` is `YYYY-Www`; `landed`,
+  `failed`, and `first_time_right_rate` use run-start cohorts and the definitions
+  above. `drafts_written` and `drafts_landed` use originating scout-start cohorts;
+  landed is the current outcome, not the date of landing. `all` starts at the
+  earliest selected run/scout (current week on an empty ledger).
 
 ## Status contract
 

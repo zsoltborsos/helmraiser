@@ -1,5 +1,7 @@
 # Helmraiser — Current State
 
+`helmraiser stats --json` provides read-only window/project outcome, quality, failure, cost, latency, scout-funnel and weekly aggregates, with scout acceptance/scope fingerprints and cooldown scheduling errors isolated per project.
+
 Related-test detection requires the same language, restricts name matching to the nearest tracked package root, and matches full Python module paths or resolved JS/TS imports (including dotted stems, directory indexes, and ESM TypeScript extension substitution).
 
 Sandbox placeholder cleanup removes untracked empty root mount points after sandboxed steps (including timeouts) and before automatic commits, preserving tracked and non-empty paths; shell and runner events retain successful removals even when later cleanup fails.

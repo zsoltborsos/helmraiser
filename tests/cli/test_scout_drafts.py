@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -499,8 +500,12 @@ class TestScoutContract:
         ],
     )
     def test_invalid_hints(self, hint):
-        with pytest.raises(ScoutError, match="verify_hints"):
-            parse_candidates(json.dumps([candidate(verify_hints=[hint])]), ())
+        rejected = []
+        assert (
+            parse_candidates(json.dumps([candidate(verify_hints=[hint])]), (), rejected=rejected)
+            == []
+        )
+        assert len(rejected) == 1 and "verify_hints" in rejected[0]
 
     @pytest.mark.parametrize(
         ("payload", "message"),
@@ -521,9 +526,14 @@ class TestScoutContract:
             ),
         ],
     )
-    def test_invalid_candidates_fail_as_a_whole(self, payload: str, message: str):
-        with pytest.raises(ScoutError, match=message):
-            parse_candidates(payload, ())
+    def test_invalid_candidates(self, payload: str, message: str):
+        if payload in ("not json", "{}"):
+            with pytest.raises(ScoutError, match=message):
+                parse_candidates(payload, ())
+        else:
+            rejected = []
+            assert parse_candidates(payload, (), rejected=rejected) == []
+            assert len(rejected) == 1 and message in rejected[0]
 
     @pytest.mark.parametrize(
         ("field", "value"),
@@ -535,8 +545,29 @@ class TestScoutContract:
         ],
     )
     def test_unsafe_and_excluded_paths_fail(self, field: str, value: list[str]):
-        with pytest.raises(ScoutError, match="invalid .* path"):
-            parse_candidates(json.dumps([candidate(**{field: value})]), ("private",))
+        rejected = []
+        assert (
+            parse_candidates(
+                json.dumps([candidate(**{field: value})]), ("private",), rejected=rejected
+            )
+            == []
+        )
+        assert len(rejected) == 1 and re.search("invalid .* path", rejected[0])
+
+    def test_rejection_labels_and_continuation(self):
+        rejected = []
+        payload = [
+            None,
+            candidate(id=None),
+            candidate(id=" "),
+            candidate(verify_hints=[{}]),
+            candidate(),
+            candidate(id="second", verify_hints=[{"command": "true"}]),
+        ]
+        parsed = parse_candidates(json.dumps(payload), (), rejected=rejected)
+        assert [item.id for item in parsed] == ["tighten-parser", "second"]
+        assert [item.split(":", 1)[0] for item in rejected] == ["1", "2", "3", "tighten-parser"]
+        assert parse_candidates(json.dumps(payload), ()) == parsed
 
     @pytest.mark.parametrize("delivery", ["pr", None])
     def test_generated_draft_is_deterministic_and_loadable(
@@ -811,7 +842,14 @@ class TestScoutCommand:
         monkeypatch: pytest.MonkeyPatch,
     ):
         candidates = [
-            candidate(id="one", title="One", files=["tests/new_test.py"]),
+            candidate(id="bad-before", verify_hints=[{}]),
+            candidate(
+                id="one",
+                title="One",
+                files=["tests/new_test.py"],
+                verify_hints=[{"run": "echo probe", "purpose": "Probe"}],
+            ),
+            candidate(id="bad-after", verify_hints=[{"command": "true", "timeout": False}]),
             candidate(
                 id="ruling",
                 title="Needs choice",
@@ -889,6 +927,17 @@ class TestScoutCommand:
         assert (row["cost_usd"], row["tokens_in"], row["tokens_out"]) == (0.12, 11, 22)
         report = Path(payload["report_path"]).read_text()
         assert "Needs choice" in report and "A or B?" in report
+        assert (
+            "## Rejected candidates\n\n- bad-before: candidate verify_hints requires a non-empty command or run\n- bad-after: candidate verify_hints timeout must be a positive integer"
+            in report
+        )
+        prepared = ledger.get_scout_draft(task_rows[0]["task_id"])
+        assert prepared["candidate"]["verify_hints"] == [
+            {"command": "echo probe", "purpose": "Probe"}
+        ]
+        listed = runner.invoke(app, ["drafts", "--data-dir", str(data_dir), "--json"])
+        assert listed.exit_code == 0, listed.output
+        json.loads(listed.output)
         assert '"verify"' in report and "Preflight: expected red" in report
         assert not (tmp_project / ".helmraiser/tasks/ruling.md").exists()
         calls = fake_pi.calls()
@@ -1504,15 +1553,17 @@ class TestScoutCommand:
                 }
             ]
 
+    @pytest.mark.parametrize("response", ["not json\nlast line", "{}"])
     def test_malformed_json_fails_without_drafts(
         self,
+        response,
         tmp_project: Path,
         tmp_path: Path,
         fake_pi: FakePi,
         scout_srt_log: Path,
         cli_config: dict,
     ):
-        fake_pi.write_script({"sessions": {"*-scout": {"text": "not json\nlast line"}}})
+        fake_pi.write_script({"sessions": {"*-scout": {"text": response}}})
         data_dir = tmp_path / "data"
 
         result = run_scout(tmp_project, data_dir, "--force")
@@ -1520,8 +1571,29 @@ class TestScoutCommand:
         assert result.exit_code == 1, result.output
         payload = json.loads(result.output)
         assert payload["outcome"] == "failed" and payload["written_task_ids"] == []
-        assert "not json\nlast line" in Path(payload["report_path"]).read_text()
+        report = Path(payload["report_path"]).read_text()
+        assert response in report
+        assert (
+            "malformed scout JSON" if response.startswith("not") else "must be a JSON list"
+        ) in report
         assert Ledger(data_dir / "helmraiser.db").list_tasks() == []
+
+    def test_all_rejected_succeeds(self, tmp_project, tmp_path, fake_pi, scout_srt_log, cli_config):
+        fake_pi.write_script(
+            {"sessions": {"*-scout": {"text": json.dumps([candidate(verify_hints=[{}])])}}}
+        )
+        data_dir = tmp_path / "data"
+        result = run_scout(tmp_project, data_dir, "--force")
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert payload["outcome"] == "succeeded" and payload["written_task_ids"] == []
+        ledger = Ledger(data_dir / "helmraiser.db")
+        assert ledger.list_tasks() == []
+        assert ledger.get_scout(payload["scout_id"])["outcome"] == "succeeded"
+        assert (
+            "## Rejected candidates\n\n- tighten-parser: candidate verify_hints requires"
+            in Path(payload["report_path"]).read_text()
+        )
 
     @pytest.mark.parametrize("symlink_kind", ["task-file", "tasks-directory"])
     def test_symlinked_draft_destinations_cannot_escape_repository(

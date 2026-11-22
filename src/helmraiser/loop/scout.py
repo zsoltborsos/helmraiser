@@ -335,7 +335,9 @@ def _render_verify_hint(hint: str | ScoutVerifyHint) -> str:
     return f"- {label}\n\n  {fence}sh\n{command}\n  {fence}"
 
 
-def parse_candidates(text: str, exclusions: tuple[str, ...]) -> list[ScoutCandidate]:
+def parse_candidates(
+    text: str, exclusions: tuple[str, ...], *, rejected: list[str] | None = None
+) -> list[ScoutCandidate]:
     try:
         payload = json.loads(text.strip())
     except ValueError as exc:
@@ -344,62 +346,74 @@ def parse_candidates(text: str, exclusions: tuple[str, ...]) -> list[ScoutCandid
         raise ScoutError("scout response must be a JSON list")
     candidates: list[ScoutCandidate] = []
     for number, raw in enumerate(payload, start=1):
-        if not isinstance(raw, dict):
-            raise ScoutError(f"candidate {number} must be an object")
-        if set(raw) != _CANDIDATE_KEYS:
-            missing = sorted(_CANDIDATE_KEYS - set(raw))
-            extra = sorted(set(raw) - _CANDIDATE_KEYS)
-            detail = []
-            if missing:
-                detail.append("missing " + ", ".join(missing))
-            if extra:
-                detail.append("unexpected " + ", ".join(extra))
-            raise ScoutError(f"candidate {number} has invalid keys ({'; '.join(detail)})")
-        candidate_id = raw["id"]
-        if not isinstance(candidate_id, str) or not ID_PATTERN.fullmatch(candidate_id):
-            raise ScoutError(f"candidate {number} id must be a safe task id")
-        strings: dict[str, str] = {}
-        for field in ("title", "why", "change"):
-            value = raw[field]
-            if not isinstance(value, str) or not value.strip():
-                raise ScoutError(f"candidate {candidate_id} {field} must be a non-empty string")
-            strings[field] = value.strip()
-        evidence = _strings(raw["evidence"], "evidence", nonempty=True)
-        for item in evidence:
-            match = _EVIDENCE.fullmatch(item)
-            if match is None or not _safe_relative_path(match.group(1), exclusions):
-                raise ScoutError(f"candidate {candidate_id} has invalid evidence path: {item}")
-        files = _strings(raw["files"], "files", nonempty=True)
-        for path in files:
-            if not _safe_relative_path(path, exclusions):
-                raise ScoutError(f"candidate {candidate_id} has invalid file path: {path}")
-        verify_hints = _verify_hints(raw["verify_hints"])
-        if raw["size"] not in ("S", "M", "L"):
-            raise ScoutError(f"candidate {candidate_id} size must be S, M, or L")
-        needs_ruling = raw["needs_owner_ruling"]
-        if not isinstance(needs_ruling, bool):
-            raise ScoutError(f"candidate {candidate_id} needs_owner_ruling must be a boolean")
-        question = raw["ruling_question"]
-        if question is not None and not isinstance(question, str):
-            raise ScoutError(f"candidate {candidate_id} ruling_question must be a string or null")
-        question = question.strip() if isinstance(question, str) else None
-        if needs_ruling and not question:
-            raise ScoutError(f"candidate {candidate_id} needs a non-empty ruling_question")
-        candidates.append(
-            ScoutCandidate(
-                id=candidate_id,
-                title=strings["title"],
-                why=strings["why"],
-                evidence=evidence,
-                files=files,
-                change=strings["change"],
-                verify_hints=verify_hints,
-                size=str(raw["size"]),
-                needs_owner_ruling=needs_ruling,
-                ruling_question=question,
+        try:
+            candidates.append(_parse_candidate(raw, number, exclusions))
+        except ScoutError as exc:
+            candidate_id = raw.get("id") if isinstance(raw, dict) else None
+            label = (
+                candidate_id.strip()
+                if isinstance(candidate_id, str) and candidate_id.strip()
+                else str(number)
             )
-        )
+            if rejected is not None:
+                rejected.append(f"{label}: {exc}")
     return candidates
+
+
+def _parse_candidate(raw: Any, number: int, exclusions: tuple[str, ...]) -> ScoutCandidate:
+    if not isinstance(raw, dict):
+        raise ScoutError(f"candidate {number} must be an object")
+    if set(raw) != _CANDIDATE_KEYS:
+        missing = sorted(_CANDIDATE_KEYS - set(raw))
+        extra = sorted(set(raw) - _CANDIDATE_KEYS)
+        detail = []
+        if missing:
+            detail.append("missing " + ", ".join(missing))
+        if extra:
+            detail.append("unexpected " + ", ".join(extra))
+        raise ScoutError(f"candidate {number} has invalid keys ({'; '.join(detail)})")
+    candidate_id = raw["id"]
+    if not isinstance(candidate_id, str) or not ID_PATTERN.fullmatch(candidate_id):
+        raise ScoutError(f"candidate {number} id must be a safe task id")
+    strings: dict[str, str] = {}
+    for field in ("title", "why", "change"):
+        value = raw[field]
+        if not isinstance(value, str) or not value.strip():
+            raise ScoutError(f"candidate {candidate_id} {field} must be a non-empty string")
+        strings[field] = value.strip()
+    evidence = _strings(raw["evidence"], "evidence", nonempty=True)
+    for item in evidence:
+        match = _EVIDENCE.fullmatch(item)
+        if match is None or not _safe_relative_path(match.group(1), exclusions):
+            raise ScoutError(f"candidate {candidate_id} has invalid evidence path: {item}")
+    files = _strings(raw["files"], "files", nonempty=True)
+    for path in files:
+        if not _safe_relative_path(path, exclusions):
+            raise ScoutError(f"candidate {candidate_id} has invalid file path: {path}")
+    verify_hints = _verify_hints(raw["verify_hints"])
+    if raw["size"] not in ("S", "M", "L"):
+        raise ScoutError(f"candidate {candidate_id} size must be S, M, or L")
+    needs_ruling = raw["needs_owner_ruling"]
+    if not isinstance(needs_ruling, bool):
+        raise ScoutError(f"candidate {candidate_id} needs_owner_ruling must be a boolean")
+    question = raw["ruling_question"]
+    if question is not None and not isinstance(question, str):
+        raise ScoutError(f"candidate {candidate_id} ruling_question must be a string or null")
+    question = question.strip() if isinstance(question, str) else None
+    if needs_ruling and not question:
+        raise ScoutError(f"candidate {candidate_id} needs a non-empty ruling_question")
+    return ScoutCandidate(
+        id=candidate_id,
+        title=strings["title"],
+        why=strings["why"],
+        evidence=evidence,
+        files=files,
+        change=strings["change"],
+        verify_hints=verify_hints,
+        size=str(raw["size"]),
+        needs_owner_ruling=needs_ruling,
+        ruling_question=question,
+    )
 
 
 def _normalized_title(title: str) -> str:
@@ -453,6 +467,7 @@ def render_scout_report(
     preparations: list[dict[str, Any]],
     error: str | None = None,
     raw_tail: str | None = None,
+    rejected: list[str] | None = None,
     lens: str = "state",
 ) -> str:
     lines = [f"# Scout {scout_id}", "", f"Lens: {lens}", "", "## Candidates", ""]
@@ -491,6 +506,10 @@ def render_scout_report(
     lines += ["", "## Skipped duplicates", ""]
     lines.extend(f"- {item}" for item in skipped)
     if not skipped:
+        lines.append("- None.")
+    lines += ["", "## Rejected candidates", ""]
+    lines.extend(f"- {item}" for item in rejected or [])
+    if not rejected:
         lines.append("- None.")
     lines += ["", "## Owner rulings", ""]
     rulings = [item for item in candidates if item.needs_owner_ruling]
@@ -865,6 +884,7 @@ def execute_scout(
     written_ids: list[str] = []
     written_paths: list[str] = []
     skipped: list[str] = []
+    rejected: list[str] = []
     preparations: list[dict[str, Any]] = []
     usage = _usage_dict(0, 0, 0.0)
     raw_tail: str | None = None
@@ -904,7 +924,7 @@ def execute_scout(
         raw_tail = "\n".join(result.final_text.splitlines()[-40:])
         if not result.ok:
             raise ScoutError(result.error_message or result.error_kind or "pi scout failed")
-        candidates = parse_candidates(result.final_text, defaults.scout_exclude)
+        candidates = parse_candidates(result.final_text, defaults.scout_exclude, rejected=rejected)
 
         existing = ledger.list_tasks(project=str(repo))
         seen_ids = {str(row["id"]) for row in existing}
@@ -1058,6 +1078,7 @@ def execute_scout(
                 skipped=skipped,
                 usage=usage,
                 preparations=preparations,
+                rejected=rejected,
             ),
             encoding="utf-8",
         )
@@ -1099,6 +1120,7 @@ def execute_scout(
                 preparations=preparations,
                 error=error,
                 raw_tail=raw_tail,
+                rejected=rejected,
             ),
             encoding="utf-8",
         )

@@ -164,6 +164,9 @@ def build_stats(
     for draft in drafts:
         by_scout[draft["scout_id"]].append(draft)
 
+    def ever_queued(d: dict[str, Any]) -> bool:
+        return d["status"] == "queued" or d["task_id"] in latest
+
     def outcome(d: dict[str, Any]) -> str:
         task = d["task_id"]
         if task in landed_tasks:
@@ -172,7 +175,7 @@ def build_stats(
             return "dropped"
         if task in latest and latest[task]["status"] in {"failed", "aborted"}:
             return "failed"
-        return "queued" if d["queued_at"] is not None or task in latest else "pending"
+        return "queued" if ever_queued(d) else "pending"
 
     grid = []
     for proj in sorted(projects):
@@ -190,7 +193,7 @@ def build_stats(
             outcomes = Counter(outcome(d) for d in ds)
             hashes: Counter[str] = Counter()
             for d in ds:
-                if d["queued_at"] is None and d["task_id"] not in latest:
+                if not ever_queued(d):
                     continue
                 baseline = d["acceptance_scope_sha256"]
                 hashes[

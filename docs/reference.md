@@ -1632,7 +1632,8 @@ places, or `null` for a zero denominator. Timestamps are UTC ISO strings.
   - `project`, `lens`, `in_focus`; `auto` and `cooldown_hours` from lens settings.
   - Window scout counts `scouts`, `succeeded`, `failed`; `drafts_written` counts
     written drafts, and `cost_usd` sums scout costs.
-  - Current draft outcomes for that scout cohort: `pending` (never queued),
+  - Current draft outcomes for that scout cohort: `pending` (not ever-queued under
+    the definition below),
     `queued` (queued, running or awaiting approval), `landed` (any landed run),
     `dropped`, and `failed_drafts` (latest run failed or aborted, no landed run).
     `failed` counts scouts, so the draft failure outcome uses `failed_drafts`.
@@ -1647,6 +1648,10 @@ places, or `null` for a zero denominator. Timestamps are UTC ISO strings.
     `intake.related_tests_added` are removed; status, origin, intake stamps and
     other fields are ignored. Comparison uses the ledger's current task snapshot;
     immutable queue history and later re-intake edits cannot be reconstructed.
+    For these counters and draft outcomes, **ever-queued** means the task is
+    currently `queued` or has at least one run. A draft queued and then dequeued
+    before any run starts counts as `pending`, not in any queued hash counter.
+    No queue-history storage is maintained.
   - `last_scout_ended_at`, `last_scout_ok` (succeeded), `last_scout_error` (or
     null), `last_scout_drafts` count describe the latest scout regardless of the
     window. All four are null with no scout.

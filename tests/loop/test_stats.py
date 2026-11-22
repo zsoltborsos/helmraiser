@@ -173,6 +173,59 @@ def test_grid_and_unavailable(ledger, tmp_path, monkeypatch):
     )
 
 
+@pytest.mark.parametrize("hash_kind", ["unchanged", "changed", "unknown"])
+@pytest.mark.parametrize("transition", ["dequeue", "draft_status"])
+def test_draft_queue_then_dequeue_without_run(
+    ledger, make_task, tmp_project, monkeypatch, hash_kind, transition
+):
+    monkeypatch.setattr(stats, "head_commit", lambda p: "head")
+    task = make_task()
+    snapshot = "---\npaths: [src/a]\n---\nBody"
+    ledger.set_task_snapshot(task.task_id, snapshot)
+    ledger.create_scout(
+        {
+            "id": "scout",
+            "project": str(tmp_project),
+            "model": "fake",
+            "started_at": NOW - 100,
+            "report_path": "unused",
+            "drafts_written": [task.task_id],
+        }
+    )
+    baseline = (
+        None
+        if hash_kind == "unknown"
+        else draft_acceptance_scope_hash(
+            snapshot if hash_kind == "unchanged" else snapshot + " edited"
+        )
+    )
+    ledger.create_scout_draft(task.task_id, "scout", {}, acceptance_scope_sha256=baseline)
+
+    def cohort():
+        return next(r for r in build(ledger)["scouts"] if r["lens"] == "state")
+
+    row = cohort()
+    assert row["queued"] == 1 and row["pending"] == 0
+    assert {k: row["queued_" + k] for k in ("unchanged", "changed", "unknown")} == {
+        k: int(k == hash_kind) for k in ("unchanged", "changed", "unknown")
+    }
+    if transition == "dequeue":
+        assert ledger.dequeue_task(task.task_id)
+    else:
+        # A stale queued_at must not classify a nonqueued task as ever-queued.
+        assert ledger.set_task_status(task.task_id, "draft")
+        assert ledger.get_task(task.task_id)["queued_at"] is not None
+    assert ledger.list_runs(task_id=task.task_id) == []
+    row = cohort()
+    assert row["pending"] == 1 and row["queued"] == 0
+    assert all(row["queued_" + k] == 0 for k in ("unchanged", "changed", "unknown"))
+    # A run retains cohort membership even when the task is no longer queued.
+    seed_run(ledger, task.task_id, "run", "failed", started_at=NOW - 50)
+    row = cohort()
+    assert row["failed_drafts"] == 1 and row["pending"] == 0
+    assert row["queued_" + hash_kind] == 1
+
+
 def test_bulk_query_count(ledger, make_task):
     task = make_task()
     conn = ledger._get_conn()

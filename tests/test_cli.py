@@ -116,6 +116,7 @@ def test_root_app_exposes_only_the_governed_loop_commands():
         "status",
         "wait",
         "report",
+        "stats",
         "log",
         "show",
         "attach",

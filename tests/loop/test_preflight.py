@@ -270,7 +270,10 @@ class TestIntakeAcceptanceCheck:
         self, tmp_project, tmp_path, monkeypatch, kind, code, hints, expected, tail
     ):
         spec = self.spec(tmp_project)
-        spec = replace(spec, **{kind: (replace(getattr(spec, kind)[0], red_on_base=True),)})
+        spec = replace(
+            spec,
+            **{kind: (replace(getattr(spec, kind)[0], red_on_base=True, red_output="regression"),)},
+        )
         payload = {"commands": []}
 
         def run(repo, steps, **kwargs):
@@ -279,6 +282,8 @@ class TestIntakeAcceptanceCheck:
                 {
                     "name": marked.name,
                     "red_on_base": marked.red_on_base,
+                    "red_output": marked.red_output,
+                    "output": "regression",
                     "exit_code": code,
                     "hints": hints,
                     "tail": tail,
@@ -319,6 +324,7 @@ class TestIntakeAcceptanceCheck:
         marked = replace(
             getattr(spec, kind)[0],
             red_on_base=True,
+            red_output="regression",
             sandbox=None if expected == "sandbox" else "host",
         )
         spec = replace(spec, **{"verify": (), "evidence": (), kind: (marked,)})
@@ -350,6 +356,35 @@ class TestIntakeAcceptanceCheck:
         assert payload["ok"] and first["passed"] and first["exit_code"] == 0
         result = preflight.normalize_scout_preflight(tmp_project, payload, ())
         assert [step["class"] for step in result["steps"]] == ["fail", "green"]
+
+    @pytest.mark.parametrize(
+        "marker,output,expected",
+        [
+            ("literal[x].*", "literal[x].*", "expected red"),
+            ("literal[x].*", "literalxABC", "fail"),
+            ("literal", "LITERAL", "fail"),
+            (None, "ERR_MODULE_NOT_FOUND", "fail"),
+            ("marker", "noise\n" * 10000 + "marker", "expected red"),
+        ],
+    )
+    def test_marker_contract(self, tmp_project, marker, output, expected):
+        command = {
+            "red_on_base": True,
+            "red_output": marker,
+            "output": output,
+            "tail": "short display",
+            "exit_code": 1,
+        }
+        result = preflight.normalize_scout_preflight(tmp_project, {"commands": [command]}, ())
+        step = result["steps"][0]
+        assert step["class"] == expected
+        if expected == "fail":
+            assert (
+                "has no red_output"
+                if marker is None
+                else "expected red_output text was not in the output"
+            ) in step["tail"]
+        assert command["tail"] == "short display"
 
     def spec(self, project, *, paths=(), body=""):
         return replace(

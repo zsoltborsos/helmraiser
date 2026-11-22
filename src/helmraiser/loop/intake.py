@@ -420,7 +420,9 @@ def check_acceptance(spec: TaskSpec, *, config: dict[str, Any], data_dir: Path) 
     steps = [
         *spec.verify,
         *(
-            VerifyStep(step.name, step.run, step.timeout, step.sandbox, step.red_on_base)
+            VerifyStep(
+                step.name, step.run, step.timeout, step.sandbox, step.red_on_base, step.red_output
+            )
             for step in spec.evidence
         ),
     ]

@@ -26,7 +26,7 @@ Intake prompts request fast targeted verify checks, full-suite/coverage evidence
 
 Intake prompts list declared services and their sorted provided variable names without service configuration or values, and instruct steps to use those variables rather than start services.
 
-Verify/evidence steps strictly validate and preserve `red_on_base`; shared intake/scout preflight accepts completed nonzero marked checks as expected red, rejects marked passes, timeouts and launch failures, and preserves sandbox-hint precedence.
+Verify/evidence steps preserve `red_on_base` and optional nonempty `red_output`; intake/scout base acceptance requires literal captured-output matching for completed nonzero marked checks (legacy missing markers fail), preserving sandbox precedence and rejecting marked passes, timeouts and launch failures.
 The tests scout lens requests per-test mutation checks marked `red_on_base`, without worktree edits, plus changed-test verification and full-suite/coverage evidence.
 
 - Scout drafts omit delivery and inherit the project default (fallback: merge); intake prompts show effective setup, environment variable names only, explicit-tool-path guidance, and a documentation-only stale-text check exception.

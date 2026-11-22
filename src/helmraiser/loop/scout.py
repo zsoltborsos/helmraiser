@@ -899,7 +899,12 @@ def execute_scout(
                     *intake_outcome.spec.verify,
                     *(
                         VerifyStep(
-                            step.name, step.run, step.timeout, step.sandbox, step.red_on_base
+                            step.name,
+                            step.run,
+                            step.timeout,
+                            step.sandbox,
+                            step.red_on_base,
+                            step.red_output,
                         )
                         for step in intake_outcome.spec.evidence
                     ),

@@ -278,7 +278,14 @@ class TestScoutPreflightClassification:
         [(1, [], "expected red"), (0, [], "fail"), (1, ["sandbox hint"], "sandbox")],
     )
     def test_declared_red(self, tmp_project, code, hints, expected):
-        result = {"red_on_base": True, "exit_code": code, "hints": hints, "tail": "original"}
+        result = {
+            "red_on_base": True,
+            "red_output": "specific failure",
+            "output": "specific failure",
+            "exit_code": code,
+            "hints": hints,
+            "tail": "original",
+        }
         assert classify_preflight_step(tmp_project, result, ()) == expected
         normalized = normalize_scout_preflight(tmp_project, {"commands": [result]}, ())
         assert normalized["steps"][0]["class"] == expected
@@ -885,13 +892,17 @@ class TestScoutCommand:
 
     @pytest.mark.parametrize(
         "command,expected",
-        [("test ! -f README.md", "expected red"), ("test -f README.md", "fail(1)")],
+        [
+            ("test ! -f README.md || { echo intended; exit 1; }", "expected red"),
+            ("test -f README.md", "fail(1)"),
+        ],
     )
     def test_scout_marked_existing_file_check(
         self, tmp_project, tmp_path, fake_pi, scout_srt_log, cli_config, command, expected
     ):
         proposal = intake_proposal().replace(
-            "run: pytest tests/new_test.py", f"red_on_base: true\n    run: {command}"
+            "run: pytest tests/new_test.py",
+            f"red_on_base: true\n    red_output: intended\n    run: {command}",
         )
         fake_pi.write_script(
             {
@@ -1139,6 +1150,7 @@ class TestScoutCommand:
     run: echo {name}
     timeout: 29
     red_on_base: {str(evidence_class == 'expected red').lower()}
+    red_output: {('diagnostic-' + name) if evidence_class == 'expected red' else 'null'}
     artifacts: [result.txt]
     criteria: Results recorded""",
                 )
@@ -1179,6 +1191,7 @@ class TestScoutCommand:
                             else []
                         ),
                         "red_on_base": step.red_on_base,
+                        "red_output": step.red_output,
                     }
                 )
             return {"commands": commands, "error": None}
@@ -1259,6 +1272,7 @@ class TestScoutCommand:
     run: echo red
     timeout: 37
     red_on_base: true
+    red_output: diagnostic
     artifacts: [red.txt]
     criteria: Regression reproduced""",
         )
@@ -1284,6 +1298,7 @@ class TestScoutCommand:
                         "tail": "diagnostic",
                         "hints": [],
                         "red_on_base": step.red_on_base,
+                        "red_output": step.red_output,
                     }
                     for step in steps
                 ],
@@ -1296,6 +1311,7 @@ class TestScoutCommand:
         assert result.exit_code == 0, result.output
         assert len(seen) == 1
         assert all(isinstance(step, VerifyStep) for step in seen[0])
+        assert [step.red_output for step in seen[0]] == [None, None, "diagnostic"]
         assert [(s.name, s.run, s.timeout, s.sandbox, s.red_on_base) for s in seen[0]] == [
             ("verify", "pytest tests/new_test.py", 11, None, False),
             ("evidence-green", "echo evidence", 23, None, False),

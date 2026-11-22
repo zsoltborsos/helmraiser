@@ -139,6 +139,7 @@ def _verify_steps(fm: dict[str, Any]) -> tuple[VerifyStep, ...]:
                 timeout=int(raw.get("timeout", 300)),
                 sandbox=_step_sandbox(raw),
                 red_on_base=_step_red_on_base(raw, "verify", n),
+                red_output=raw.get("red_output"),
             )
         )
     return tuple(steps)
@@ -168,6 +169,7 @@ def _evidence_steps(fm: dict[str, Any]) -> tuple[EvidenceStep, ...]:
                 timeout=int(raw.get("timeout", 600)),
                 sandbox=_step_sandbox(raw),
                 red_on_base=_step_red_on_base(raw, "evidence", n),
+                red_output=raw.get("red_output"),
             )
         )
     return tuple(steps)
@@ -288,6 +290,7 @@ def spec_to_frontmatter(spec: TaskSpec) -> dict[str, Any]:
                 "timeout": s.timeout,
                 **({"sandbox": s.sandbox} if s.sandbox is not None else {}),
                 **({"red_on_base": True} if s.red_on_base else {}),
+                **({"red_output": s.red_output} if s.red_output is not None else {}),
             }
             for s in spec.verify
         ],
@@ -323,6 +326,7 @@ def spec_to_frontmatter(spec: TaskSpec) -> dict[str, Any]:
                 "timeout": e.timeout,
                 **({"sandbox": e.sandbox} if e.sandbox is not None else {}),
                 **({"red_on_base": True} if e.red_on_base else {}),
+                **({"red_output": e.red_output} if e.red_output is not None else {}),
             }
             for e in spec.evidence
         ]

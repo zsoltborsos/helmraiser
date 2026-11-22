@@ -310,6 +310,17 @@ class TestRoundTrip:
         again = load_task(out, config)
         assert again == replace(spec, source_path=out.resolve())
 
+    @pytest.mark.parametrize("kind", ["verify", "evidence"])
+    @pytest.mark.parametrize("marker", [None, "MUTANT SURVIVED: test[x].*"])
+    def test_red_output_round_trip(self, tmp_path, config, kind, marker):
+        spec = load_task(write(tmp_path, FULL_TASK.format(project=tmp_path)), config)
+        step = replace(getattr(spec, kind)[0], red_on_base=True, red_output=marker)
+        spec = replace(spec, **{kind: (step,)})
+        text = render_task(spec)
+        assert ("red_output:" in text) is (marker is not None)
+        again = load_task(write(tmp_path, text, "rt.md"), config)
+        assert getattr(again, kind)[0].red_output == marker
+
     def test_written_file_has_intake_block_and_body(self, tmp_path: Path, config: dict):
         spec = load_task(write(tmp_path, FULL_TASK.format(project=tmp_path)), config)
         text = render_task(spec)

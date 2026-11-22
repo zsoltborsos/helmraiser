@@ -221,7 +221,12 @@ without an approval stamp, even if the check fails. `--check --propose` is also 
 leaves the file and ledger unchanged.
 
 For a newly queued task with `paths:`, `intake --yes` (with or without `--check`)
-appends the tracked related tests it detects, up to 20 tests. If it finds more than
+appends the tracked related tests it detects, up to 20 tests. A related test must use
+the same language family (Python or JS/TS) and either match the source name within
+the same nearest tracked package root, or import the declared source through a full
+Python module path or resolved JS/TS path. Package roots are directories containing
+a tracked `pyproject.toml`, `setup.py`, `setup.cfg`, or `package.json`, falling back
+to the repository root when none exists. If it finds more than
 20, it adds none and reports the total with an advisory to review the missing scope.
 Check-only reports `Would add related tests to paths:` without changing scope or
 addition metadata. Its preview is conditional: check-only does not inspect ledger

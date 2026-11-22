@@ -2344,6 +2344,36 @@ class TestRelatedTestsOutsidePaths:
         assert saved.paths.count("tests/other.test.tsx") == 1
         assert saved.extra["intake"]["related_tests_added"] == ["tests/other.test.tsx"]
 
+    def test_yes_excludes_unrelated_modules(self, task, data_dir, ledger, monkeypatch):
+        use_adapter(monkeypatch, None)
+        repo = task.parent.parent
+        unrelated = {
+            "package.json": "{}",
+            "backend/pyproject.toml": "",
+            "backend/tests/test_icon-symbol.py": "import icon_symbol\n",
+            "other/package.json": "{}",
+            "other/tests/icon-symbol.test.tsx": "import '../icon-symbol';",
+            "other/icon-symbol.tsx": "export const IconSymbol = 1;",
+            "tests/unrelated.test.tsx": "import '@scope/icon-symbol';",
+        }
+        for name, text in unrelated.items():
+            path = repo / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        subprocess.run(["git", "-C", str(repo), "add", *unrelated], check=True)
+        result = invoke("intake", str(task), "--yes", "--json", data_dir=data_dir)
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        assert payload["related_tests_count"] == 1
+        assert payload["related_tests_added"] == ["tests/other.test.tsx"]
+        assert payload["related_tests_would_add"] == []
+        saved = parse_task(task.read_text(), task, {})
+        assert saved.paths == (self.SOURCE, "tests/other.test.tsx")
+        assert saved.extra["intake"]["related_tests_added"] == ["tests/other.test.tsx"]
+        (row,) = ledger.list_tasks()
+        assert row["snapshot"] == task.read_text()
+        assert parse_task(row["snapshot"], task, {}).paths == saved.paths
+
     @pytest.mark.parametrize("as_json", [False, True])
     @pytest.mark.parametrize("count", [1, 20, 21])
     def test_check_only_preview(self, task, data_dir, monkeypatch, as_json, count):

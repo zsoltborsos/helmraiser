@@ -704,6 +704,37 @@ def _worker_text(worker: dict[str, Any]) -> str:
 # ── report ────────────────────────────────────────────────────────────
 
 
+def stats(
+    since: str = typer.Option("7d", "--since", help="Window: 24h, 7d, 30d, 90d or all"),
+    project: Path | None = typer.Option(None, "--project"),
+    as_json: bool = typer.Option(False, "--json"),
+    data_dir: Path | None = typer.Option(None, "--data-dir"),
+) -> None:
+    """Read-only outcome, cost, latency and scout-funnel aggregates."""
+    from helmraiser.loop.stats import WINDOWS, build_stats
+
+    if since not in WINDOWS:
+        _fail(
+            "--since must be one of: " + ", ".join(WINDOWS), as_json=as_json, code=EXIT_VALIDATION
+        )
+    try:
+        with open_ledger(data_dir, read_only=True) as ledger:
+            data = build_stats(
+                ledger, since, str(project.expanduser().resolve()) if project else None
+            )
+    except (OSError, sqlite3.Error, ValueError) as exc:
+        _fail(f"cannot read ledger: {exc}", as_json=as_json, code=EXIT_ERROR)
+    if as_json:
+        typer.echo(json.dumps(data))
+    else:
+        typer.echo(f"Stats ({since})")
+        typer.echo("Runs: " + ", ".join(f"{k}={v}" for k, v in data["runs"]["overall"].items()))
+        typer.echo(
+            f"Cost: ${data['cost']['total_usd']:.2f}; first-time-right: {data['quality']['first_time_right']['count']}"
+        )
+        typer.echo(f"Scout cohorts: {len(data['scouts'])}; weekly buckets: {len(data['weekly'])}")
+
+
 def report(
     since: str = typer.Option("24h", "--since", help="Window: 24h, 7d or 30d"),
     models: bool = typer.Option(False, "--models", help="Add the model efficiency table"),
@@ -1223,6 +1254,7 @@ def register_monitor_commands(app: typer.Typer) -> None:
     app.command("status")(status)
     app.command("wait", context_settings={"ignore_unknown_options": True})(wait)
     app.command("report")(report)
+    app.command("stats")(stats)
     app.command("log")(log)
     app.command("show", context_settings={"ignore_unknown_options": True})(show)
     app.command("attach")(attach)

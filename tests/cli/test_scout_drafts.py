@@ -19,6 +19,7 @@ from helmraiser.loop.scout import (
     build_scout_prompt,
     classify_preflight_step,
     collect_scout_inputs,
+    draft_acceptance_scope_hash,
     normalize_scout_preflight,
     parse_candidates,
     render_draft,
@@ -633,6 +634,7 @@ class TestScoutCommand:
         (row,) = ledger.list_tasks(status="draft")
         intake = ledger.get_scout_draft(row["task_id"])
         assert intake["intake_notes"].count(note) == int(declared)
+        assert intake["acceptance_scope_sha256"] == draft_acceptance_scope_hash(row["snapshot"])
         for excluded in ("docs/evidence.md", "docs/notes.md"):
             assert excluded not in str(intake["intake_notes"])
         report = Path(json.loads(result.output)["report_path"]).read_text()

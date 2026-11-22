@@ -146,7 +146,8 @@ def build_report(
     cutoff = now - since_seconds
     task_rows = ledger.list_tasks()
     titles = {row["task_id"]: row["title"] for row in task_rows}
-    task_bases = {row["task_id"]: _task_base(row) for row in task_rows}
+    tasks = {row["task_id"]: row for row in task_rows}
+    task_bases: dict[str, str | None] = {}
     landed: list[dict[str, Any]] = []
     awaiting: list[dict[str, Any]] = []
     failed: list[dict[str, Any]] = []
@@ -160,6 +161,9 @@ def build_report(
             pass  # always actionable, whatever its age
         elif status not in ("landed", "failed", "aborted") or not in_window:
             continue
+        task_id = run["task_id"]
+        if task_id not in task_bases:
+            task_bases[task_id] = _task_base(tasks[task_id]) if task_id in tasks else None
         iterations = ledger.iterations(run_id)
         events = ledger.events(
             run_id, types=("review_feedback", "path_scope_failed", "landed_outside")

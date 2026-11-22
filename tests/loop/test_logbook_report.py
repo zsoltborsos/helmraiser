@@ -236,6 +236,90 @@ def test_logbook_report_deeply_nested_json_fails_soft(
     ]
 
 
+def test_logbook_report_parses_only_reported_tasks_once(
+    ledger, data_dir, config, make_task, fake_lb, monkeypatch
+):
+    now = 2_000_000_000.0
+    expected_bases = {}
+    reported_tasks = []
+
+    def add(task, run_id, status, age):
+        seed_run(
+            ledger,
+            task.task_id,
+            run_id,
+            status,
+            started_at=now - age,
+            ended_at=None if status in ("running", "awaiting_approval") else now - age,
+        )
+
+    for task_id, base, status in (
+        ("explicit", "release", "landed"),
+        ("no-base", None, "failed"),
+        ("old-awaiting", "stable", "awaiting_approval"),
+    ):
+        task = make_task(task_id=task_id, base=base)
+        reported_tasks.append(task.task_id)
+        for i in range(2):
+            run_id = f"{task_id}-{i}"
+            add(task, run_id, status, 10 * 86400 if status == "awaiting_approval" else 60)
+            expected_bases[run_id] = base
+
+    for i in range(20):
+        task = make_task(task_id=f"expired-{i}", base="unused")
+        add(task, f"expired-{i}", ("landed", "failed", "aborted")[i % 3], 10 * 86400)
+    for i in range(3):
+        task = make_task(task_id=f"running-{i}")
+        add(task, f"running-{i}", "running", 60)
+        make_task(task_id=f"unrun-{i}")
+
+    snapshots = {row["task_id"]: row["snapshot"] for row in ledger.list_tasks()}
+    parsed = []
+    real_parse = report_module.parse_frontmatter
+
+    def record(snapshot):
+        parsed.append(snapshot)
+        return real_parse(snapshot)
+
+    monkeypatch.setattr(report_module, "parse_frontmatter", record)
+    fake_lb.write_script({"list": {"stdout": "[]"}})
+    result = build_report(ledger, data_dir, 86400, now=now, config=config)
+    assert {row["run_id"] for row in result["landed"]} == {"explicit-0", "explicit-1"}
+    assert {row["run_id"] for row in result["failed"]} == {"no-base-0", "no-base-1"}
+    assert {row["run_id"] for row in result["awaiting"]} == {"old-awaiting-0", "old-awaiting-1"}
+    assert {
+        row["run_id"]: row["base"]
+        for section in ("landed", "awaiting", "failed")
+        for row in result[section]
+    } == expected_bases
+    assert sorted(parsed) == sorted(snapshots[task_id] for task_id in reported_tasks)
+
+
+def test_logbook_report_excluded_tasks_do_not_parse_frontmatter(
+    ledger, data_dir, config, make_task, fake_lb, monkeypatch
+):
+    now = 2_000_000_000.0
+    for status in ("landed", "failed", "aborted", "running"):
+        task = make_task(task_id=status)
+        timestamp = now - (60 if status == "running" else 10 * 86400)
+        seed_run(
+            ledger,
+            task.task_id,
+            status,
+            status,
+            started_at=timestamp,
+            ended_at=None if status == "running" else timestamp,
+        )
+
+    def unexpected(snapshot):
+        pytest.fail("excluded tasks must not parse frontmatter")
+
+    monkeypatch.setattr(report_module, "parse_frontmatter", unexpected)
+    result = build_report(ledger, data_dir, 86400, now=now, config=config)
+    assert result["landed"] == result["awaiting"] == result["failed"] == []
+    assert fake_lb.calls() == []
+
+
 def test_logbook_report_empty_window_has_no_calls(ledger, data_dir, config, fake_lb):
     result = build_report(ledger, data_dir, 86400, config=config)
     assert result["landed"] == result["awaiting"] == result["failed"] == []

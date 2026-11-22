@@ -2,7 +2,7 @@
 
 `helmraiser stats --json` provides read-only window/project outcome, quality, failure, cost, latency, scout-funnel and weekly aggregates, with scout acceptance/scope fingerprints and cooldown scheduling errors isolated per project.
 
-Reports fetch run-authored Logbook entries with one bulk CLI listing per nonempty report.
+Reports fetch run-authored Logbook entries with one bulk CLI listing per nonempty report and parse task bases once per reported task.
 
 Related-test detection requires the same language, restricts name matching to the nearest tracked package root, and matches full Python module paths or resolved JS/TS imports (including dotted stems, directory indexes, and ESM TypeScript extension substitution).
 

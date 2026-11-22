@@ -555,7 +555,7 @@ class TestStatus:
                     "cooldown_hours": 24,
                     "source": {"auto": "default", "cooldown_hours": "default"},
                 }
-                for lens in ("state", "docs", "tests")
+                for lens in ("state", "docs", "tests", "guardrails")
             },
             "focus_projects": [],
             "paused_projects": [],

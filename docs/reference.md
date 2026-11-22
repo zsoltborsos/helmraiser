@@ -284,6 +284,7 @@ unknown names exit 2 and list the known lenses. Each session follows one method:
 - `state`: find useful tasks from project state and existing context.
 - `docs`: find concrete documentation claims contradicted by code, pairing document and code lines.
 - `tests`: find tests that give no real assurance and propose stronger behavioural checks.
+- `guardrails`: find project-stated rules without enforcing checks and guards that cannot catch the violations they name.
 
 Automatic worker scouting uses per-lens settings. Start gates and the pending-draft
 cap remain per project; successful history and cooldown are per project and lens.

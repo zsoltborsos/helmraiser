@@ -20,7 +20,7 @@ and what comes next.
 
 ## Scout follow-ups
 
-- Lenses `guardrails`, `verification` (optional generic web research for current best practices),
+- Lenses `verification` (optional generic web research for current best practices),
   and `architecture` (with an import-graph summary as scout input).
 - A scheduled package-health check outside the scout.
 

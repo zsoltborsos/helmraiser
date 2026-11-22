@@ -28,6 +28,7 @@ Intake prompts list declared services and their sorted provided variable names w
 
 Verify/evidence steps preserve `red_on_base` and optional nonempty `red_output`; intake/scout base acceptance requires literal captured-output matching for completed nonzero marked checks (legacy missing markers fail), preserving sandbox precedence and rejecting marked passes, timeouts and launch failures.
 The tests scout lens requests per-test mutation checks marked `red_on_base`, without worktree edits, plus changed-test verification and full-suite/coverage evidence.
+The guardrails scout lens finds unenforced project-stated rules and ineffective guards, requesting outside-worktree violation probes marked `red_on_base`.
 
 - Scout drafts omit delivery and inherit the project default (fallback: merge); intake prompts show effective setup, environment variable names only, explicit-tool-path guidance, and a documentation-only stale-text check exception.
 

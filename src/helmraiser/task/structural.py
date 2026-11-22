@@ -366,33 +366,37 @@ def _js_import_keys(text: str) -> set[str]:
 
 def _python_statement_import_keys(statement: list[tokenize.TokenInfo]) -> set[str]:
     for i, token in enumerate(statement):
-        if token.type != tokenize.NAME:
+        if token.type != tokenize.NAME or token.string not in {"from", "import"}:
             continue
+        base = ""
+        start = i + 1
         if token.string == "from":
-            module: list[str] = []
-            for part in statement[i + 1 :]:
-                if part.string == "import":
-                    return {module[-1]} if module else set()
-                if part.type == tokenize.NAME:
-                    module.append(part.string)
-            return set()
-        if token.string == "import":
-            keys: set[str] = set()
-            module = []
-            alias = False
-            for part in statement[i + 1 :]:
-                if part.string == ",":
-                    if module:
-                        keys.add(module[-1])
-                    module = []
-                    alias = False
-                elif part.string == "as":
-                    alias = True
-                elif part.type == tokenize.NAME and not alias:
-                    module.append(part.string)
-            if module:
-                keys.add(module[-1])
-            return keys
+            for end in range(start, len(statement)):
+                if statement[end].string == "import":
+                    base = "".join(part.string for part in statement[start:end])
+                    start = end + 1
+                    break
+            else:
+                return set()
+        modules: set[str] = set()
+        module = ""
+        alias = False
+        for part in statement[start:]:
+            if part.string == ",":
+                if module:
+                    modules.add(module)
+                module = ""
+                alias = False
+            elif part.string == "as":
+                alias = True
+            elif not alias and (part.type == tokenize.NAME or part.string == "."):
+                module += part.string
+        if module:
+            modules.add(module)
+        if base:
+            separator = "" if base.endswith(".") else "."
+            return {base} | {base + separator + child for child in modules}
+        return modules
     return set()
 
 
@@ -417,6 +421,33 @@ def _python_import_keys(text: str) -> set[str]:
         # The bounded read may end in an incomplete statement. Keep earlier imports.
         pass
     return keys
+
+
+def _normalized_path(parent: PurePosixPath, target: str) -> PurePosixPath | None:
+    parts = list(parent.parts)
+    for part in target.split("/"):
+        if part == "..":
+            if not parts:
+                return None
+            parts.pop()
+        elif part not in {"", "."}:
+            parts.append(part)
+    return PurePosixPath(*parts)
+
+
+def _path_suffix(path: PurePosixPath, suffix: PurePosixPath) -> bool:
+    return bool(suffix.parts) and path.parts[-len(suffix.parts) :] == suffix.parts
+
+
+def _python_import_matches(source: str, test: str, module: str) -> bool:
+    target = PurePosixPath(source).with_suffix("")
+    if target.name == "__init__":
+        target = target.parent
+    dots = len(module) - len(module.lstrip("."))
+    if dots:
+        relative = "/".join([".."] * (dots - 1) + module[dots:].split("."))
+        return _normalized_path(PurePosixPath(test).parent, relative) == target
+    return _path_suffix(target, PurePosixPath(module.replace(".", "/")))
 
 
 def related_tests_outside_scope(paths: tuple[str, ...] | None, repo: Path) -> list[str]:
@@ -467,7 +498,11 @@ def related_tests_outside_scope(paths: tuple[str, ...] | None, repo: Path) -> li
                 _test_name_key(path) == _source_key(source)
                 and _package_root(path, roots) == _package_root(source, roots)
             )
-            or _source_key(source) in imported
+            or (
+                any(_python_import_matches(source, path, module) for module in imported)
+                if PurePosixPath(path).suffix == ".py"
+                else _source_key(source) in imported
+            )
             for source in candidates
         ):
             related.append(path)

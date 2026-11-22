@@ -584,7 +584,8 @@ def test_related_tests_tolerant_decoding(related_tests_repo):
         "import pkg.mod_a as alias\n",
         "import json, pkg.mod_a as alias, os\n",
         "from pkg.mod_a import X\n",
-        "from .mod_a import X\n",
+        "from pkg import mod_a\n",
+        "from pkg import other, mod_a as alias\n",
         "from pkg.mod_a import (\n    X,\n    Y,\n)\n",
         "def test_it():\n    import pkg.mod_a\n",
         "import json; import pkg.mod_a\n",
@@ -699,3 +700,27 @@ def test_related_tests_untracked_marker(related_tests_repo):
     repo = related_tests_repo({"src/widget.ts": "", "nested/widget.test.ts": ""})
     (repo / "nested/package.json").write_text("{}")
     assert related_tests_outside_scope(("src/",), repo) == ["nested/widget.test.ts"]
+
+
+@pytest.mark.parametrize(
+    "source,test,text,expected",
+    [
+        ("pkg/core/engine.py", "pkg/core/test_other.py", "from .engine import X\n", True),
+        ("pkg/core/engine.py", "pkg/tests/test_other.py", "from ..core import engine\n", True),
+        ("pkg/core/engine.py", "pkg/tests/test_other.py", "from .engine import X\n", False),
+        ("engine.py", "tests/test_other.py", "from ...engine import X\n", False),
+        (
+            "backend/src/orchestrator/core/engine.py",
+            "tests/test_other.py",
+            "import sqlalchemy.engine\n",
+            False,
+        ),
+        ("pkg/core/engine.py", "tests/test_other.py", "import otherpkg.core.engine\n", False),
+        ("pkg/core/__init__.py", "tests/test_other.py", "import pkg.core\n", True),
+        ("pkg/ab.py", "tests/test_other.py", "from pkg import ab\n", False),
+        ("pkg/core/engine.py", "tests/test_other.py", "from pkg.core.engine import *\n", True),
+    ],
+)
+def test_related_tests_python_paths(related_tests_repo, source, test, text, expected):
+    repo = related_tests_repo({source: "", test: text})
+    assert related_tests_outside_scope((source,), repo) == ([test] if expected else [])

@@ -503,12 +503,13 @@ def test_related_tests_unreadable(related_tests_repo, monkeypatch):
 @pytest.mark.parametrize(
     "text",
     [
-        "import { w } from '../widget';",
-        'import "@/components/widget.tsx";',
-        "require ( './widget.js' );",
-        "import(\n'../widget'\n);",
-        'jest . mock ( "./widget" );',
-        "// ignored\nimport { w } from './widget';",
+        "import { w } from '../src/widget';",
+        'import "@/src/widget.tsx";',
+        "require ( '../src/widget.js' );",
+        "import(\n'../src/widget'\n);",
+        'jest . mock ( "../src/widget" );',
+        "// ignored\nimport { w } from '../src/widget';",
+        "import type { Widget } from '../src/widget';",
     ],
 )
 def test_related_tests_js_import_forms(related_tests_repo, text):
@@ -541,7 +542,7 @@ def test_related_tests_js_comments_and_prose(related_tests_repo, text):
 
 @pytest.mark.parametrize("before_limit", [True, False])
 def test_related_tests_bounded_read(related_tests_repo, monkeypatch, before_limit):
-    statement = "import './widget';\n"
+    statement = "import '../src/widget';\n"
     text = statement + " " * (256 * 1024) if before_limit else " " * (256 * 1024) + statement
     repo = related_tests_repo({"src/widget.ts": "", "tests/other.ts": text})
     original_open = Path.open
@@ -572,7 +573,7 @@ def test_related_tests_bounded_read(related_tests_repo, monkeypatch, before_limi
 
 def test_related_tests_tolerant_decoding(related_tests_repo):
     repo = related_tests_repo({"src/widget.ts": "", "tests/other.ts": ""})
-    (repo / "tests/other.ts").write_bytes(b"// \xff\nimport './widget';")
+    (repo / "tests/other.ts").write_bytes(b"// \xff\nimport '../src/widget';")
     assert related_tests_outside_scope(("src/",), repo) == ["tests/other.ts"]
 
 
@@ -724,3 +725,68 @@ def test_related_tests_untracked_marker(related_tests_repo):
 def test_related_tests_python_paths(related_tests_repo, source, test, text, expected):
     repo = related_tests_repo({source: "", test: text})
     assert related_tests_outside_scope((source,), repo) == ([test] if expected else [])
+
+
+@pytest.mark.parametrize(
+    "source,specifier,expected",
+    [
+        ("src/widget.ts", "../src/widget", True),
+        ("src/widget.ts", "../src/widget.js", True),
+        ("src/widget.tsx", "../src/widget.js", True),
+        ("src/widget.mts", "../src/widget.mjs", True),
+        ("src/widget.cts", "../src/widget.cjs", True),
+        ("src/widget.js", "../src/widget.js", True),
+        ("src/widget.ts", "../src/other.js", False),
+        ("src/widget.js", "../src/widget.ts", False),
+        ("src/widget.ts", "./widget", False),
+        ("src/widget.ts", "../../src/widget", False),
+        ("src/widgets/index.ts", "../src/widgets", True),
+        ("src/widgets/index.ts", "@/src/widgets", True),
+        ("src/widget.ts", "@/src/widget", True),
+        ("src/widget.ts", "~/src/widget.js", True),
+        ("src/widget.ts", "@/widget", False),
+        ("src/widget.ts", "widget", False),
+        ("src/widget.ts", "@scope/widget", False),
+        ("src/widget.ts", "src/widget", False),
+        ("src/widget.ts", "#/src/widget", False),
+        ("othersrc/widget.ts", "@/src/widget", False),
+        ("src/ab.ts", "../src/ab", False),
+    ],
+)
+def test_related_tests_js_paths(related_tests_repo, source, specifier, expected):
+    test = "tests/other.ts"
+    repo = related_tests_repo({source: "", test: f"import '{specifier}';"})
+    assert related_tests_outside_scope((source,), repo) == ([test] if expected else [])
+
+
+def test_related_tests_monorepo(related_tests_repo):
+    python_source = "backend/src/orchestrator/core/engine.py"
+    ts_source = "app/lib/vault/engine.ts"
+    repo = related_tests_repo(
+        {
+            "backend/pyproject.toml": "",
+            python_source: "",
+            "app/package.json": "",
+            ts_source: "",
+            "app/lib/circle/vault/engine.ts": "",
+            "backend/tests/test_actual.py": "import src.orchestrator.core.engine\n",
+            "backend/tests/test_child.py": "from src.orchestrator.core import engine\n",
+            "backend/tests/test_database.py": "import sqlalchemy.engine\n",
+            "app/lib/vault/__tests__/engine.test.ts": "import '../engine';",
+            "app/lib/circle/vault/__tests__/engine.test.ts": "import '../engine';",
+            "app/lib/vault/__tests__/legacy.test.ts": "import type { OpenVault } from '../engine';",
+            "app/lib/circle/vault/__tests__/other.test.ts": "import '../engine';",
+            "app/__tests__/runtime.test.tsx": "jest.mock('@/lib/vault/engine', () => ({}));",
+        }
+    )
+    assert related_tests_outside_scope((python_source,), repo) == [
+        "backend/tests/test_actual.py",
+        "backend/tests/test_child.py",
+    ]
+    # The two engine-named tests share the app root: the independent name rule applies.
+    assert related_tests_outside_scope((ts_source,), repo) == [
+        "app/__tests__/runtime.test.tsx",
+        "app/lib/circle/vault/__tests__/engine.test.ts",
+        "app/lib/vault/__tests__/engine.test.ts",
+        "app/lib/vault/__tests__/legacy.test.ts",
+    ]

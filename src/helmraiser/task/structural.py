@@ -66,7 +66,9 @@ SOURCE_SUFFIXES = frozenset(
     }
 )
 
-_RELATED_SOURCE_SUFFIXES = frozenset({".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py"})
+_RELATED_SOURCE_SUFFIXES = frozenset(
+    {".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs", ".py"}
+)
 _TEST_DIRECTORIES = frozenset({"__tests__", "tests", "test", "e2e"})
 # Consume comments and strings whole: import-looking prose must not become code.
 _JS_TOKENS = re.compile(
@@ -335,10 +337,6 @@ def _package_root(path: str, roots: set[PurePosixPath]) -> PurePosixPath:
     )
 
 
-def _module_key(specifier: str) -> str:
-    return PurePosixPath(specifier.rsplit("/", 1)[-1]).stem
-
-
 def _js_import_keys(text: str) -> set[str]:
     tokens = [
         (match.lastgroup, match.group())
@@ -360,7 +358,7 @@ def _js_import_keys(text: str) -> set[str]:
             if [token[1] for token in tail[:3]] == [".", "mock", "("] and tail[3][0] == "string":
                 literal = tail[3][1]
         if literal and len(literal) >= 2 and literal[-1] == literal[0]:
-            keys.add(_module_key(literal[1:-1]))
+            keys.add(literal[1:-1])
     return keys
 
 
@@ -450,6 +448,37 @@ def _python_import_matches(source: str, test: str, module: str) -> bool:
     return _path_suffix(target, PurePosixPath(module.replace(".", "/")))
 
 
+def _js_import_matches(source: str, test: str, specifier: str) -> bool:
+    source_path = PurePosixPath(source)
+    relative = specifier.startswith(("./", "../"))
+    if relative:
+        target = _normalized_path(PurePosixPath(test).parent, specifier)
+        if target is None:
+            return False
+    elif specifier.startswith(("@/", "~/")):
+        target = PurePosixPath(specifier[2:])
+        if len(target.parts) < 2 or ".." in target.parts:
+            return False
+    else:
+        return False
+    matches = (
+        (lambda candidate: source_path == candidate)
+        if relative
+        else (lambda candidate: _path_suffix(source_path, candidate))
+    )
+    if target.suffix:
+        suffixes = {target.suffix} | {
+            ".js": {".ts", ".tsx"},
+            ".mjs": {".mts"},
+            ".cjs": {".cts"},
+        }.get(target.suffix, set())
+        return any(matches(target.with_suffix(suffix)) for suffix in suffixes)
+    return any(
+        matches(target.with_suffix(suffix)) or matches(target / ("index" + suffix))
+        for suffix in _RELATED_SOURCE_SUFFIXES - {".py"}
+    )
+
+
 def related_tests_outside_scope(paths: tuple[str, ...] | None, repo: Path) -> list[str]:
     """Sorted tracked tests directly related to declared JS/TS or Python sources."""
     if not paths:
@@ -501,7 +530,7 @@ def related_tests_outside_scope(paths: tuple[str, ...] | None, repo: Path) -> li
             or (
                 any(_python_import_matches(source, path, module) for module in imported)
                 if PurePosixPath(path).suffix == ".py"
-                else _source_key(source) in imported
+                else any(_js_import_matches(source, path, module) for module in imported)
             )
             for source in candidates
         ):

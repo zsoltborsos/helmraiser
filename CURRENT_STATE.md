@@ -14,6 +14,7 @@ Intake evidence criteria are limited to evidence artifacts, the diff and verify 
 
 Scout directives request exact `file:line` evidence entries with symbol names in `why`, self-consistent changes and checks, test-only mutation checks outside the worktree, and grouping findings that touch the same file. Intake prompts request variable-based base references, duration-appropriate timeouts, configured lint/type commands, and complete change coverage.
 
+Scout verify hints accept strings or JSON-ready structured command objects, preserving multiline commands in draft hints.
 Scout drafts declare ordered, deduplicated paths and skip overlaps with accepted candidates or pending drafts; body-path advisories exclude Evidence lists and appended project notes.
 
 Preflight hints respect each step’s actual sandbox mode: host permission failures remain ordinary failures, sandboxed permission failures retain their hints, and host loopback hints use non-sandbox wording.

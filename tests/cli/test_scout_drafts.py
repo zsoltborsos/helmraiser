@@ -438,6 +438,70 @@ class TestScoutContract:
         assert parsed.evidence == ("src/parser.py:12",)
         assert parsed.verify_hints == ("pytest tests/test_parser.py",)
 
+    def test_structured_hints(self, tmp_project):
+        command = "python - <<'PY'\n  print('guard')\n\nPY\n"
+        hint = dict(
+            command=command,
+            timeout=1500,
+            red_on_base=True,
+            red_output='GUARD MISSED: "x"',
+            purpose="Probe guard",
+        )
+        (parsed,) = parse_candidates(
+            json.dumps([candidate(verify_hints=["first", hint, "last"])]), ()
+        )
+        assert parsed.verify_hints == ("first", hint, "last")
+        text = render_draft(parsed, tmp_project, "s")
+        assert (
+            '- first\n- Probe guard (red_on_base, red_output: "GUARD MISSED: \\"x\\"", timeout: 1500 s)'
+            in text
+        )
+        block = (
+            "  ```sh\n" + "\n".join("  " + line for line in command.split("\n")) + "\n  ```\n- last"
+        )
+        assert block in text
+        from helmraiser.loop.scout import candidate_dict
+
+        assert json.loads(json.dumps(candidate_dict(parsed)))["verify_hints"] == [
+            "first",
+            hint,
+            "last",
+        ]
+
+    @pytest.mark.parametrize(
+        "hint, expected",
+        [
+            ({"run": "echo run", "unknown": 1}, {"command": "echo run"}),
+            ({"command": "echo cmd", "run": "echo run"}, {"command": "echo cmd"}),
+            (
+                {"command": " ", "run": "echo run", "purpose": "", "red_on_base": False},
+                {"command": "echo run", "purpose": "", "red_on_base": False},
+            ),
+        ],
+    )
+    def test_hint_normalization(self, tmp_project, hint, expected):
+        (parsed,) = parse_candidates(json.dumps([candidate(verify_hints=[hint])]), ())
+        assert parsed.verify_hints == (expected,)
+        assert "- Check\n\n  ```sh" in render_draft(parsed, tmp_project, "s")
+
+    @pytest.mark.parametrize(
+        "hint",
+        [
+            {},
+            {"command": " "},
+            {"command": None},
+            {"run": 1},
+            *[{"command": "true", "timeout": value} for value in [True, 0, -1, 1.5, "1", None]],
+            {"command": "true", "red_on_base": 1},
+            {"command": "true", "red_output": " "},
+            {"command": "true", "red_output": False},
+            {"command": "true", "purpose": None},
+        ],
+    )
+    def test_invalid_hints(self, hint):
+        with pytest.raises(ScoutError, match="verify_hints"):
+            parse_candidates(json.dumps([candidate(verify_hints=[hint])]), ())
+
     @pytest.mark.parametrize(
         ("payload", "message"),
         [
@@ -508,7 +572,7 @@ class TestScoutContract:
         assert spec.extra["source"] == "scout 00000000-0000-4000-8000-000000000000"
         assert "## Goal" in spec.body and "`src/parser.py:12`" in spec.body
         assert "## Change" in spec.body and "`tests/test_parser.py`" in spec.body
-        assert "## Verify hints" in spec.body and "pytest tests/test_parser.py" in spec.body
+        assert spec.body.endswith("## Verify hints\n\n- pytest tests/test_parser.py")
 
     def test_draft_paths_preserve_first_occurrence_order(self, tmp_project: Path):
         (parsed,) = parse_candidates(json.dumps([candidate(files=["z.py", "a.py", "z.py"])]), ())

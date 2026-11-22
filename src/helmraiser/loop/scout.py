@@ -14,7 +14,7 @@ import time
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
-from typing import Any, Protocol
+from typing import Any, Protocol, Required, TypedDict
 
 from helmraiser.ledger.db import TERMINAL_RUN_STATUSES, Ledger
 from helmraiser.ledger.rundir import RunDir
@@ -65,6 +65,14 @@ _EVIDENCE = re.compile(r"^(.+):([1-9][0-9]*)$")
 _STATE_NAMES = ("CURRENT_STATE.md", "TASKS.md", "STATUS.md")
 
 
+class ScoutVerifyHint(TypedDict, total=False):
+    command: Required[str]
+    timeout: int
+    red_on_base: bool
+    red_output: str
+    purpose: str
+
+
 @dataclass(frozen=True)
 class ScoutCandidate:
     id: str
@@ -73,7 +81,7 @@ class ScoutCandidate:
     evidence: tuple[str, ...]
     files: tuple[str, ...]
     change: str
-    verify_hints: tuple[str, ...]
+    verify_hints: tuple[str | ScoutVerifyHint, ...]
     size: str
     needs_owner_ruling: bool
     ruling_question: str | None
@@ -271,6 +279,62 @@ def _strings(value: Any, field: str, *, nonempty: bool) -> tuple[str, ...]:
     return tuple(item.strip() for item in value)
 
 
+def _verify_hints(value: Any) -> tuple[str | ScoutVerifyHint, ...]:
+    if not isinstance(value, list):
+        raise ScoutError("candidate verify_hints must be a list")
+    hints: list[str | ScoutVerifyHint] = []
+    for item in value:
+        if isinstance(item, str) and item.strip():
+            hints.append(item.strip())
+            continue
+        if not isinstance(item, dict):
+            raise ScoutError("candidate verify_hints must contain non-empty strings or objects")
+        for key in ("command", "run", "red_output", "purpose"):
+            if key in item and not isinstance(item[key], str):
+                raise ScoutError(f"candidate verify_hints {key} must be a string")
+        command = item.get("command", "")
+        if not command.strip():
+            command = item.get("run", "")
+        if not command.strip():
+            raise ScoutError("candidate verify_hints requires a non-empty command or run")
+        hint: ScoutVerifyHint = {"command": command}
+        if "timeout" in item:
+            if type(item["timeout"]) is not int or item["timeout"] <= 0:
+                raise ScoutError("candidate verify_hints timeout must be a positive integer")
+            hint["timeout"] = item["timeout"]
+        if "red_on_base" in item:
+            if not isinstance(item["red_on_base"], bool):
+                raise ScoutError("candidate verify_hints red_on_base must be a boolean")
+            hint["red_on_base"] = item["red_on_base"]
+        if "red_output" in item:
+            if not item["red_output"].strip():
+                raise ScoutError("candidate verify_hints red_output must be a non-empty string")
+            hint["red_output"] = item["red_output"]
+        if "purpose" in item:
+            hint["purpose"] = item["purpose"]
+        hints.append(hint)
+    return tuple(hints)
+
+
+def _render_verify_hint(hint: str | ScoutVerifyHint) -> str:
+    if isinstance(hint, str):
+        return f"- {hint}"
+    markers = []
+    if hint.get("red_on_base"):
+        markers.append("red_on_base")
+    if "red_output" in hint:
+        markers.append("red_output: " + json.dumps(hint["red_output"], ensure_ascii=False))
+    if "timeout" in hint:
+        markers.append(f"timeout: {hint['timeout']} s")
+    label = hint.get("purpose", "").strip() or "Check"
+    if markers:
+        label += " (" + ", ".join(markers) + ")"
+    command = "\n".join("  " + line for line in hint["command"].split("\n"))
+    # A longer fence also preserves commands containing Markdown fences.
+    fence = "`" * max(3, max((len(m[0]) + 1 for m in re.finditer(r"`+", command)), default=3))
+    return f"- {label}\n\n  {fence}sh\n{command}\n  {fence}"
+
+
 def parse_candidates(text: str, exclusions: tuple[str, ...]) -> list[ScoutCandidate]:
     try:
         payload = json.loads(text.strip())
@@ -309,7 +373,7 @@ def parse_candidates(text: str, exclusions: tuple[str, ...]) -> list[ScoutCandid
         for path in files:
             if not _safe_relative_path(path, exclusions):
                 raise ScoutError(f"candidate {candidate_id} has invalid file path: {path}")
-        verify_hints = _strings(raw["verify_hints"], "verify_hints", nonempty=False)
+        verify_hints = _verify_hints(raw["verify_hints"])
         if raw["size"] not in ("S", "M", "L"):
             raise ScoutError(f"candidate {candidate_id} size must be S, M, or L")
         needs_ruling = raw["needs_owner_ruling"]
@@ -372,7 +436,7 @@ def render_draft(
         + "\n\nFiles:\n"
         + "\n".join(f"- `{item}`" for item in candidate.files)
         + "\n\n## Verify hints\n\n"
-        + "\n".join(f"- {item}" for item in hints)
+        + "\n".join(_render_verify_hint(item) for item in hints)
         + "\n"
     )
     body = append_project_notes(body, project_notes)

@@ -25,7 +25,7 @@ from helmraiser.task.model import PRIORITY_RANK, TaskSpec
 
 # Bump on schema changes or data migrations: a ledger whose ``user_version``
 # matches is opened read-only and never migrated.
-SCHEMA_VERSION = 10
+SCHEMA_VERSION = 11
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS tasks (
@@ -121,6 +121,7 @@ CREATE TABLE IF NOT EXISTS scout_drafts (
   intake_status TEXT NOT NULL,
   intake_error TEXT,
   intake_notes TEXT NOT NULL DEFAULT '[]',
+  acceptance_scope_sha256 TEXT,
   proposal TEXT,
   preflight TEXT
 );
@@ -139,7 +140,10 @@ _ADDED_SCOUT_COLUMNS = {
     "error": "TEXT",
 }
 
-_ADDED_SCOUT_DRAFT_COLUMNS = {"intake_notes": "TEXT NOT NULL DEFAULT '[]'"}
+_ADDED_SCOUT_DRAFT_COLUMNS = {
+    "intake_notes": "TEXT NOT NULL DEFAULT '[]'",
+    "acceptance_scope_sha256": "TEXT",
+}
 
 TERMINAL_RUN_STATUSES = frozenset({"landed", "failed", "aborted"})
 PARKED_RUN_STATUSES = frozenset({"awaiting_approval"})
@@ -868,12 +872,60 @@ class Ledger:
         sql += " ORDER BY started_at DESC"
         return [self._decode_scout(row) for row in self._get_conn().execute(sql, params).fetchall()]
 
-    def create_scout_draft(self, task_id: str, scout_id: str, candidate: dict[str, Any]) -> None:
+    def stats_iterations(self, project: str | None = None) -> list[dict[str, Any]]:
+        return self._stats_rows(
+            "SELECT i.run_id, COUNT(*) AS count, SUM(i.cost_usd) AS cost "
+            "FROM iterations i JOIN runs r ON r.run_id = i.run_id WHERE 1=1",
+            project,
+            " GROUP BY i.run_id",
+        )
+
+    def _stats_rows(self, sql: str, project: str | None, suffix: str = "") -> list[dict[str, Any]]:
+        params = () if project is None else (project,)
+        if project is not None:
+            sql += " AND r.project = ?"
+        return [dict(row) for row in self._get_conn().execute(sql + suffix, params)]
+
+    def stats_history(self, project: str | None = None) -> dict[str, list[dict[str, Any]]]:
+        approvals = self._stats_rows(
+            "SELECT a.* FROM approvals a JOIN runs r ON r.run_id=a.run_id WHERE 1=1", project
+        )
+        events = self._stats_rows(
+            "SELECT e.* FROM run_events e JOIN runs r ON r.run_id=e.run_id "
+            "WHERE e.type IN ('run_end', 'scope_requested')",
+            project,
+        )
+        for event in events:
+            event["payload"] = json.loads(event["payload"])
+        return {"approvals": approvals, "events": events}
+
+    def stats_drafts(self, project: str | None = None) -> list[dict[str, Any]]:
+        return self._stats_rows(
+            "SELECT d.*, r.snapshot, r.status, r.queued_at FROM scout_drafts d "
+            "JOIN tasks r ON r.task_id=d.task_id WHERE 1=1",
+            project,
+        )
+
+    def set_scout_draft_hash(self, task_id: str, value: str) -> None:
+        with self._write() as conn:
+            conn.execute(
+                "UPDATE scout_drafts SET acceptance_scope_sha256=? WHERE task_id=?",
+                (value, task_id),
+            )
+
+    def create_scout_draft(
+        self,
+        task_id: str,
+        scout_id: str,
+        candidate: dict[str, Any],
+        *,
+        acceptance_scope_sha256: str | None = None,
+    ) -> None:
         with self._write() as conn:
             conn.execute(
                 "INSERT INTO scout_drafts "
-                "(task_id, scout_id, candidate, intake_status) VALUES (?, ?, ?, 'pending')",
-                (task_id, scout_id, json.dumps(candidate)),
+                "(task_id, scout_id, candidate, intake_status, acceptance_scope_sha256) VALUES (?, ?, ?, 'pending', ?)",
+                (task_id, scout_id, json.dumps(candidate), acceptance_scope_sha256),
             )
 
     def set_scout_draft_intake(

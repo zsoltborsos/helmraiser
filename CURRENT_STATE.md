@@ -1,5 +1,7 @@
 # Helmraiser — Current State
 
+Related-test detection requires the same language and restricts name matching to the nearest tracked package root.
+
 Sandbox placeholder cleanup removes untracked empty root mount points after sandboxed steps (including timeouts) and before automatic commits, preserving tracked and non-empty paths; shell and runner events retain successful removals even when later cleanup fails.
 
 Intake's full-suite placement rule explicitly defers to project notes and otherwise requests one evidence run, not separate base and change runs.

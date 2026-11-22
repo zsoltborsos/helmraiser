@@ -326,6 +326,15 @@ def _test_name_key(path: str) -> str:
     return stem.removeprefix("test_").removesuffix("_test")
 
 
+_PACKAGE_MARKERS = {"pyproject.toml", "setup.py", "setup.cfg", "package.json"}
+
+
+def _package_root(path: str, roots: set[PurePosixPath]) -> PurePosixPath:
+    return next(
+        (parent for parent in PurePosixPath(path).parents if parent in roots), PurePosixPath(".")
+    )
+
+
 def _module_key(specifier: str) -> str:
     return PurePosixPath(specifier.rsplit("/", 1)[-1]).stem
 
@@ -424,8 +433,11 @@ def related_tests_outside_scope(paths: tuple[str, ...] | None, repo: Path) -> li
     ]
     if len(sources) > 200:
         return []
-    keys = {key for path in sources if len(key := _source_key(path)) >= 3}
-    if not keys:
+    sources = [path for path in sources if len(_source_key(path)) >= 3]
+    roots = {
+        PurePosixPath(path).parent for path in files if PurePosixPath(path).name in _PACKAGE_MARKERS
+    }
+    if not sources:
         return []
     related = []
     for path in files:
@@ -445,7 +457,19 @@ def related_tests_outside_scope(paths: tuple[str, ...] | None, repo: Path) -> li
             if PurePosixPath(path).suffix == ".py"
             else _js_import_keys(text)
         )
-        if _test_name_key(path) in keys or keys.intersection(imported):
+        candidates = [
+            source
+            for source in sources
+            if (PurePosixPath(source).suffix == ".py") == (PurePosixPath(path).suffix == ".py")
+        ]
+        if any(
+            (
+                _test_name_key(path) == _source_key(source)
+                and _package_root(path, roots) == _package_root(source, roots)
+            )
+            or _source_key(source) in imported
+            for source in candidates
+        ):
             related.append(path)
     return sorted(related)
 

@@ -384,8 +384,9 @@ def test_related_tests_index_and_init_keys(related_tests_repo):
 
 @pytest.mark.parametrize("suffix", [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py"])
 def test_related_tests_source_suffixes(related_tests_repo, suffix):
-    repo = related_tests_repo({f"src/widget{suffix}": "", "widget.test.ts": ""})
-    assert related_tests_outside_scope(("src/",), repo) == ["widget.test.ts"]
+    test = "test_widget.py" if suffix == ".py" else "widget.test.ts"
+    repo = related_tests_repo({f"src/widget{suffix}": "", test: ""})
+    assert related_tests_outside_scope(("src/",), repo) == [test]
 
 
 @pytest.mark.parametrize(
@@ -663,3 +664,38 @@ def test_related_tests_python_init_import(related_tests_repo):
         }
     )
     assert related_tests_outside_scope(("pkg/",), repo) == ["tests/test_other.py"]
+
+
+@pytest.mark.parametrize("marker", ["pyproject.toml", "setup.py", "setup.cfg", "package.json"])
+def test_related_tests_package_roots(related_tests_repo, marker):
+    repo = related_tests_repo(
+        {
+            f"one/{marker}": "",
+            "one/src/widget.ts": "",
+            "one/tests/widget.test.ts": "",
+            "two/package.json": "",
+            "two/tests/widget.test.ts": "",
+            "one/nested/package.json": "",
+            "one/nested/widget.test.ts": "",
+            "one/tests/test_widget.py": "",
+        }
+    )
+    assert related_tests_outside_scope(("one/src/",), repo) == ["one/tests/widget.test.ts"]
+
+
+def test_related_tests_language_filter(related_tests_repo):
+    repo = related_tests_repo(
+        {
+            "src/widget.py": "",
+            "widget.test.ts": "import 'widget';",
+            "src/gadget.ts": "",
+            "test_gadget.py": "import gadget\n",
+        }
+    )
+    assert related_tests_outside_scope(("src/",), repo) == []
+
+
+def test_related_tests_untracked_marker(related_tests_repo):
+    repo = related_tests_repo({"src/widget.ts": "", "nested/widget.test.ts": ""})
+    (repo / "nested/package.json").write_text("{}")
+    assert related_tests_outside_scope(("src/",), repo) == ["nested/widget.test.ts"]

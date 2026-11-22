@@ -19,7 +19,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from helmraiser.isolation.placeholders import remove_placeholders
 from helmraiser.isolation.retry import SandboxLaunch
+from helmraiser.ledger.event_logger import EventLogger
 
 # Turns the bash argv into the sandboxed argv (``srt --settings <file> -- ...``).
 Wrap = Callable[[list[str]], list[str]]
@@ -125,4 +127,15 @@ def _run(
         finally:
             if isinstance(launch, SandboxLaunch):
                 launch.cleanup()
+                try:
+                    names = remove_placeholders(cwd)
+                    if names:
+                        EventLogger(launch.settings_path.parent).log(
+                            "sandbox_placeholders_removed",
+                            kind=launch.kind,
+                            cwd=str(cwd),
+                            names=names,
+                        )
+                except (OSError, subprocess.SubprocessError):
+                    pass  # Cleanup must not replace the command's result.
     raise AssertionError("sandbox launch attempts exhausted")

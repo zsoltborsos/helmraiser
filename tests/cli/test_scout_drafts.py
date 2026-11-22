@@ -441,13 +441,13 @@ class TestScoutContract:
 
     def test_structured_hints(self, tmp_project):
         command = "python - <<'PY'\n  print('guard')\n\nPY\n"
-        hint = dict(
-            command=command,
-            timeout=1500,
-            red_on_base=True,
-            red_output='GUARD MISSED: "x"',
-            purpose="Probe guard",
-        )
+        hint = {
+            "command": command,
+            "timeout": 1500,
+            "red_on_base": True,
+            "red_output": 'GUARD MISSED: "x"',
+            "purpose": "Probe guard",
+        }
         (parsed,) = parse_candidates(
             json.dumps([candidate(verify_hints=["first", hint, "last"])]), ()
         )

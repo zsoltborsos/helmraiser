@@ -26,7 +26,7 @@ from helmraiser.loop.scout import (
 )
 from helmraiser.pi.directives import render_scout_directives
 from helmraiser.task.loader import parse_task
-from helmraiser.task.model import project_slug
+from helmraiser.task.model import VerifyStep, project_slug
 from helmraiser.task.project import load_project_defaults
 from helmraiser.utils.markdown import parse_frontmatter, serialize_frontmatter
 from tests.conftest import FakeLb, FakePi
@@ -1091,6 +1091,74 @@ class TestScoutCommand:
         else:
             assert seen == ["first", "second", "later"]
             assert first["preflight"]["summary"] == "green"
+
+    def test_scout_preflights_verify_then_evidence(
+        self, tmp_project, tmp_path, fake_pi, scout_srt_log, cli_config, monkeypatch
+    ):
+        proposal = intake_proposal(name="verify", timeout=11).replace(
+            "evidence: []",
+            """evidence:
+  - name: evidence-green
+    run: echo evidence
+    timeout: 23
+    artifacts: [result.txt]
+    criteria: Results recorded
+  - name: evidence-red
+    run: echo red
+    timeout: 37
+    red_on_base: true
+    artifacts: [red.txt]
+    criteria: Regression reproduced""",
+        )
+        fake_pi.write_script(
+            {
+                "sessions": {
+                    "*-scout": {"text": json.dumps([candidate(files=["README.md"])])},
+                    "*-intake": {"text": proposal},
+                }
+            }
+        )
+        seen = []
+
+        def preflight(repo, steps, **kwargs):
+            seen.append(steps)
+            return {
+                "commands": [
+                    {
+                        "name": step.name,
+                        "exit_code": 1 if step.red_on_base else 0,
+                        "seconds": 0.1,
+                        "output": "diagnostic",
+                        "tail": "diagnostic",
+                        "hints": [],
+                        "red_on_base": step.red_on_base,
+                    }
+                    for step in steps
+                ],
+                "error": None,
+            }
+
+        monkeypatch.setattr("helmraiser.loop.scout.run_preflight_steps", preflight)
+        data_dir = tmp_path / "data"
+        result = run_scout(tmp_project, data_dir, "--force", "--max", "1")
+        assert result.exit_code == 0, result.output
+        assert len(seen) == 1
+        assert all(isinstance(step, VerifyStep) for step in seen[0])
+        assert [(s.name, s.run, s.timeout, s.sandbox, s.red_on_base) for s in seen[0]] == [
+            ("verify", "pytest tests/new_test.py", 11, None, False),
+            ("evidence-green", "echo evidence", 23, None, False),
+            ("evidence-red", "echo red", 37, None, True),
+        ]
+        assert len([c for c in fake_pi.calls() if c["session_id"].endswith("-intake")]) == 1
+        out = json.loads(result.output)
+        draft = Ledger(data_dir / "helmraiser.db").get_scout_draft(out["written_task_ids"][0])
+        assert [(s["name"], s["class"]) for s in draft["preflight"]["steps"]] == [
+            ("verify", "green"),
+            ("evidence-green", "green"),
+            ("evidence-red", "expected red"),
+        ]
+        assert draft["preflight"]["summary"] == "expected red"
+        assert not any("re-proposed" in note for note in draft["intake_notes"])
 
     def test_scout_preflights_drafts_serially_with_step_timeouts(
         self,

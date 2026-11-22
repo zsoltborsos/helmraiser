@@ -354,7 +354,8 @@ first conflict is chosen by pending task ID, then same-run acceptance order.
 
 Each generated draft then receives the same acceptance proposal as `intake --propose`
 and remains `status: draft` without an approval stamp or queueing. Helmraiser preflights
-its proposed verify steps serially, using project setup and services, the verify sandbox
+its proposed verify steps first, followed by evidence steps, serially in one preflight
+on unchanged committed code, using project setup and services, the verify sandbox
 settings, a throwaway worktree, and each step's own timeout. Results are classified as
 `green`, `expected red` (a missing path the task says it creates, or an explicitly
 `red_on_base: true` step that fails without a sandbox hint), `sandbox`, or `fail`.

@@ -39,7 +39,7 @@ from helmraiser.project_notes import (
     read_project_notes,
 )
 from helmraiser.task.loader import TaskLoadError, origin_from_text, parse_task, write_task
-from helmraiser.task.model import ID_PATTERN, ModelSpec, TaskSpec
+from helmraiser.task.model import ID_PATTERN, ModelSpec, TaskSpec, VerifyStep
 from helmraiser.task.paths import matches_paths, parse_paths
 from helmraiser.task.project import load_project_defaults, worktree_manager
 from helmraiser.task.schema import validate_task
@@ -895,10 +895,19 @@ def execute_scout(
                     error=None,
                     notes=intake_notes,
                 )
+                steps = [
+                    *intake_outcome.spec.verify,
+                    *(
+                        VerifyStep(
+                            step.name, step.run, step.timeout, step.sandbox, step.red_on_base
+                        )
+                        for step in intake_outcome.spec.evidence
+                    ),
+                ]
                 try:
                     preflight_payload = run_preflight_steps(
                         repo,
-                        list(intake_outcome.spec.verify),
+                        steps,
                         config=config,
                         data_dir=data_dir,
                     )
@@ -908,9 +917,7 @@ def execute_scout(
                 ledger.set_scout_draft_preflight(spec.task_id, preflight)
                 failed = [
                     (step, check)
-                    for step, check in zip(
-                        preflight["steps"], intake_outcome.spec.verify, strict=False
-                    )
+                    for step, check in zip(preflight["steps"], steps, strict=False)
                     if step["class"] in {"fail", "sandbox"}
                 ]
                 if attempt or not failed:

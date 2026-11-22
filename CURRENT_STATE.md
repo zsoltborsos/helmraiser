@@ -12,7 +12,7 @@ Preflight hints respect each step’s actual sandbox mode: host permission failu
 
 Implement directives tell agents to commit and stop without `BLOCKED:` when verify commands fail only because of their own shell’s environment limits; Helmraiser runs verify afterward.
 
-Scout draft preparation re-proposes once on fail/sandbox checks using real diagnostics, retains the final proposal/preflight and a note naming first-attempt failures; standalone intake does not retry.
+Scout draft preparation preflights verify then evidence and re-proposes once on fail/sandbox checks using real diagnostics, retains the final proposal/preflight and a note naming first-attempt failures; standalone intake does not retry.
 
 Intake prompts tell the model that project notes override general verify/evidence placement, budget and timeout guidance.
 

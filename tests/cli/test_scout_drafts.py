@@ -1092,6 +1092,158 @@ class TestScoutCommand:
             assert seen == ["first", "second", "later"]
             assert first["preflight"]["summary"] == "green"
 
+    @pytest.mark.parametrize(
+        "evidence_class,second_fails,verify_fails",
+        [
+            ("fail", False, False),
+            ("fail", True, False),
+            ("sandbox", False, False),
+            ("sandbox", True, False),
+            ("sandbox", True, True),
+            ("green", False, False),
+            ("expected red", False, False),
+        ],
+    )
+    def test_scout_evidence_retry_feedback_and_reporting(
+        self,
+        tmp_project,
+        tmp_path,
+        fake_pi,
+        scout_srt_log,
+        cli_config,
+        monkeypatch,
+        evidence_class,
+        second_fails,
+        verify_fails,
+    ):
+        from helmraiser.loop import intake as intake_logic
+
+        feedbacks = []
+        build_prompt = intake_logic.build_intake_prompt
+
+        def capture(spec, config, feedback=None):
+            feedbacks.append(feedback)
+            return build_prompt(spec, config, feedback)
+
+        monkeypatch.setattr(intake_logic, "build_intake_prompt", capture)
+        retry = evidence_class in {"fail", "sandbox"}
+
+        def proposal(name):
+            return (
+                intake_proposal(name="verify")
+                .replace("pytest tests/new_test.py", "echo verify")
+                .replace(
+                    "evidence: []",
+                    f"""evidence:
+  - name: {name}
+    run: echo {name}
+    timeout: 29
+    red_on_base: {str(evidence_class == 'expected red').lower()}
+    artifacts: [result.txt]
+    criteria: Results recorded""",
+                )
+            )
+
+        fake_pi.write_script(
+            {
+                "sessions": {
+                    "*-scout": {"text": json.dumps([candidate(files=["README.md"])])},
+                    "*-intake": [
+                        {"text": proposal("browser-original")},
+                        {"text": proposal("browser-replacement")},
+                    ],
+                }
+            }
+        )
+        seen = []
+
+        def preflight(repo, steps, **kwargs):
+            seen.append(steps)
+            commands = []
+            for index, step in enumerate(steps):
+                failed = (
+                    verify_fails
+                    if index == 0
+                    else (evidence_class != "green" and (len(seen) == 1 or second_fails))
+                )
+                commands.append(
+                    {
+                        "name": step.name,
+                        "exit_code": 1 if failed else 0,
+                        "seconds": 0.1,
+                        "output": f"diagnostic-{step.name}",
+                        "tail": f"diagnostic-{step.name}",
+                        "hints": (
+                            ["sandbox hint"]
+                            if index == 1 and failed and evidence_class == "sandbox"
+                            else []
+                        ),
+                        "red_on_base": step.red_on_base,
+                    }
+                )
+            return {"commands": commands, "error": None}
+
+        monkeypatch.setattr("helmraiser.loop.scout.run_preflight_steps", preflight)
+        data_dir = tmp_path / "data"
+        result = run_scout(tmp_project, data_dir, "--force", "--max", "1")
+        assert result.exit_code == 0, result.output
+        count = 2 if retry else 1
+        assert len(seen) == len(feedbacks) == count
+        assert len([c for c in fake_pi.calls() if c["session_id"].endswith("-intake")]) == count
+        assert [[step.name for step in steps] for steps in seen] == [
+            ["verify", "browser-original"],
+            *([["verify", "browser-replacement"]] if retry else []),
+        ]
+        assert feedbacks[0] is None
+        note = "re-proposed after a failed acceptance check: " + (
+            "verify, browser-original" if verify_fails else "browser-original"
+        )
+        if retry:
+            feedback = feedbacks[1]
+            assert "Step: browser-original" in feedback
+            assert "Command: echo browser-original" in feedback
+            assert "diagnostic-browser-original" in feedback
+            if verify_fails:
+                assert feedback.index("Step: verify") < feedback.index("Step: browser-original")
+                assert "Command: echo verify" in feedback
+            else:
+                assert "Step: verify" not in feedback
+                assert "echo verify" not in feedback
+        out = json.loads(result.output)
+        ledger = Ledger(data_dir / "helmraiser.db")
+        task_id = out["written_task_ids"][0]
+        draft = ledger.get_scout_draft(task_id)
+        name = "browser-replacement" if retry else "browser-original"
+        final_class = evidence_class if not retry or second_fails else "green"
+        summary = (
+            "fail(1)"
+            if verify_fails
+            else (f"{final_class}(1)" if final_class in {"fail", "sandbox"} else final_class)
+        )
+        assert draft["preflight"]["summary"] == summary
+        classes = [("verify", "fail" if verify_fails else "green"), (name, final_class)]
+        assert [(s["name"], s["class"]) for s in draft["preflight"]["steps"]] == classes
+        text = Path(out["written_paths"][0]).read_text()
+        fm = parse_frontmatter(text)["frontmatter"]
+        assert fm["evidence"][0]["name"] == name
+        assert fm["evidence"][0]["run"] == f"echo {name}"
+        assert draft["proposal"]["evidence"][0]["name"] == name
+        assert ledger.get_task(task_id)["snapshot"] == text
+        assert (note in draft["intake_notes"]) == retry
+        assert any("re-proposed" in n for n in draft["intake_notes"]) == retry
+        report = Path(out["report_path"]).read_text()
+        assert (note in report) == retry
+        for step_name, step_class in classes:
+            assert step_name in report and step_class in report
+        listing = runner.invoke(
+            app, ["drafts", "list", "--all", "--json", "--data-dir", str(data_dir)]
+        )
+        assert listing.exit_code == 0, listing.output
+        row = json.loads(listing.output)[0]
+        assert [(s["name"], s["class"]) for s in row["preflight"]["steps"]] == classes
+        assert row["preflight"]["summary"] == summary
+        assert (note in row["intake_notes"]) == retry
+
     def test_scout_preflights_verify_then_evidence(
         self, tmp_project, tmp_path, fake_pi, scout_srt_log, cli_config, monkeypatch
     ):

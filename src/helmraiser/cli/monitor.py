@@ -19,7 +19,7 @@ import typer
 from rich.markup import escape
 from rich.table import Table
 
-from helmraiser import logbook
+from helmraiser import leeboard
 from helmraiser.cli.commands import (
     EXIT_ERROR,
     EXIT_VALIDATION,
@@ -221,11 +221,11 @@ def doctor(
 
     stripped = stripped_names()
     stripped_paths = stripped_path_entries()
-    lb = logbook.find_lb()
-    logbook_home = logbook.logbook_home()
-    logbook_exists = logbook_home.exists()
+    lb = leeboard.find_lb()
+    leeboard_home = leeboard.leeboard_home()
+    leeboard_exists = leeboard_home.exists()
     payload = {
-        "logbook": {"lb": lb, "home": str(logbook_home), "exists": logbook_exists},
+        "leeboard": {"lb": lb, "home": str(leeboard_home), "exists": leeboard_exists},
         "pi": {
             "version": installed_version,
             "auth": auth,
@@ -289,11 +289,11 @@ def doctor(
             )
 
         table.add_row(
-            "logbook",
+            "leeboard",
             "[cyan]info[/cyan]",
             escape(
-                f"{lb or 'not installed (optional)'}; store {logbook_home} "
-                f"({'exists' if logbook_exists else 'missing'})"
+                f"{lb or 'not installed (optional)'}; store {leeboard_home} "
+                f"({'exists' if leeboard_exists else 'missing'})"
             ),
         )
         add_row("pi version", installed_version is not None, installed_version)

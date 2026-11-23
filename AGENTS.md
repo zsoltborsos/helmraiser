@@ -17,7 +17,7 @@ Update them in the commit that lands a slice.
 | `cli/commands.py` | `add`, `intake`, `queue`, `work`, `approve`, `reject`, `retry`, `record-landed`, `rework`; shared merge approval |
 | `cli/monitor.py` | `doctor`, `status`, `wait`, `report`, `log`, `show`, `attach` |
 | `cli/clean_commands.py` | Manual `clean` command: dry-run, project filtering and JSON results |
-| `cli/land_commands.py`, `loop/landing.py` | `land`: Logbook holds, shared PR approval, CI, non-force base push, best-effort local fast-forward and merge confirmation |
+| `cli/land_commands.py`, `loop/landing.py` | `land`: Leeboard holds, shared PR approval, CI, non-force base push, best-effort local fast-forward and merge confirmation |
 | `cli/compare_commands.py` | Blind comparison CLI and one-shot judge session |
 | `cli/scout_commands.py`, `loop/scout.py` | `scout` (one read-only scout session that writes drafts) and `drafts list\|request` |
 | `cli/caps_commands.py`, `loop/spend.py`, `loop/live_usage.py`, `loop/routing.py` | `caps on\|off\|reset`; ledger-derived subscription usage, live Omarchy / OpenCode Go readings, headroom and model routing |
@@ -25,7 +25,7 @@ Update them in the commit that lands a slice.
 | `cli/worker_commands.py`, `cli/supervisor.py` | `worker start\|stop\|status`; the long-running `work` loop (`--watch`, `--max-parallel`): one `work --once` child process per run, up to `max_parallel_runs` globally and `max_runs_per_project` per project (default 1; siblings require disjoint declared paths) |
 | `config.py` | `~/.helmraiser/config.json`: defaults, subscription templates, load and save |
 | `project_notes.py` | Owner-maintained project notes: loading and rendering |
-| `logbook.py` | Read-only Logbook CLI hold checks and per-scheduling-pass caching |
+| `leeboard.py` | Read-only Leeboard CLI hold checks and per-scheduling-pass caching |
 | `code_snapshot.py` | The background worker's snapshots of committed code (`<data_dir>/code/<commit>`): export, `PYTHONPATH` and markers, the import check, re-exec, pruning |
 | `cli/preflight_commands.py`, `loop/preflight.py` | `preflight`: commands in a throwaway worktree of the primary checkout's HEAD (a linked worktree is refused) under the verify sandbox settings, with sandbox hints |
 | `task/` | Task file model, loader/writer, validity rules, `project.toml` defaults, the intake structure-check heuristic (`structural.py`) |

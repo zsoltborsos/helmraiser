@@ -2,7 +2,7 @@
 
 `helmraiser stats --json` provides read-only window/project outcome, quality, failure, cost, latency, scout-funnel and weekly aggregates, with scout acceptance/scope fingerprints and cooldown scheduling errors isolated per project.
 
-Reports fetch run-authored Logbook entries with one bulk CLI listing per nonempty report and parse task bases once per reported task.
+Reports fetch run-authored Leeboard entries with one bulk CLI listing per nonempty report and parse task bases once per reported task.
 
 Related-test detection requires the same language, restricts name matching to the nearest tracked package root, and matches full Python module paths or resolved JS/TS imports (including dotted stems, directory indexes, and ESM TypeScript extension substitution).
 
@@ -66,7 +66,8 @@ A fresh install has no models and refuses model work until the required roles ar
 Intake adds an advisory note (`notes` in `--json`) when `budget.max_cost_usd` is at least $20, suggesting smaller tasks linked with `depends_on`.
 New `intake --yes` queueing adds detected related tests to `paths:` (all up to 20, none above); check-only previews them, and recorded additions are marked as permitted test scope.
 
-Without `lb` on PATH, Logbook is treated as not in use: runs and landing proceed silently, directives and reports omit its context, and doctor labels it optional.
+Without `lb` on PATH, Leeboard is treated as not in use: runs and landing proceed silently, directives and reports omit its context, and doctor labels it optional.
+Leeboard replaced Logbook on 2026-11-23 with no fallback: host `lb` calls and setup/verify/evidence drop every `LOGBOOK_*` name, because `lb` refuses to run while one is set.
 
 ## Public-release documentation
 

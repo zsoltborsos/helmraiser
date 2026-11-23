@@ -1,4 +1,4 @@
-"""Logbook hold checks, bounded implementation briefs and run-authored entries."""
+"""Leeboard hold checks, bounded implementation briefs and run-authored entries."""
 
 from __future__ import annotations
 
@@ -17,6 +17,7 @@ CHECK_TIMEOUT_S = 5.0
 BRIEF_TIMEOUT_S = 15.0
 BRIEF_MAX_CHARS = 8000
 LIST_TIMEOUT_S = 10.0
+RETIRED_ENV_PREFIX = "LOGBOOK_"
 
 
 def find_lb() -> str | None:
@@ -34,15 +35,22 @@ def lb_install_root() -> Path | None:
     return None
 
 
-def logbook_home(env: Mapping[str, str] | None = None) -> Path:
+def leeboard_home(env: Mapping[str, str] | None = None) -> Path:
     environment = os.environ if env is None else env
-    return Path(environment.get("LOGBOOK_HOME") or "~/.logbook").expanduser().absolute()
+    return Path(environment.get("LEEBOARD_HOME") or "~/.leeboard").expanduser().absolute()
 
 
-def logbook_identity(run_id: str | None) -> dict[str, str]:
-    identity = {"LOGBOOK_HARNESS": HARNESS}
+def lb_environment(identity: Mapping[str, str]) -> dict[str, str]:
+    """The host environment for an lb call: ``os.environ`` without the retired
+    ``LOGBOOK_*`` names (lb refuses to run while one is set), plus ``identity``."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith(RETIRED_ENV_PREFIX)}
+    return {**env, **identity}
+
+
+def leeboard_identity(run_id: str | None) -> dict[str, str]:
+    identity = {"LEEBOARD_HARNESS": HARNESS}
     if run_id is not None:
-        identity["LOGBOOK_SESSION"] = run_id
+        identity["LEEBOARD_SESSION"] = run_id
     return identity
 
 
@@ -66,8 +74,8 @@ def run_entries(run_ids: Iterable[str]) -> dict[str, list[RunEntry]]:
         return entries
     if binary is None:
         return entries
-    env = {**os.environ, **logbook_identity(None)}
-    env.pop("LOGBOOK_SESSION", None)
+    env = lb_environment(leeboard_identity(None))
+    env.pop("LEEBOARD_SESSION", None)
     try:
         result = subprocess.run(
             [binary, "list", "--harness", HARNESS, "--json"],
@@ -123,14 +131,14 @@ class BriefResult:
 
 
 def fetch_brief(cwd: Path, run_id: str) -> BriefResult:
-    """Fetch once on the host; unavailable Logbook context never blocks a run."""
+    """Fetch once on the host; unavailable Leeboard context never blocks a run."""
     try:
         binary = find_lb()
         if binary is None:
             return BriefResult(None, None)
         result = subprocess.run(
             [binary, "brief", "--cwd", str(cwd)],
-            env={**os.environ, **logbook_identity(run_id)},
+            env=lb_environment(leeboard_identity(run_id)),
             stdin=subprocess.DEVNULL,
             capture_output=True,
             encoding="utf-8",
@@ -173,7 +181,7 @@ class HoldCheck:
                 reason += f" (release: {hold['release']})"
             reasons.append(reason)
         reason = "; ".join(reasons) or _first_line(self.text) or "lb check blocked (exit 3)"
-        return _cap("logbook hold: " + reason)
+        return _cap("leeboard hold: " + reason)
 
     def full_text(self) -> str:
         """Uncapped hold diagnostics for an interactive owner action."""
@@ -185,13 +193,13 @@ class HoldCheck:
             if hold.get("until"):
                 reason += f" (until: {hold['until']})"
             reasons.append(reason)
-        return "logbook hold: " + (
+        return "leeboard hold: " + (
             "; ".join(reasons) or self.text.strip() or "lb check blocked (exit 3)"
         )
 
     def skip_payload(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
-            "logbook_hold": [
+            "leeboard_hold": [
                 {key: hold[key] for key in ("id", "title", "release", "until") if hold.get(key)}
                 for hold in self.holds
             ]
@@ -211,7 +219,7 @@ def check_hold(
             return HoldCheck("clear")
         result = subprocess.run(
             [binary, "check", "--blocks", blocks, "--cwd", str(project), "--json"],
-            env={**os.environ, **(identity if identity is not None else logbook_identity(None))},
+            env=lb_environment(identity if identity is not None else leeboard_identity(None)),
             stdin=subprocess.DEVNULL,
             capture_output=True,
             encoding="utf-8",
@@ -257,7 +265,7 @@ class HoldGate:
             if result.status == "unavailable":
                 if result.detail != self._warned:
                     self.warn(
-                        f"logbook: hold check skipped ({result.detail}); "
+                        f"leeboard: hold check skipped ({result.detail}); "
                         "tasks are scheduled without it"
                     )
                     self._warned = result.detail

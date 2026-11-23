@@ -42,7 +42,7 @@ from helmraiser.isolation.setup import prepare_setup
 from helmraiser.ledger.db import Ledger
 from helmraiser.ledger.event_logger import EventLogger
 from helmraiser.ledger.rundir import RunDir
-from helmraiser.logbook import BriefResult, fetch_brief
+from helmraiser.leeboard import BriefResult, fetch_brief
 from helmraiser.loop.budget import (
     PAUSE_SECONDS,
     BudgetGuard,
@@ -381,7 +381,7 @@ class GovernedRun:
         self.snapshot = snapshot if snapshot is not None else render_task(task)
         self.routing_decisions = copy.deepcopy(routing_decisions or [])
         self.project_notes = project_notes_for_body(task.project, task.body)
-        self._logbook_brief: BriefResult | None = None
+        self._leeboard_brief: BriefResult | None = None
         self.run_id = resolve_run_id(run_id)
         pi_bin = str(config.get("pi_bin", "pi"))
         self.auth_check: AuthCheck = auth_check or (lambda model: check_auth(model, pi_bin))
@@ -1098,10 +1098,10 @@ class GovernedRun:
         self._write_directives(iteration=1, max_iterations=self.task.budget.max_iterations)
 
     def _write_directives(self, iteration: int, max_iterations: int) -> None:
-        if self._logbook_brief is None:
-            self._logbook_brief = fetch_brief(self.worktree or self.task.project, self.run_id)
+        if self._leeboard_brief is None:
+            self._leeboard_brief = fetch_brief(self.worktree or self.task.project, self.run_id)
         origin = self.task.origin
-        logbook_handoff_to = (
+        leeboard_handoff_to = (
             f"session:{origin['session']}"
             if origin is not None
             and origin["kind"] == "claude-code"
@@ -1133,8 +1133,8 @@ class GovernedRun:
                 paths=self.task.paths,
                 service_vars=tuple(key for spec in self.service_specs for key in spec.provides),
                 project_notes=self.project_notes,
-                logbook_brief=self._logbook_brief,
-                logbook_handoff_to=logbook_handoff_to,
+                leeboard_brief=self._leeboard_brief,
+                leeboard_handoff_to=leeboard_handoff_to,
             ),
             encoding="utf-8",
         )

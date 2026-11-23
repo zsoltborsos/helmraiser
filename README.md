@@ -82,7 +82,7 @@ Requirements:
 - For default isolation: `srt`, `bwrap`, `socat` and `rg` on `PATH`. Install bubblewrap,
   socat and ripgrep with your distribution's package manager.
 - Optional: authenticated `gh` for PR delivery; Docker for declared project services.
-  Neither is needed for the first task below. Omarchy and Logbook are optional.
+  Neither is needed for the first task below. Omarchy and Leeboard are optional.
 
 ```bash
 npm install -g @earendil-works/pi-coding-agent @anthropic-ai/sandbox-runtime

@@ -288,7 +288,7 @@ class FakeLb:
 
 @pytest.fixture(autouse=True)
 def fake_lb(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeLb:
-    """No test may reach the owner's Logbook executable or store."""
+    """No test may reach the owner's Leeboard executable or store."""
     bin_dir = tmp_path / "lb-bin"
     bin_dir.mkdir()
     log = tmp_path / "fake_lb.log"
@@ -301,11 +301,11 @@ def fake_lb(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeLb:
     )
     wrapper.chmod(0o755)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
-    home = tmp_path / "logbook-home"
+    home = tmp_path / "leeboard-home"
     home.mkdir()
-    monkeypatch.setenv("LOGBOOK_HOME", str(home))
-    monkeypatch.delenv("LOGBOOK_HARNESS", raising=False)
-    monkeypatch.delenv("LOGBOOK_SESSION", raising=False)
+    monkeypatch.setenv("LEEBOARD_HOME", str(home))
+    monkeypatch.delenv("LEEBOARD_HARNESS", raising=False)
+    monkeypatch.delenv("LEEBOARD_SESSION", raising=False)
     fake = FakeLb(bin=wrapper, log=log, script=script)
     fake.write_script({})
     return fake
@@ -314,7 +314,7 @@ def fake_lb(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> FakeLb:
 @pytest.fixture
 def no_lb(tmp_path, monkeypatch, fake_lb, silence_desktop_notifications):
     """Hide every lb executable without hiding other tools in shared PATH dirs."""
-    from helmraiser.logbook import find_lb
+    from helmraiser.leeboard import find_lb
 
     paths = []
     for index, entry in enumerate(os.environ["PATH"].split(os.pathsep)):

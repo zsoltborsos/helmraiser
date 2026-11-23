@@ -80,7 +80,7 @@ from helmraiser.ledger.db import (
     default_db_path,
 )
 from helmraiser.ledger.rundir import RunDir, restamp_summary
-from helmraiser.logbook import HoldGate
+from helmraiser.leeboard import HoldGate
 from helmraiser.loop import landing
 from helmraiser.loop.budget import completed_active_minutes
 from helmraiser.loop.cleanup import discard_landed_worktree
@@ -1104,7 +1104,7 @@ def _task_skip(
     *,
     holds: HoldGate | None = None,
 ) -> tuple[dict[str, Any], str] | None:
-    """Why ``work`` skips a task (invalid, quota, caps or Logbook hold).
+    """Why ``work`` skips a task (invalid, quota, caps or Leeboard hold).
 
     Return (JSON fields, human text), or None when it may run; write nothing.
     """

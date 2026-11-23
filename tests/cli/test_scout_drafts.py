@@ -14,7 +14,7 @@ from helmraiser.cli import app, scout_commands
 from helmraiser.ledger.db import Ledger
 from helmraiser.loop.scout import (
     ScoutError,
-    _logbook_brief,
+    _leeboard_brief,
     _recent_log,
     _state_documents,
     build_scout_prompt,
@@ -209,7 +209,7 @@ class TestScoutInputs:
         assert "constraints on every candidate" in prompt
         assert "verify_hints" in prompt
 
-    def test_logbook_is_filtered_and_reaches_scout_prompt(
+    def test_leeboard_is_filtered_and_reaches_scout_prompt(
         self,
         tmp_project: Path,
         tmp_path: Path,
@@ -243,23 +243,23 @@ class TestScoutInputs:
                 }
             }
         )
-        monkeypatch.setenv("LOGBOOK_HARNESS", "pi")
-        monkeypatch.setenv("LOGBOOK_SESSION", "parent-session")
+        monkeypatch.setenv("LEEBOARD_HARNESS", "pi")
+        monkeypatch.setenv("LEEBOARD_SESSION", "parent-session")
         ledger = Ledger(tmp_path / "ledger.db")
         inputs = collect_scout_inputs(tmp_project, ledger, ())
-        assert inputs["logbook"] == {
+        assert inputs["leeboard"] == {
             "holds": ["No cloud", "Wait for owner"],
             "grants": ["Owner merges"],
             "rules": ["Use pipefail"],
         }
         prompt = build_scout_prompt(inputs, 3)
         prompt_inputs = json.loads(prompt.split("Scout inputs:\n", 1)[1])
-        assert prompt_inputs["logbook"] == inputs["logbook"]
+        assert prompt_inputs["leeboard"] == inputs["leeboard"]
         assert "secret" not in prompt and "hidden" not in prompt
         (call,) = fake_lb.calls()
         assert call["argv"] == ["brief", "--cwd", str(tmp_project), "--json"]
-        assert call["env"]["LOGBOOK_HARNESS"] == "helmraiser"
-        assert call["env"]["LOGBOOK_SESSION"] is None
+        assert call["env"]["LEEBOARD_HARNESS"] == "helmraiser"
+        assert call["env"]["LEEBOARD_SESSION"] is None
 
     @pytest.mark.parametrize(
         "response",
@@ -271,22 +271,22 @@ class TestScoutInputs:
             {"stdout": "null"},
         ],
     )
-    def test_logbook_failures_are_silent(
+    def test_leeboard_failures_are_silent(
         self, tmp_project: Path, fake_lb: FakeLb, response: dict, capsys
     ):
         fake_lb.write_script({"brief": response})
-        assert _logbook_brief(tmp_project) is None
+        assert _leeboard_brief(tmp_project) is None
         assert capsys.readouterr() == ("", "")
 
-    def test_logbook_missing_is_silent(
+    def test_leeboard_missing_is_silent(
         self, tmp_project: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
     ):
         monkeypatch.setenv("PATH", str(tmp_path))
-        assert _logbook_brief(tmp_project) is None
+        assert _leeboard_brief(tmp_project) is None
         assert capsys.readouterr() == ("", "")
 
     @pytest.mark.parametrize("timeout", [False, True])
-    def test_logbook_subprocess_errors_are_silent(
+    def test_leeboard_subprocess_errors_are_silent(
         self, tmp_project: Path, monkeypatch: pytest.MonkeyPatch, timeout: bool, capsys
     ):
         def fail(argv, **kwargs):
@@ -297,14 +297,16 @@ class TestScoutInputs:
             raise OSError("cannot start lb")
 
         monkeypatch.setattr("helmraiser.loop.scout.subprocess.run", fail)
-        assert _logbook_brief(tmp_project) is None
+        assert _leeboard_brief(tmp_project) is None
         assert capsys.readouterr() == ("", "")
 
-    def test_logbook_missing_or_malformed_lists_are_empty(self, tmp_project: Path, fake_lb: FakeLb):
+    def test_leeboard_missing_or_malformed_lists_are_empty(
+        self, tmp_project: Path, fake_lb: FakeLb
+    ):
         fake_lb.write_script(
             {"brief": {"stdout": json.dumps({"holds": {"title": "ignored"}, "rules": None})}}
         )
-        assert _logbook_brief(tmp_project) == {"holds": [], "grants": [], "rules": []}
+        assert _leeboard_brief(tmp_project) == {"holds": [], "grants": [], "rules": []}
 
 
 class TestScoutPreflightClassification:

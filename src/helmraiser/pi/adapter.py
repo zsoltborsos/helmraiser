@@ -16,7 +16,7 @@ from pathlib import Path
 
 from helmraiser.isolation.environment import session_environment
 from helmraiser.isolation.retry import SandboxLaunch
-from helmraiser.logbook import logbook_identity
+from helmraiser.leeboard import leeboard_identity
 from helmraiser.pi.events import EventCollector, classify, final_text, parse_line
 from helmraiser.pi.protocol import OnEvent, PiRequest, PiSessionResult
 from helmraiser.runner.engine import ExecutionEngine, StdinHandle
@@ -163,7 +163,7 @@ class PiJsonAdapter:
                 "HELMRAISER_RUN_ID": run_id,
                 "HELMRAISER_STAGE": req.stage,
                 "HELMRAISER_EVIDENCE_DIR": str(req.run_dir / "evidence"),
-                **logbook_identity(run_id),
+                **leeboard_identity(run_id),
                 **req.env,
             }
         )

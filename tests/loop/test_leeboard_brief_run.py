@@ -1,4 +1,4 @@
-"""Run-level Logbook delivery: lazy, cached, implementation-only, resume-safe."""
+"""Run-level Leeboard delivery: lazy, cached, implementation-only, resume-safe."""
 
 from dataclasses import replace
 
@@ -9,14 +9,14 @@ from helmraiser.task.model import TaskOrigin
 from tests.mocks.scripted_pi_adapter import PiScript, ScriptedPiAdapter
 
 REVIEW = '```json\n{"verdict": "pass", "findings": [], "evidence_checks": []}\n```'
-BRIEF = "# Logbook: project widget\n\n## Rules\n- [rule] Use local tests"
+BRIEF = "# Leeboard: project widget\n\n## Rules\n- [rule] Use local tests"
 
 
 def brief_calls(fake_lb):
     return [call for call in fake_lb.calls() if call["argv"][0] == "brief"]
 
 
-def test_logbook_lazy_project_fallback(make_task, make_run, fake_lb):
+def test_leeboard_lazy_project_fallback(make_task, make_run, fake_lb):
     task = make_task()
     fake_lb.write_script({"brief": {"stdout": BRIEF}})
     run, _ = make_run(task, ScriptedPiAdapter())
@@ -46,7 +46,7 @@ def test_logbook_lazy_project_fallback(make_task, make_run, fake_lb):
         ({"kind": "fo", "session": "abc-123"}, None),
     ],
 )
-def test_logbook_handoff_target(
+def test_leeboard_handoff_target(
     make_task, make_run, fake_lb, origin: TaskOrigin | None, expected_session: str | None
 ):
     task = replace(make_task(), origin=origin)
@@ -65,7 +65,7 @@ def test_logbook_handoff_target(
     assert len(brief_calls(fake_lb)) == 1
 
 
-async def test_logbook_fresh_run(make_task, make_run, fake_lb):
+async def test_leeboard_fresh_run(make_task, make_run, fake_lb):
     fake_lb.write_script({"brief": {"stdout": BRIEF}})
     seen = []
     adapter = ScriptedPiAdapter(
@@ -85,8 +85,8 @@ async def test_logbook_fresh_run(make_task, make_run, fake_lb):
     assert "lb handoff --to session:abc-123" in seen[0]
     (call,) = brief_calls(fake_lb)
     assert call["argv"] == ["brief", "--cwd", str(run.worktree)]
-    assert call["env"]["LOGBOOK_HARNESS"] == "helmraiser"
-    assert call["env"]["LOGBOOK_SESSION"] == run.run_id
+    assert call["env"]["LEEBOARD_HARNESS"] == "helmraiser"
+    assert call["env"]["LEEBOARD_SESSION"] == run.run_id
     assert adapter.calls_for("implement")[0].system_prompt_path == run.rundir.directives_md
 
 
@@ -95,7 +95,7 @@ async def test_logbook_fresh_run(make_task, make_run, fake_lb):
     [{"stdout": BRIEF}, {"exit": 1, "stderr": "lb: broken"}, {}],
     ids=["text", "unavailable", "empty"],
 )
-async def test_logbook_cached_across_iterations(make_task, make_run, fake_lb, response):
+async def test_leeboard_cached_across_iterations(make_task, make_run, fake_lb, response):
     fake_lb.write_script({"brief": response})
     seen = []
 
@@ -122,21 +122,21 @@ async def test_logbook_cached_across_iterations(make_task, make_run, fake_lb, re
         assert "CHANGED BRIEF" not in text
         if response.get("stdout"):
             assert BRIEF in text
-            assert "Writing to Logbook" in text
+            assert "Writing to Leeboard" in text
         elif response.get("exit"):
             assert (
-                "Logbook is unavailable (lb brief exited 1: lb: broken): skip brief and recall steps."
+                "Leeboard is unavailable (lb brief exited 1: lb: broken): skip brief and recall steps."
                 in text
             )
-            assert "## Logbook" not in text
-            assert "Writing to Logbook" not in text
+            assert "## Leeboard" not in text
+            assert "Writing to Leeboard" not in text
         else:
-            assert "## Logbook" in text
-            assert "Writing to Logbook" in text
-            assert "Logbook is unavailable" not in text
+            assert "## Leeboard" in text
+            assert "Writing to Leeboard" in text
+            assert "Leeboard is unavailable" not in text
 
 
-async def test_logbook_resume_without_materialise(
+async def test_leeboard_resume_without_materialise(
     make_task, make_run, fake_lb, ledger, config, data_dir, monkeypatch
 ):
     fake_lb.write_script({"brief": {"stdout": "OLD BRIEF"}})
@@ -178,10 +178,10 @@ async def test_logbook_resume_without_materialise(
     calls = brief_calls(fake_lb)
     assert len(calls) == 2
     assert calls[1]["argv"] == ["brief", "--cwd", str(resumed.worktree)]
-    assert calls[1]["env"]["LOGBOOK_SESSION"] == first.run_id
+    assert calls[1]["env"]["LEEBOARD_SESSION"] == first.run_id
 
 
-async def test_logbook_only_implementation_receives_brief(make_task, make_run, fake_lb):
+async def test_leeboard_only_implementation_receives_brief(make_task, make_run, fake_lb):
     fake_lb.write_script({"brief": {"stdout": BRIEF}})
     seen = {}
 
@@ -202,9 +202,9 @@ async def test_logbook_only_implementation_receives_brief(make_task, make_run, f
     assert set(seen) == {"plan", "implement", "review"}
     assert BRIEF in seen["implement"]
     for stage in ("plan", "review"):
-        assert "Logbook" not in seen[stage]
+        assert "Leeboard" not in seen[stage]
         assert "lb brief" not in seen[stage]
-        assert "Writing to Logbook" not in seen[stage]
+        assert "Writing to Leeboard" not in seen[stage]
         assert "lb handoff" not in seen[stage]
         assert "lb request" not in seen[stage]
         assert "lb add rule" not in seen[stage]

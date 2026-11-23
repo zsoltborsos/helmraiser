@@ -8,7 +8,7 @@ and what comes next.
 ## Release
 
 1. **Retire the predecessor install** after a week of landed runs (switched 2026-11-14):
-   drop its harness name from Logbook's list, remove its worker service and command stub,
+   drop its harness name from Leeboard's list, remove its worker service and command stub,
    archive its repository, and back up then delete its data directory. FunkyOctopus's port
    is tracked in that project.
 2. **Finish release contact/settings checks, then go public.** Supply a real private

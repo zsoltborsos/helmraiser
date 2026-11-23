@@ -124,7 +124,7 @@ def test_leeboard_guidance_commands_and_bytes(target):
     text = implement(leeboard_brief=BriefResult("brief", None), leeboard_handoff_to=target)
     # Include the separator and final newline in the appended note's byte budget.
     note = text[text.index("\nWriting to Leeboard") :]
-    assert len(note.encode("utf-8")) <= 902
+    assert len(note.encode("utf-8")) <= 903  # 902 before the Leeboard rename (+1 byte)
     commands = re.findall(r"\blb\s+(add\s+\w+|\w+)", note)
     expected = {
         "request",

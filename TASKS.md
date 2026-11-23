@@ -17,6 +17,8 @@ and what comes next.
    404 while the repo was private). Review the alpha README on GitHub and try a clean-machine
    installation before release. The first-task acceptance has passed real sandbox
    preflight locally without models; a paid end-to-end example run remains opt-in.
+   Set the GitHub social preview (Settings) to `docs/brand/helmraiser-social.png`;
+   repository visibility stays the owner's decision.
 
 ## Scout follow-ups
 

@@ -1,8 +1,13 @@
-# Helmraiser
+<h1><picture><source media="(prefers-color-scheme: dark)" srcset="docs/brand/helmraiser-lockup-dark.svg"><img src="docs/brand/helmraiser-lockup.svg" alt="Helmraiser" height="64"></picture></h1>
+
+**Agents do the work. You keep the helm.**
+
+Helmraiser runs delegated coding tasks through a fixed loop: implement, verify, review.
+You or an agent write the tasks; you or an agent approve the result.
 
 [![CI](https://github.com/zsoltborsos/helmraiser/actions/workflows/ci.yml/badge.svg)](https://github.com/zsoltborsos/helmraiser/actions/workflows/ci.yml)
 
-**Run coding tasks unattended across your Git repositories, with checks and approval you control.**
+Run coding tasks unattended across your Git repositories, with checks and approval you control.
 
 Helmraiser uses [pi](https://github.com/earendil-works/pi) to implement tasks in separate
 Git worktrees. You define the work and the commands that check its result. Helmraiser
@@ -235,3 +240,6 @@ history begins at the rename to Helmraiser on 14 November 2026.
 ## License
 
 [MIT](LICENSE).
+
+Helmraiser is one of the tools from [ZB Code Shipyard](https://zsoltborsos.net).
+Brand assets are in [docs/brand](docs/brand/).

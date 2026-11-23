@@ -76,6 +76,8 @@ process isolation, owner approval and prewritten behavioral tests. Its acceptanc
 was exercised under real srt: missing target → expected red, temporary reference
 implementation → green, incorrect output → rejected, without model calls or queue writes.
 Model-selection guidance distinguishes configuration from historical personal trials.
+The README opens with the ZB Code Shipyard brand-kit lockup and lines; marks, lockups and
+the social preview image are in `docs/brand/`.
 Remaining public-release checks are in `TASKS.md`.
 `log --follow` help and reference document stopping at terminal runs or approval waits (plan, scope or merge), and restarting following after resumption.
 

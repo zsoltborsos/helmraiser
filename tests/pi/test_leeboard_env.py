@@ -100,3 +100,28 @@ def test_leeboard_session_allowlist_drops_parent_identity():
         )
         == {}
     )
+
+
+RETIRED = {"LOGBOOK_HOME": "/x", "LOGBOOK_HARNESS": "claude-code", "LOGBOOK_SESSION": "s"}
+
+
+def test_retired_logbook_names_never_reach_runs(tmp_path, monkeypatch):
+    # lb exits 1 while any LOGBOOK_* name is set, so no run step or session may inherit one.
+    base = {"PATH": "/usr/bin", **RETIRED}
+    assert not set(RETIRED) & set(command_environment({}, base))
+    assert not set(RETIRED) & set(session_environment({}, base))
+    for name, value in RETIRED.items():
+        monkeypatch.setenv(name, value)
+    assert not set(RETIRED) & set(PiJsonAdapter().environment(_request(tmp_path), RUN_ID))
+
+
+def test_host_lb_environment_drops_retired_logbook_names(monkeypatch):
+    from helmraiser.leeboard import lb_environment, leeboard_identity
+
+    for name, value in RETIRED.items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("LEEBOARD_HOME", "/home/u/.leeboard")
+    env = lb_environment(leeboard_identity("run-1"))
+    assert not set(RETIRED) & set(env)
+    assert env["LEEBOARD_HOME"] == "/home/u/.leeboard"
+    assert env["LEEBOARD_HARNESS"] == "helmraiser" and env["LEEBOARD_SESSION"] == "run-1"

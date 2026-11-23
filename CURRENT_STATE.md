@@ -67,6 +67,7 @@ Intake adds an advisory note (`notes` in `--json`) when `budget.max_cost_usd` is
 New `intake --yes` queueing adds detected related tests to `paths:` (all up to 20, none above); check-only previews them, and recorded additions are marked as permitted test scope.
 
 Without `lb` on PATH, Leeboard is treated as not in use: runs and landing proceed silently, directives and reports omit its context, and doctor labels it optional.
+Leeboard replaced Logbook on 2026-11-23 with no fallback: host `lb` calls and setup/verify/evidence drop every `LOGBOOK_*` name, because `lb` refuses to run while one is set.
 
 ## Public-release documentation
 

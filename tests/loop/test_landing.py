@@ -317,7 +317,7 @@ def test_confirm(tmp_path, monkeypatch, clock, states, error):
 
 @pytest.fixture
 def operation(monkeypatch, tmp_path):
-    from helmraiser.logbook import HoldCheck
+    from helmraiser.leeboard import HoldCheck
 
     calls = []
     for name in ("preflight", "push_base", "confirm_merged"):
@@ -357,7 +357,7 @@ def test_ordered_operation(operation):
     assert result.exit_code == 0
     assert [s["name"] for s in progress] == [
         "preflight",
-        "logbook",
+        "leeboard",
         "approve",
         "ci",
         "sync",
@@ -412,7 +412,7 @@ def test_resumed_operation(operation, monkeypatch, state, code):
 
 @pytest.mark.parametrize("blocked", ["push", "merge"])
 def test_operation_hold(operation, monkeypatch, blocked):
-    from helmraiser.logbook import HoldCheck
+    from helmraiser.leeboard import HoldCheck
 
     _, calls, run = operation
     tags = []
@@ -430,7 +430,7 @@ def test_operation_hold(operation, monkeypatch, blocked):
 
 
 def test_operation_unavailable_warns(operation, monkeypatch):
-    from helmraiser.logbook import HoldCheck
+    from helmraiser.leeboard import HoldCheck
 
     monkeypatch.setattr(
         landing, "check_hold", lambda *a, **kw: HoldCheck("unavailable", detail="broken")

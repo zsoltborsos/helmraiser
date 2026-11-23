@@ -1,4 +1,4 @@
-"""Fresh-run admission against an isolated scripted Logbook."""
+"""Fresh-run admission against an isolated scripted Leeboard."""
 
 import json
 import os
@@ -8,7 +8,7 @@ import pytest
 
 from helmraiser.cli import commands, supervisor
 from helmraiser.ledger.db import Ledger, ProjectScope
-from helmraiser.logbook import HoldGate
+from helmraiser.leeboard import HoldGate
 from helmraiser.loop.status import status_path
 from helmraiser.storage.state import StateManager
 from tests.cli.test_supervisor import FakeChild, Harness, events, queue_real, supervise
@@ -43,18 +43,18 @@ def data_dir(tmp_path):
     return tmp_path / "data"
 
 
-def test_logbook_task_skip_default_gate_and_no_caps(tmp_project, data_dir, fake_lb):
+def test_leeboard_task_skip_default_gate_and_no_caps(tmp_project, data_dir, fake_lb):
     block(fake_lb)
     ledger = Ledger(data_dir / "helmraiser.db")
     task = make_spec(tmp_project)
     for no_caps in (True, False):
         payload, text = commands._task_skip(task, ledger, configured_test_config(), no_caps)
-        assert payload == {"logbook_hold": HOLDS}
+        assert payload == {"leeboard_hold": HOLDS}
         assert "close tunnel" in text
     assert not ledger.list_runs()
 
 
-def test_logbook_earlier_skip_avoids_check(tmp_project, data_dir, fake_lb, monkeypatch):
+def test_leeboard_earlier_skip_avoids_check(tmp_project, data_dir, fake_lb, monkeypatch):
     block(fake_lb)
     ledger = Ledger(data_dir / "helmraiser.db")
     task = replace(make_spec(tmp_project), verify=())
@@ -72,13 +72,13 @@ def test_logbook_earlier_skip_avoids_check(tmp_project, data_dir, fake_lb, monke
 
 
 @pytest.mark.parametrize("options", [[], ["--no-caps"], ["--dry-run"], ["--supervised"]])
-def test_logbook_work_blocked(tmp_project, data_dir, fake_lb, fake_pi, options):
+def test_leeboard_work_blocked(tmp_project, data_dir, fake_lb, fake_pi, options):
     task_id = queue_task(tmp_project, data_dir)
     block(fake_lb)
     result = work("--once", "--json", *options, data_dir=data_dir)
     assert result.exit_code == 0, result.output
     event = json.loads(result.output.splitlines()[0])
-    assert event == {"skipped": task_id, "logbook_hold": HOLDS}
+    assert event == {"skipped": task_id, "leeboard_hold": HOLDS}
     ledger = Ledger(data_dir / "helmraiser.db")
     assert ledger.get_task(task_id)["status"] == "queued"
     assert ledger.list_runs() == []
@@ -91,13 +91,13 @@ def test_logbook_work_blocked(tmp_project, data_dir, fake_lb, fake_pi, options):
     )
 
 
-def test_logbook_work_human_and_cached_skips(tmp_project, data_dir, fake_lb, fake_pi):
+def test_leeboard_work_human_and_cached_skips(tmp_project, data_dir, fake_lb, fake_pi):
     ids = [queue_task(tmp_project, data_dir, task_id=f"task-{i}") for i in range(3)]
     block(fake_lb)
     result = work(data_dir=data_dir)
     assert result.exit_code == 0, result.output
     for task_id in ids:
-        assert f"skipped {task_id}: logbook hold: [hold-one] Tunnel open" in result.output
+        assert f"skipped {task_id}: leeboard hold: [hold-one] Tunnel open" in result.output
     assert "Batch:" in result.output
     assert len(fake_lb.calls()) == 1
 
@@ -115,7 +115,7 @@ def adapter(monkeypatch):
     return adapter
 
 
-def test_logbook_other_project_runs_and_release_without_intake(
+def test_leeboard_other_project_runs_and_release_without_intake(
     tmp_project, tmp_path, git_init, data_dir, fake_lb, fake_pi, adapter
 ):
     a = queue_task(tmp_project, data_dir)
@@ -140,16 +140,16 @@ def test_logbook_other_project_runs_and_release_without_intake(
 
 @pytest.mark.parametrize("failure", ["spawn_error", "exit1", "exit6", "timeout", "garbage"])
 @pytest.mark.parametrize("as_json", [False, True])
-def test_logbook_work_unavailable_schedules(
+def test_leeboard_work_unavailable_schedules(
     tmp_project, data_dir, fake_lb, fake_pi, monkeypatch, failure, as_json
 ):
-    from helmraiser import logbook
+    from helmraiser import leeboard
 
     queue_task(tmp_project, data_dir)
     if failure == "spawn_error":
-        monkeypatch.setattr(logbook, "find_lb", lambda: "/nonexistent/lb")
+        monkeypatch.setattr(leeboard, "find_lb", lambda: "/nonexistent/lb")
     elif failure == "timeout":
-        monkeypatch.setattr(logbook, "CHECK_TIMEOUT_S", 0.2)
+        monkeypatch.setattr(leeboard, "CHECK_TIMEOUT_S", 0.2)
         fake_lb.write_script({"check": {"sleep": 1}})
     elif failure == "garbage":
         fake_lb.write_script({"check": {"stdout": "not json"}})
@@ -158,16 +158,16 @@ def test_logbook_work_unavailable_schedules(
     # Dry-run exercises admission without building a model session.
     result = work("--dry-run", *(["--json"] if as_json else []), data_dir=data_dir)
     assert result.exit_code == 0, result.output
-    assert result.output.count("logbook: hold check skipped") == 1
+    assert result.output.count("leeboard: hold check skipped") == 1
     if as_json:
         assert "warning" in json.loads(result.output.splitlines()[0])
         assert json.loads(result.output.splitlines()[1])["dry_run"]
     else:
-        assert "[warn] logbook:" in result.output
+        assert "[warn] leeboard:" in result.output
         assert "argv: pi" in result.output
 
 
-def test_logbook_resume_does_not_check(tmp_project, data_dir, fake_lb, fake_pi, adapter):
+def test_leeboard_resume_does_not_check(tmp_project, data_dir, fake_lb, fake_pi, adapter):
     from helmraiser.cli import app
     from tests.cli.test_work import runner
 
@@ -193,11 +193,11 @@ def test_logbook_resume_does_not_check(tmp_project, data_dir, fake_lb, fake_pi, 
     ]
     (brief,) = fake_lb.calls()[len(before) :]
     assert brief["argv"][0] == "brief"
-    assert brief["env"]["LOGBOOK_SESSION"] == run["run_id"]
+    assert brief["env"]["LEEBOARD_SESSION"] == run["run_id"]
     assert len(adapter.calls_for("implement")) == 1
 
 
-def test_logbook_foreground_cache_refresh_after_run(
+def test_leeboard_foreground_cache_refresh_after_run(
     tmp_project, data_dir, fake_lb, fake_pi, adapter, monkeypatch
 ):
     first = queue_task(tmp_project, data_dir, task_id="first")
@@ -243,7 +243,7 @@ def admission(ledger, gate):
     )
 
 
-def test_logbook_supervisor_pass_cache_change_and_release(
+def test_leeboard_supervisor_pass_cache_change_and_release(
     ledger, data_dir, harness, tmp_path, fake_lb, capsys
 ):
     projects = [tmp_path / "a", tmp_path / "b"]
@@ -276,7 +276,7 @@ def test_logbook_supervisor_pass_cache_change_and_release(
     assert harness.spawned[0]["at"] == 4
 
 
-def test_logbook_supervisor_project_scope(ledger, data_dir, harness, tmp_path, fake_lb):
+def test_leeboard_supervisor_project_scope(ledger, data_dir, harness, tmp_path, fake_lb):
     a, b = tmp_path / "a", tmp_path / "b"
     held = queue_real(ledger, a, "a")
     queue_real(ledger, b, "b")
@@ -288,7 +288,7 @@ def test_logbook_supervisor_project_scope(ledger, data_dir, harness, tmp_path, f
     assert all(r["task_id"] != held for r in ledger.list_runs())
 
 
-def test_logbook_supervise_wires_shared_gate(ledger, data_dir, tmp_path, fake_lb, monkeypatch):
+def test_leeboard_supervise_wires_shared_gate(ledger, data_dir, tmp_path, fake_lb, monkeypatch):
     from helmraiser.cli.supervisor import SupervisorResult
 
     row_id = queue_real(ledger, tmp_path / "a", "a")
@@ -347,7 +347,7 @@ def make_supervisor(ledger, data_dir, harness, gate):
     )
 
 
-def test_logbook_live_skips_published_and_status(
+def test_leeboard_live_skips_published_and_status(
     ledger, data_dir, harness, tmp_path, fake_lb, monkeypatch
 ):
     from helmraiser.cli import app, worker_commands
@@ -365,7 +365,7 @@ def test_logbook_live_skips_published_and_status(
     assert skips == [
         {
             "task_id": task_id,
-            "reason": "logbook hold: [hold-one] Tunnel open (release: close tunnel); [hold-two] Wait",
+            "reason": "leeboard hold: [hold-one] Tunnel open (release: close tunnel); [hold-two] Wait",
         }
     ]
     stamp = active_path.stat().st_mtime_ns
@@ -377,7 +377,7 @@ def test_logbook_live_skips_published_and_status(
     assert json.loads(result.output)["worker"]["skips"] == skips
     assert json.loads(status_path(data_dir).read_text())["worker"]["skips"] == skips
     result = runner.invoke(app, ["status", "--data-dir", str(data_dir)])
-    assert "Skipped: " + task_id + ": logbook hold: [hold-one]" in result.output.replace(
+    assert "Skipped: " + task_id + ": leeboard hold: [hold-one]" in result.output.replace(
         "\n", ""
     ), result.output
     assert len(fake_lb.calls()) == before
@@ -392,7 +392,7 @@ def test_logbook_live_skips_published_and_status(
 @pytest.mark.parametrize(
     "active", [None, "broken", "[]", '{"pid": -1, "skips": [1]}', '{"pid": PID}']
 )
-def test_logbook_worker_skips_not_stale(data_dir, monkeypatch, active):
+def test_leeboard_worker_skips_not_stale(data_dir, monkeypatch, active):
     from helmraiser.cli import worker_commands
 
     assert worker_commands.worker_payload(data_dir) == {"state": "none"}
@@ -405,7 +405,7 @@ def test_logbook_worker_skips_not_stale(data_dir, monkeypatch, active):
     assert "skips" not in worker_commands.worker_payload(data_dir)
 
 
-def test_logbook_other_skips_and_foreground_publication(ledger, data_dir, harness, monkeypatch):
+def test_leeboard_other_skips_and_foreground_publication(ledger, data_dir, harness, monkeypatch):
     from helmraiser.cli import worker_commands
 
     gate = HoldGate(lambda text: None)
@@ -422,17 +422,17 @@ def test_logbook_other_skips_and_foreground_publication(ledger, data_dir, harnes
 
 
 @pytest.mark.parametrize("failure", ["spawn_error", "exit1", "timeout", "garbage"])
-def test_logbook_supervisor_unavailable_warn_streak(
+def test_leeboard_supervisor_unavailable_warn_streak(
     ledger, data_dir, harness, tmp_path, fake_lb, monkeypatch, capsys, failure
 ):
-    from helmraiser import logbook
+    from helmraiser import leeboard
 
     project = tmp_path / "a"
     queue_real(ledger, project, "a")
     if failure == "spawn_error":
-        monkeypatch.setattr(logbook, "find_lb", lambda: "/nonexistent/lb")
+        monkeypatch.setattr(leeboard, "find_lb", lambda: "/nonexistent/lb")
     elif failure == "timeout":
-        monkeypatch.setattr(logbook, "CHECK_TIMEOUT_S", 0.2)
+        monkeypatch.setattr(leeboard, "CHECK_TIMEOUT_S", 0.2)
         fake_lb.write_script({"check": {"sleep": 1}})
     elif failure == "garbage":
         fake_lb.write_script({"check": {"stdout": "bad json"}})
@@ -452,21 +452,21 @@ def test_logbook_supervisor_unavailable_warn_streak(
 
     pass_and_reap()
     pass_and_reap()
-    assert capsys.readouterr().out.count("[warn] logbook:") == 1
-    monkeypatch.setattr(logbook, "find_lb", lambda: str(fake_lb.bin))
+    assert capsys.readouterr().out.count("[warn] leeboard:") == 1
+    monkeypatch.setattr(leeboard, "find_lb", lambda: str(fake_lb.bin))
     fake_lb.write_script({"check": {"exit": 6, "stderr": "different"}})
     pass_and_reap()
-    assert capsys.readouterr().out.count("[warn] logbook:") == 1
+    assert capsys.readouterr().out.count("[warn] leeboard:") == 1
     fake_lb.write_script({})
     pass_and_reap()
     assert "[warn]" not in capsys.readouterr().out
     fake_lb.write_script({"check": {"exit": 6, "stderr": "different"}})
     pass_and_reap()
-    assert capsys.readouterr().out.count("[warn] logbook:") == 1
+    assert capsys.readouterr().out.count("[warn] leeboard:") == 1
     assert ledger.list_runs() == []
 
 
-def test_logbook_parent_child_race_keeps_no_run_backoff(
+def test_leeboard_parent_child_race_keeps_no_run_backoff(
     ledger, data_dir, harness, tmp_path, fake_lb, fake_pi
 ):
     project = tmp_path / "a"
@@ -493,7 +493,7 @@ def test_logbook_parent_child_race_keeps_no_run_backoff(
     assert fake_pi.calls() == []
 
 
-def test_logbook_supervisor_resume_and_running_project_not_checked(
+def test_leeboard_supervisor_resume_and_running_project_not_checked(
     ledger, data_dir, harness, tmp_path, fake_lb
 ):
     project = tmp_path / "a"

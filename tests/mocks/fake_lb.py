@@ -1,4 +1,4 @@
-"""Scripted Logbook CLI; never opens a real store."""
+"""Scripted Leeboard CLI; never opens a real store."""
 
 import json
 import os
@@ -16,7 +16,7 @@ def main(argv: list[str]) -> int:
                     "cwd": os.getcwd(),
                     "env": {
                         key: os.environ.get(key)
-                        for key in ("LOGBOOK_HOME", "LOGBOOK_HARNESS", "LOGBOOK_SESSION")
+                        for key in ("LEEBOARD_HOME", "LEEBOARD_HARNESS", "LEEBOARD_SESSION")
                     },
                 }
             )

@@ -541,7 +541,7 @@ def test_json_shape_and_paused_state(tmp_path: Path) -> None:
         "git_maintenance",
         "environment",
         "sandbox",
-        "logbook",
+        "leeboard",
     }
     assert output["pi"] == {
         "version": "0.87.1",

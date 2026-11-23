@@ -1,4 +1,4 @@
-"""Implementation-only Logbook writing guidance and frozen baseline directives."""
+"""Implementation-only Leeboard writing guidance and frozen baseline directives."""
 
 import hashlib
 import re
@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from helmraiser.logbook import BriefResult
+from helmraiser.leeboard import BriefResult
 from helmraiser.pi.directives import (
     render_implement_directives,
     render_plan_directives,
@@ -65,20 +65,20 @@ EXPECTED_SHA256 = {
 }
 
 
-def test_logbook_baseline_bytes_unchanged():
+def test_leeboard_baseline_bytes_unchanged():
     assert {
         name: hashlib.sha256(text.encode("utf-8")).hexdigest()
         for name, text in _baseline_outputs().items()
     } == EXPECTED_SHA256
 
 
-@pytest.mark.parametrize("brief_text", ["# Logbook: project demo\nKeep {braces}", ""])
-def test_logbook_available_guidance(brief_text):
-    text = implement(logbook_brief=BriefResult(brief_text, None))
-    assert "## Logbook" in text
-    assert text.count("Writing to Logbook") == 1
+@pytest.mark.parametrize("brief_text", ["# Leeboard: project demo\nKeep {braces}", ""])
+def test_leeboard_available_guidance(brief_text):
+    text = implement(leeboard_brief=BriefResult(brief_text, None))
+    assert "## Leeboard" in text
+    assert text.count("Writing to Leeboard") == 1
     if brief_text:
-        assert text.index(brief_text) < text.index("Writing to Logbook")
+        assert text.index(brief_text) < text.index("Writing to Leeboard")
         assert text.count(brief_text) == 1
     assert "lb handoff" not in text
     for phrase in (
@@ -103,25 +103,27 @@ def test_logbook_available_guidance(brief_text):
 @pytest.mark.parametrize(
     "brief", [None, BriefResult(None, "lb not found on PATH"), BriefResult(None, None)]
 )
-def test_logbook_unavailable_no_guidance(brief):
-    text = implement(logbook_brief=brief, logbook_handoff_to="session:abc-123")
-    assert "Writing to Logbook" not in text
+def test_leeboard_unavailable_no_guidance(brief):
+    text = implement(leeboard_brief=brief, leeboard_handoff_to="session:abc-123")
+    assert "Writing to Leeboard" not in text
     assert "lb handoff" not in text
     assert "lb request" not in text
     assert "lb add rule" not in text
 
 
-def test_logbook_handoff_guidance():
-    text = implement(logbook_brief=BriefResult("brief", None), logbook_handoff_to="session:abc-123")
+def test_leeboard_handoff_guidance():
+    text = implement(
+        leeboard_brief=BriefResult("brief", None), leeboard_handoff_to="session:abc-123"
+    )
     assert 'lb handoff --to session:abc-123 --title "..." --body "..."' in text
     assert "review needs beyond diff/final message" in text
 
 
 @pytest.mark.parametrize("target", [None, "session:abc-123", "session:" + "a" * 128])
-def test_logbook_guidance_commands_and_bytes(target):
-    text = implement(logbook_brief=BriefResult("brief", None), logbook_handoff_to=target)
+def test_leeboard_guidance_commands_and_bytes(target):
+    text = implement(leeboard_brief=BriefResult("brief", None), leeboard_handoff_to=target)
     # Include the separator and final newline in the appended note's byte budget.
-    note = text[text.index("\nWriting to Logbook") :]
+    note = text[text.index("\nWriting to Leeboard") :]
     assert len(note.encode("utf-8")) <= 902
     commands = re.findall(r"\blb\s+(add\s+\w+|\w+)", note)
     expected = {

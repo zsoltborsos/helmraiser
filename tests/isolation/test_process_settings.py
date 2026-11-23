@@ -42,7 +42,7 @@ def home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, fake_lb) -> Path:
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.delenv("LOGBOOK_HOME", raising=False)
+    monkeypatch.delenv("LEEBOARD_HOME", raising=False)
     return home
 
 

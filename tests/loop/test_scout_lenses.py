@@ -160,7 +160,7 @@ def test_execution(tmp_project, tmp_path, monkeypatch, lens, failed):
             )
         }
     )
-    monkeypatch.setattr("helmraiser.loop.scout._logbook_brief", lambda repo: None)
+    monkeypatch.setattr("helmraiser.loop.scout._leeboard_brief", lambda repo: None)
 
     def intake(spec):
         raise ValueError("intake intentionally unavailable")

@@ -14,7 +14,7 @@ from typing import Any
 from helmraiser.config import load_config
 from helmraiser.ledger.db import Ledger
 from helmraiser.ledger.rundir import RunDir
-from helmraiser.logbook import run_entries
+from helmraiser.leeboard import run_entries
 from helmraiser.loop.review import parse_verdict
 from helmraiser.loop.spend import (
     WINDOWS,
@@ -30,7 +30,7 @@ from helmraiser.utils.markdown import parse_frontmatter
 SINCE_SECONDS = {"24h": 24 * 3600, "7d": 7 * 24 * 3600, "30d": 30 * 24 * 3600}
 _SINCE_RE = re.compile(r"^(\d+)([hd])$")
 TAIL_LINES = 10
-LOGBOOK_ENTRY_LIMIT = 20
+LEEBOARD_ENTRY_LIMIT = 20
 
 
 def parse_since(text: str) -> float:
@@ -211,12 +211,12 @@ def build_report(
             failed.append(entry)
 
     included = landed + awaiting + failed
-    logbook = run_entries(entry["run_id"] for entry in included)
+    leeboard = run_entries(entry["run_id"] for entry in included)
     for entry in included:
-        authored = logbook[entry["run_id"]]
-        entry["logbook_entries"] = [asdict(item) for item in authored[:LOGBOOK_ENTRY_LIMIT]]
-        if len(authored) > LOGBOOK_ENTRY_LIMIT:
-            entry["logbook_more"] = len(authored) - LOGBOOK_ENTRY_LIMIT
+        authored = leeboard[entry["run_id"]]
+        entry["leeboard_entries"] = [asdict(item) for item in authored[:LEEBOARD_ENTRY_LIMIT]]
+        if len(authored) > LEEBOARD_ENTRY_LIMIT:
+            entry["leeboard_more"] = len(authored) - LEEBOARD_ENTRY_LIMIT
 
     for _timestamp, model, cost in cost_entries(ledger, cutoff):
         by_model[model] = by_model.get(model, 0.0) + cost
@@ -252,9 +252,9 @@ def _header(entry: dict[str, Any]) -> list[str]:
         + (" (escalated)" if entry["escalated"] else ""),
         f"- verdict: {entry['verdict'] or '-'}",
     ]
-    if entry.get("logbook_entries"):
-        count = len(entry["logbook_entries"]) + entry.get("logbook_more", 0)
-        lines.append(f"- logbook entries: {count}")
+    if entry.get("leeboard_entries"):
+        count = len(entry["leeboard_entries"]) + entry.get("leeboard_more", 0)
+        lines.append(f"- leeboard entries: {count}")
     lines += render_reworks(entry.get("reworks", []))
     if entry.get("review_rounds"):
         lines.append(f"- review rounds: {entry['review_rounds']}")
@@ -270,17 +270,17 @@ def _header(entry: dict[str, Any]) -> list[str]:
     return lines
 
 
-def _render_logbook_entries(entry: dict[str, Any]) -> list[str]:
-    if not entry.get("logbook_entries"):
+def _render_leeboard_entries(entry: dict[str, Any]) -> list[str]:
+    if not entry.get("leeboard_entries"):
         return []
-    lines = ["", "### Logbook entries", ""]
-    for item in entry["logbook_entries"]:
+    lines = ["", "### Leeboard entries", ""]
+    for item in entry["leeboard_entries"]:
         title = " ".join(item["title"].split()) or "(untitled)"
         if len(title) > 200:
             title = title[:199] + "…"
         lines.append(f"- [{item['id']}] {item['kind']} {item['status']} {item['scope']}: {title}")
-    if entry.get("logbook_more"):
-        lines.append(f"… {entry['logbook_more']} more — lb list")
+    if entry.get("leeboard_more"):
+        lines.append(f"… {entry['leeboard_more']} more — lb list")
     return lines
 
 
@@ -293,7 +293,7 @@ def render_report(report: dict[str, Any], since_label: str) -> str:
         out += _header(entry)
         if entry["fragment"]:
             out += ["", entry["fragment"]]
-        out += _render_logbook_entries(entry)
+        out += _render_leeboard_entries(entry)
         out.append("")
     if not report["landed"]:
         out += ["(none)", ""]
@@ -322,7 +322,7 @@ def render_report(report: dict[str, Any], since_label: str) -> str:
                     f"- [{f.get('severity', '?')}] {f.get('file', '?')}:{f.get('line', 0)} — "
                     f"{f.get('note', '')}"
                 )
-        out += _render_logbook_entries(entry)
+        out += _render_leeboard_entries(entry)
         out.append("")
     if not report["awaiting"]:
         out += ["(none)", ""]
@@ -340,7 +340,7 @@ def render_report(report: dict[str, Any], since_label: str) -> str:
             out += ["", entry["fragment"]]
         if entry.get("path_scope_failures") and (entry["verify_tails"] or not entry["fragment"]):
             out += render_path_scope_failures(entry["path_scope_failures"])
-        out += _render_logbook_entries(entry)
+        out += _render_leeboard_entries(entry)
         out.append("")
     if not report["failed"]:
         out += ["(none)", ""]

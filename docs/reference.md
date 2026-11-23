@@ -14,7 +14,7 @@ See also the [execution model](architecture/execution-model.md).
 - [Policies and delivery](#policies), [isolation](#isolation), [services](#services-for-verify)
 - [Sandbox preflight](#trying-commands-in-the-sandbox), [monitoring](#monitoring), [status contract](#status-contract)
 - [Unattended operation](#running-unattended), [retries](#retrying-a-failed-run), [rework](#reworking-a-run-awaiting-merge-approval)
-- [Logbook](#logbook-optional), [troubleshooting](#troubleshooting)
+- [Leeboard](#leeboard-optional), [troubleshooting](#troubleshooting)
 
 ## Requirements
 
@@ -273,7 +273,7 @@ related-test scope additions — the acceptance model is not asked again.
 
 Every command takes `--json` and `--data-dir` (default `$HELMRAISER_DATA_DIR`, else
 `~/.helmraiser`). Exit codes are 0 for ok, 1 for an error, 2 for a validation failure and
-3 when the queue is paused or `land` encounters an active [Logbook hold](#logbook-optional).
+3 when the queue is paused or `land` encounters an active [Leeboard hold](#leeboard-optional).
 `wait` uses its own [exit codes](#waiting-for-a-run).
 
 ## Scout drafts
@@ -346,7 +346,7 @@ being silently retried.
 
 Helmraiser gathers existing root and `projects/*/` state/task/status documents, 40 recent
 git subjects, every ledger task title, dropped-draft reasons, `[scout] exclude` prefixes,
-owner-maintained `.helmraiser/notes.md`, and optional [Logbook context](#logbook-optional). It
+owner-maintained `.helmraiser/notes.md`, and optional [Leeboard context](#leeboard-optional). It
 then runs exactly one scout-model pi session under srt in a detached throwaway worktree
 of HEAD, with only `read`, `grep`, `find` and `ls`; the worktree is removed afterwards.
 The report is `<data-dir>/runs/<scout-id>/scout.md`.
@@ -560,7 +560,7 @@ hint: …` lines after its failure reason; `work` prints them under the step's l
   and runtime directories, `NODE_OPTIONS`, `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`,
   `SSL_CERT_DIR`, the HTTP proxy variables and pi's own `PI_CODING_AGENT_DIR`,
   `PI_PACKAGE_DIR`, `PI_OFFLINE`, `PI_SKIP_VERSION_CHECK`, `PI_TELEMETRY` and
-  `PI_CACHE_RETENTION`, plus [Logbook's optional environment](#logbook-optional).
+  `PI_CACHE_RETENTION`, plus [Leeboard's optional environment](#leeboard-optional).
   Provider API keys are not passed; pi uses `~/.pi/agent/auth.json`.
 - Both command and pi-session environments remove `VIRTUAL_ENV`, `VIRTUAL_ENV_PROMPT`
   and `PYTHONHOME`, plus every exact PATH entry matching the inherited
@@ -948,7 +948,7 @@ cache. Set a subscription's `live` field to null to disable its source.
 matters when a subscription sets `stop_at`. All forms support `--json`.
 - **Scout.** The implementer may run a read-only `pi --print` with the `scout` model for
   surveys. The implementer directives are in `src/helmraiser/pi/directives.py` and include
-  the optional [Logbook brief](#logbook-optional).
+  the optional [Leeboard brief](#leeboard-optional).
 
 ## Policies
 
@@ -1084,7 +1084,7 @@ never moved by this check.
 
 **Landing a pull request.** `helmraiser land <run-or-unique-prefix> [--json]` takes a
 `delivery: pr` run awaiting **merge** approval (or an already approved run with a PR)
-through preflight, optional [Logbook holds](#logbook-optional), the same delivery as `approve`, CI,
+through preflight, optional [Leeboard holds](#leeboard-optional), the same delivery as `approve`, CI,
 and a fresh fetch of `origin/<base>`. It requires that fetched base to be an ancestor
 of the run head and the remote PR branch to equal that head, then non-force pushes
 that exact head to `origin`'s run base, attempts a safe local fast-forward, and confirms
@@ -1140,7 +1140,7 @@ The `isolation` level applies per task:
   worktree, the run's `sessions/` directory, `/tmp`, the primary checkout's `.git`
   (so pi can commit; `.git/hooks` and `.git/config` stay read-only) and `~/.pi/agent`
   (pi's lock files and OAuth refresh; every entry that already exists there except
-  `auth.json` stays read-only), plus optional [Logbook access](#logbook-optional).
+  `auth.json` stays read-only), plus optional [Leeboard access](#leeboard-optional).
   Network access is limited
   to `isolation.allowed_domains` in `~/.helmraiser/config.json` (default: the OpenAI,
   ChatGPT and opencode endpoints plus `github.com`).
@@ -1183,7 +1183,7 @@ beneath a read-only carve-out). What pi loads from other projects stays readable
 local paths in `~/.pi/agent/settings.json` (`packages` and the resource lists) and the
 targets of symlinks in `~/.pi/agent` and its `skills`, `prompts`, `themes` and
 `extensions` directories, such as the global `AGENTS.md` and linked skills, unless they
-lie inside a credential or configured denial. See also [Logbook access](#logbook-optional).
+lie inside a credential or configured denial. See also [Leeboard access](#leeboard-optional).
 
 ```json
 {
@@ -1395,7 +1395,7 @@ per command.
 
 | Command | What it shows |
 |---------|---------------|
-| `helmraiser doctor` | Pi version and profile authentication, isolation availability, and data directory and ledger readiness. A missing ledger is informational and is created on first use, not by doctor; an existing ledger must open successfully. The reserved `vm` row is informational (`reserved; not implemented`). It includes informational [Logbook diagnostics](#logbook-optional). It also reports informational pnpm store filesystem and setup-write warnings without affecting readiness. It also lists the environment names stripped from runs, orphaned worktree metadata and phantom ledger runs for the current repository; phantom runs are informational until the next `work` reconciles them. When the repository declares `[[services]]`, it checks that `docker info` answers (not ready otherwise) and lists orphaned service containers |
+| `helmraiser doctor` | Pi version and profile authentication, isolation availability, and data directory and ledger readiness. A missing ledger is informational and is created on first use, not by doctor; an existing ledger must open successfully. The reserved `vm` row is informational (`reserved; not implemented`). It includes informational [Leeboard diagnostics](#leeboard-optional). It also reports informational pnpm store filesystem and setup-write warnings without affecting readiness. It also lists the environment names stripped from runs, orphaned worktree metadata and phantom ledger runs for the current repository; phantom runs are informational until the next `work` reconciles them. When the repository declares `[[services]]`, it checks that `docker info` answers (not ready otherwise) and lists orphaned service containers |
 | `helmraiser doctor --exposure [repo]` | Emits 12 stable component/probe rows (pi session, command, setup and service container × loopback, `~/.ssh` and SSH agent), or one JSON object. Loopback is a listener on a random host `127.0.0.1` (and `::1`) port, tried directly, through every proxy in the component's environment (HTTP `CONNECT`, forwarded `GET`, SOCKS5) and, from the container, through `host.docker.internal` and its gateway. Each row carries a positive control (`control: ok\|failed\|n/a`, `[control …]` in text): an allowed listener, a readable token file, or the same probe run on the host; a failed control makes the row `error`, never `blocked`. Exit 0 means every available target was blocked; 1 means exposed/error; 2 means evidence is incomplete because srt or Docker was skipped. An absent host SSH agent is a neutral skip. |
 | `helmraiser status` | Queue depth, running runs, runs waiting for the worker to resume them, awaiting approvals, held tasks with their holder runs or unmet-dependency reasons, failures and landings in the last 24 h (`--json`: `failed` and `landed` lists, by when the run ended), provider spend and subscription routing headroom. It also rewrites `status.json` |
 | `helmraiser stats [--since 24h\|7d\|30d\|90d\|all] [--project PATH] [--json]` | Read-only dashboard outcome, quality, cost, latency, scout funnel and weekly aggregates |
@@ -1716,7 +1716,7 @@ The `status.json` object has these fields:
 | `caps_enforced` | boolean | Whether `stop_at` enforcement is active (ledger switch overrides config) |
 | `paused` | `null` or `{reason, until}` | Queue pause state; `until` is a Unix timestamp or `null` |
 | `held_providers` | object | Provider → `{until, detail}` for active provider holds; expired holds are omitted |
-| `worker` | object | The background worker: its `worker.json` record (`pid`, `started_at`, `argv`, `log`, `projects`, `exclude_projects`, `max_parallel_runs`) with `state` `running` or `exited`, or `{"state": "none"}` without a record. A running worker also has `children`: one `{pid, project, run_id, kind, started_at}` per child in flight (`kind` is `run` or `scout`; scout children also have `scout_id`; `run_id` is available for fresh runs after registration via their task lock and child PID, and for selected resumptions), and `errors`: one `{project, stage, error, since, retry_at}` per project whose work currently fails (`stage` is `reconcile`, `task`, `start`, `run` or `scout`; `since` and `retry_at` are Unix timestamps). A running worker also has `skips: [{task_id, reason}]` for all current scheduler skip reasons (invalid tasks, quota, caps and optional [Logbook holds](#logbook-optional)), not skip history. The record also carries `code` (`{commit, snapshot}`: the commit of the code snapshot the worker runs, and its directory), `restarted` (`{at, from, to}`, the last restart on new code, commit hashes) after one, and `exit` (`{at, reason, error}`) once the worker has ended: `reason` is `stopped`, `max_runs`, or `error` with `error` saying why |
+| `worker` | object | The background worker: its `worker.json` record (`pid`, `started_at`, `argv`, `log`, `projects`, `exclude_projects`, `max_parallel_runs`) with `state` `running` or `exited`, or `{"state": "none"}` without a record. A running worker also has `children`: one `{pid, project, run_id, kind, started_at}` per child in flight (`kind` is `run` or `scout`; scout children also have `scout_id`; `run_id` is available for fresh runs after registration via their task lock and child PID, and for selected resumptions), and `errors`: one `{project, stage, error, since, retry_at}` per project whose work currently fails (`stage` is `reconcile`, `task`, `start`, `run` or `scout`; `since` and `retry_at` are Unix timestamps). A running worker also has `skips: [{task_id, reason}]` for all current scheduler skip reasons (invalid tasks, quota, caps and optional [Leeboard holds](#leeboard-optional)), not skip history. The record also carries `code` (`{commit, snapshot}`: the commit of the code snapshot the worker runs, and its directory), `restarted` (`{at, from, to}`, the last restart on new code, commit hashes) after one, and `exit` (`{at, reason, error}`) once the worker has ended: `reason` is `stopped`, `max_runs`, or `error` with `error` saying why |
 
 The `scouts` object also includes `lenses` as described above; its activity fields have this shape:
 
@@ -2193,7 +2193,7 @@ with eligible focus-project/lens scouts using effective per-lens automation. A s
 overlaps another child for its project, and inherits the worker's committed-code snapshot
 environment. Foreground `--max-parallel` drains do not scout. The worker starts nothing
 while the queue is paused, for a task that `work` would skip (invalid, provider out of
-quota, over the spend caps, or under an optional [Logbook hold](#logbook-optional)), or for a project outside its scope. When nothing is eligible
+quota, over the spend caps, or under an optional [Leeboard hold](#leeboard-optional)), or for a project outside its scope. When nothing is eligible
 it waits and re-checks every `worker_poll_seconds`, and at once when a child ends; it exits only on `worker
 stop`, after `--max N` runs, or on an error outside any one project (the ledger, the pi
 version check at startup). A child that ends without a run (an error such as
@@ -2263,7 +2263,7 @@ again only after the next change. It does not restart under `--max`, outside a
 git checkout, or with `"worker_restart_on_code_change": false`.
 
 `helmraiser queue pause` stops new runs and scouts; `queue resume` permits starts again.
-Use the global queue pause to stop all starts, including scouts; see also [Logbook holds](#logbook-optional).
+Use the global queue pause to stop all starts, including scouts; see also [Leeboard holds](#leeboard-optional).
 
 The background worker never ends silently: when it exits for any reason but `worker
 stop` (an error, SIGTERM, `--max N` done), it records `exit` in `worker.json`, which
@@ -2274,7 +2274,7 @@ With `--json` the worker prints one line per event: `{"started": {pid, project,
 run_id, kind, started_at}}`, `{"finished": {…, "exit_code", "runs": [outcome…], "output":
 [the child's other lines]}}`, `{"scout_started": {…}}`, `{"scout_finished": {…,
 "exit_code", "scout_id", "outcome", "drafts", "report", "output"}}`,
-`{"skipped": task, …}` (once per task and reason; see [Logbook events](#logbook-optional)),
+`{"skipped": task, …}` (once per task and reason; see [Leeboard events](#leeboard-optional)),
 `{"base_sync": {project, status, reason, base_branch, remote, upstream,
 from_commit, to_commit, upstream_commit, …}}` for no-run base attempts (with `detail`
 on failures; foreground `work --json` emits this shape too),
@@ -2315,34 +2315,34 @@ Use `helmraiser work --dry-run` first to print the first spawn's argv, directive
 prompt without running anything. If another worker already holds a queued task's lock,
 `work` skips it without failing the task and continues to the next queued task.
 
-## Logbook (optional)
+## Leeboard (optional)
 
-Logbook (`lb`) optionally adds holds that pause fresh runs or landing, a brief in
+Leeboard (`lb`) optionally adds holds that pause fresh runs or landing, a brief in
 implementer directives, and run-authored entries in reports. Without `lb` on PATH,
 the integration is not in use: scheduling and landing proceed silently, directives
 and reports omit its context, and doctor labels it optional. An installed but failing
 executable remains fail-soft with the diagnostics described below.
 
-### Logbook holds
+### Leeboard holds
 
 `helmraiser land` checks `push` and then `merge` holds before approving or changing refs;
 an active hold exits 3. Missing `lb` silently continues; broken `lb` warns and continues,
 as below.
 
-An active Logbook (`lb`) hold whose `blocks` contains **`helmraiser-run`** skips fresh
+An active Leeboard (`lb`) hold whose `blocks` contains **`helmraiser-run`** skips fresh
 queued tasks in its scope. The task stays `queued`: no run row, worktree, pi session,
 or failure is created. A watching worker starts it on the first scheduling pass after
 release or expiry, without re-intake. Foreground `work` exits when all tasks are skipped;
 watch mode keeps polling. Running and resumed runs are unaffected. `--no-caps` does not
-bypass a Logbook hold; release the hold instead.
+bypass a Leeboard hold; release the hold instead.
 
 Helmraiser checks the task's own project directory. Global and machine holds apply to
-all projects; project-scoped holds require the project to be registered in Logbook
+all projects; project-scoped holds require the project to be registered in Leeboard
 with `lb project add`. Other projects may still start. The console (or background
 `worker.log`) names the reason:
 
 ```text
-skipped <task>: logbook hold: [hold-id] Tunnel open (release: close tunnel)
+skipped <task>: leeboard hold: [hold-id] Tunnel open (release: close tunnel)
 ```
 
 The supervisor announces each task once while the reason is unchanged, and again when
@@ -2354,9 +2354,9 @@ ledger history (D8); skips have no run to attach events to. No hold-specific des
 notification is sent.
 
 With `--json`, worker `{"skipped": task, …}` events (once per task and reason) for
-Logbook carry `"logbook_hold": [{id, title, release, until}]`, keys only when set,
+Leeboard carry `"leeboard_hold": [{id, title, release, until}]`, keys only when set,
 with a capped raw `"text"` fallback when holds cannot be parsed. The worker emits
-`{"warning": text}` when an installed Logbook check is unavailable (also emitted by
+`{"warning": text}` when an installed Leeboard check is unavailable (also emitted by
 foreground `work --json`). Unlike the global queue pause, a hold tagged `helmraiser-run`
 skips fresh queued tasks in its scope, not scouts.
 
@@ -2370,24 +2370,24 @@ An installed but broken `lb` **warns and schedules normally**, once per unchange
 streak; a changed failure or failure after recovery warns again. `helmraiser doctor`
 reports informational executable and store path/existence diagnostics without affecting
 readiness; an absent executable says `not installed (optional)`, so an owner can notice
-an unavailable gate. Only exit 3 holds tasks, even with malformed output; no Logbook
+an unavailable gate. Only exit 3 holds tasks, even with malformed output; no Leeboard
 store is created or changed by Helmraiser's checks.
 
-### Logbook brief
+### Leeboard brief
 
-Helmraiser generates a Logbook brief in its host process with `lb brief --cwd <worktree>`,
-falling back to the task's project if there is no worktree yet. Logbook resolves a
+Helmraiser generates a Leeboard brief in its host process with `lb brief --cwd <worktree>`,
+falling back to the task's project if there is no worktree yet. Leeboard resolves a
 worktree to its primary checkout's registered project. The source is owner- and
-agent-authored holds, grants, rules, references, inbox and repo state in `$LOGBOOK_HOME`
-(or `~/.logbook`), with `LOGBOOK_HARNESS=helmraiser` and `LOGBOOK_SESSION=<run id>`.
+agent-authored holds, grants, rules, references, inbox and repo state in `$LEEBOARD_HOME`
+(or `~/.leeboard`), with `LEEBOARD_HARNESS=helmraiser` and `LEEBOARD_SESSION=<run id>`.
 
-The brief appears under `## Logbook` after project notes in implementation directives
+The brief appears under `## Leeboard` after project notes in implementation directives
 only, not plan, review or scout directives. It is advisory context: the task file and
 directives win on conflict. The implementer is told to skip other brief or recall steps
 and not run `lb brief` again. This context is distinct from project notes and from the
-scheduling Logbook hold gate, which can skip a fresh task before a run starts.
+scheduling Leeboard hold gate, which can skip a fresh task before a run starts.
 
-Scout inputs include the project's Logbook hold, grant and rule titles from `lb brief`
+Scout inputs include the project's Leeboard hold, grant and rule titles from `lb brief`
 when `lb` is available.
 
 With an available brief, implementers get guidance for rare writes: entries must change
@@ -2402,17 +2402,17 @@ Entries created by a run appear in `helmraiser report`.
 
 Fetching has a 15-second timeout. Text is capped at 8000 characters, including the
 `… brief truncated` marker when Helmraiser must cut at a line boundary. Missing `lb`
-produces no Logbook context or writing guidance. An installed but failing `lb` is
-fail-soft: directives instead say `Logbook is unavailable (<reason>): skip brief
+produces no Leeboard context or writing guidance. An installed but failing `lb` is
+fail-soft: directives instead say `Leeboard is unavailable (<reason>): skip brief
 and recall steps.` Successful empty output still enables writing guidance. Each active run instance caches
 its first result across iterations, including empty or unavailable results; a resumed
 instance fetches on its first directive write. Dry-run previews never fetch a brief,
-because `lb brief` can move the session's Logbook cursor.
+because `lb brief` can move the session's Leeboard cursor.
 
-### Logbook entries in reports
+### Leeboard entries in reports
 
 For each listed landed, awaiting-approval or failed run, `helmraiser report` shows
-its current Logbook entries in a `### Logbook entries` section next to the run's
+its current Leeboard entries in a `### Leeboard entries` section next to the run's
 verdict. Each item includes its id, kind, current status, scope and title; released
 or superseded entries remain attributed to their authoring run. Titles are
 single-lined and clipped to 200 characters in text output.
@@ -2420,26 +2420,26 @@ single-lined and clipped to 200 characters in text output.
 Reports query the CLI, not store files: one
 `lb list --session <run id> --harness helmraiser --json` per included run,
 sequentially, on every report. This costs about 80 ms per run, so a large
-`--since 30d` window can add seconds. Each run shows at most 20 entries in Logbook's
-newest-first order, with a count of any remainder (`logbook_more` in JSON).
-`--json` includes a `logbook_entries` list on every run, empty when none.
+`--since 30d` window can add seconds. Each run shows at most 20 entries in Leeboard's
+newest-first order, with a count of any remainder (`leeboard_more` in JSON).
+`--json` includes a `leeboard_entries` list on every run, empty when none.
 
 Lookup is fail-soft: missing `lb`, errors or invalid replies show no entries,
 indistinguishable from a run that wrote none. After a missing executable or a
 10-second timeout, remaining runs are not queried; other failures affect only
-that run. No Logbook section is added to `summary.md`.
+that run. No Leeboard section is added to `summary.md`.
 
-### Logbook access
+### Leeboard access
 
 The host-generated brief reaches the implementer through its directives; this delivery
 does not change sandbox read permissions.
 
-Setup, verify and evidence commands strip `LOGBOOK_HARNESS` and `LOGBOOK_SESSION`
+Setup, verify and evidence commands strip `LEEBOARD_HARNESS` and `LEEBOARD_SESSION`
 (the worker's interactive identity) from the worker's environment. pi's allowlist
-includes `LOGBOOK_HOME` when set (otherwise `lb` uses `HOME/.logbook`).
-pi sessions also receive `LOGBOOK_HARNESS=helmraiser` and
-`LOGBOOK_SESSION=<run_id>` (scouts use their supplied scout ID), not the worker's
-inherited Logbook identity. Setup, verify and evidence do not receive this injected
+includes `LEEBOARD_HOME` when set (otherwise `lb` uses `HOME/.leeboard`).
+pi sessions also receive `LEEBOARD_HARNESS=helmraiser` and
+`LEEBOARD_SESSION=<run_id>` (scouts use their supplied scout ID), not the worker's
+inherited Leeboard identity. Setup, verify and evidence do not receive this injected
 identity.
 
 Ordinary pi sessions also reopen the resolved `lb` install's nearest package root
@@ -2448,14 +2448,14 @@ includes its `dist/`, `node_modules/` and other package files, not the rest of t
 sibling project. Credential, configured and data-directory denials still win.
 
 Ordinary pi sessions can write the whole existing effective store
-(`LOGBOOK_HOME`, else `~/.logbook`), including entry directories, `log.jsonl` and
+(`LEEBOARD_HOME`, else `~/.leeboard`), including entry directories, `log.jsonl` and
 session cursors. An existing store `.git` is denied writes to prevent planting hooks
 for the owner's later unconfined commits. Helmraiser neither creates nor grants a
 missing store. These additional store-write and install-read grants do not apply to
 readonly (intake) sessions, setup, verify or evidence.
 
 Whole-store writes and environment attribution are not a security boundary against
-direct entry-file edits or deliberate `LOGBOOK_HARNESS` overrides. Explicit task/project
+direct entry-file edits or deliberate `LEEBOARD_HARNESS` overrides. Explicit task/project
 `env` overrides still win over the injected identity and inherited store location.
 
 ## Troubleshooting

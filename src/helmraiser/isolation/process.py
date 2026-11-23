@@ -44,7 +44,7 @@ a credential or configured denial.
 Writes go only to the worktree, the run's ``sessions/`` directory, the configured
 temporary directory, ``/tmp`` (unless it contains the git common dir, which must not
 be opened through a broader root),
-the existing Logbook store (``LOGBOOK_HOME``, else ``~/.logbook``), and two more
+the existing Leeboard store (``LEEBOARD_HOME``, else ``~/.leeboard``), and two more
 places pi needs, found by running pi under srt. The store's existing ``.git`` is
 denied writes so a worker cannot plant hooks for the owner's later commits:
 
@@ -97,7 +97,7 @@ from typing import Any
 import helmraiser.config as helmraiser_config
 from helmraiser.isolation.relay import relay_argv
 from helmraiser.isolation.retry import RetryObserver, SandboxLaunch
-from helmraiser.logbook import lb_install_root, logbook_home
+from helmraiser.leeboard import lb_install_root, leeboard_home
 
 DEFAULT_ALLOWED_DOMAINS: tuple[str, ...] = (
     "api.openai.com",
@@ -616,7 +616,7 @@ class ProcessIsolation:
                 deny_write.append(_abs(config))
         self._allow_tmpdir(allow_write, common)
         if not self.readonly:
-            store = logbook_home()
+            store = leeboard_home()
             if store.is_dir():
                 allow_write.append(str(store))
                 if (store / ".git").exists():

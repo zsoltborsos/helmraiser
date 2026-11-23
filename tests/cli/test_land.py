@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 from typer.testing import CliRunner
 
-from helmraiser import logbook
+from helmraiser import leeboard
 from helmraiser.cli import app
 from helmraiser.ledger.db import Ledger
 from helmraiser.ledger.rundir import RunDir
@@ -20,7 +20,7 @@ from tests.loop.test_landing import clock  # noqa: F401
 from tests.pipeline.test_worktree import git
 
 runner = CliRunner()
-STEP_NAMES = ["preflight", "logbook", "approve", "ci", "sync", "push", "local", "confirm"]
+STEP_NAMES = ["preflight", "leeboard", "approve", "ci", "sync", "push", "local", "confirm"]
 
 GH = r"""#!/bin/sh
 printf '%s\n' "$*" >> "$LAND_GH_LOG"
@@ -679,7 +679,7 @@ def test_holds_before_approval(env, fake_lb, blocks):
 def test_lb_unavailable_warns_and_continues(env, fake_lb, monkeypatch, missing):
     out = env.new()
     if missing:
-        monkeypatch.setattr(logbook, "find_lb", lambda: None)
+        monkeypatch.setattr(leeboard, "find_lb", lambda: None)
     else:
         fake_lb.write_script({"check": {"exit": 6, "stderr": "broken"}})
     result = env.land(out)

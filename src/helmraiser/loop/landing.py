@@ -14,7 +14,7 @@ from time import monotonic, sleep
 from typing import Any
 
 from helmraiser.code_snapshot import without_snapshot
-from helmraiser.logbook import check_hold
+from helmraiser.leeboard import check_hold
 from helmraiser.pipeline.worktree import WorktreeManager
 
 COMMAND_TIMEOUT = 60.0
@@ -75,7 +75,7 @@ def land_run(
     try:
         preflight(project, branch, base)
         record(current, "ok", f"origin/{base}")
-        current = "logbook"
+        current = "leeboard"
         warnings = []
         for blocks in ("push", "merge"):
             check = check_hold(project, blocks=blocks)

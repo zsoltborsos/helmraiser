@@ -210,7 +210,7 @@ def test_cli_claim_safety_race_before_model(
     monkeypatch.setattr(scout_commands, "load_config", lambda: config)
     fake_pi.write_script({"default": {"text": "[]"}})
     monkeypatch.setattr(scout_commands, "_intake_callback", lambda *args: None)
-    monkeypatch.setattr(scout_module, "_logbook_brief", lambda *args: None)
+    monkeypatch.setattr(scout_module, "_leeboard_brief", lambda *args: None)
 
     def adapter_after_gate(*args):
         # Adapter construction is after the real gate, before the atomic claim.
@@ -927,7 +927,7 @@ def test_child_resolves_requested_lens(tmp_project, tmp_path, monkeypatch, lens)
 
     config = config_for(tmp_project)
     monkeypatch.setattr(scout_commands, "load_config", lambda: config)
-    monkeypatch.setattr(scout_module, "_logbook_brief", lambda repo: None)
+    monkeypatch.setattr(scout_module, "_leeboard_brief", lambda repo: None)
     adapter = ScriptedPiAdapter({"scout": PiScript(final_text="[]")})
     monkeypatch.setattr(scout_commands, "get_scout_adapter", lambda *args: adapter)
     ledger = Ledger(tmp_path / "helmraiser.db")

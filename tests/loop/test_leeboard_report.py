@@ -1,4 +1,4 @@
-"""Live Logbook entries accompany all three report sections, including CLI JSON."""
+"""Live Leeboard entries accompany all three report sections, including CLI JSON."""
 
 import json
 import os
@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
-from helmraiser import logbook
+from helmraiser import leeboard
 from helmraiser.cli import app, monitor
 from helmraiser.ledger.rundir import RunDir
 from helmraiser.loop import report as report_module
@@ -45,7 +45,7 @@ def lb_entry(entry_id, *, title="A lesson", status="active"):
     }
 
 
-def test_logbook_report_only_queries_selected_runs_once(
+def test_leeboard_report_only_queries_selected_runs_once(
     ledger, data_dir, config, report_runs, fake_lb, monkeypatch
 ):
     report_runs("landed")
@@ -76,7 +76,7 @@ def test_logbook_report_only_queries_selected_runs_once(
         }
     )
     lookups = []
-    real_lookup = logbook.run_entries
+    real_lookup = leeboard.run_entries
 
     def record(ids):
         lookups.append(list(ids))
@@ -92,18 +92,18 @@ def test_logbook_report_only_queries_selected_runs_once(
         ["list", "--harness", "helmraiser", "--json"]
     ]
     for entry in included:
-        assert entry["logbook_entries"] == (
+        assert entry["leeboard_entries"] == (
             [] if entry["run_id"] == "empty" else [lb_entry(entry["run_id"] + "-entry")]
         )
-        assert "logbook_more" not in entry
-    assert all(call["env"]["LOGBOOK_SESSION"] is None for call in fake_lb.calls())
+        assert "leeboard_more" not in entry
+    assert all(call["env"]["LEEBOARD_SESSION"] is None for call in fake_lb.calls())
 
 
 @pytest.mark.parametrize(
     "status,section",
     [("landed", "landed"), ("awaiting_approval", "awaiting"), ("failed", "failed")],
 )
-def test_logbook_report_text_and_cli_json(
+def test_leeboard_report_text_and_cli_json(
     ledger, data_dir, config, report_runs, fake_lb, monkeypatch, status, section
 ):
     report_runs("with-entries", status)
@@ -128,15 +128,15 @@ def test_logbook_report_text_and_cli_json(
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     rows = {row["run_id"]: row for row in payload[section]}
-    assert rows["with-entries"]["logbook_entries"] == entries
-    assert rows["without-entries"]["logbook_entries"] == []
-    assert "logbook_more" not in rows["with-entries"]
+    assert rows["with-entries"]["leeboard_entries"] == entries
+    assert rows["without-entries"]["leeboard_entries"] == []
+    assert "leeboard_more" not in rows["with-entries"]
 
     result = runner.invoke(app, ["report", "--data-dir", str(data_dir)])
     assert result.exit_code == 0, result.output
     text = result.output
-    assert text.count("### Logbook entries") == 1
-    assert text.count("- logbook entries: 3") == 1
+    assert text.count("### Leeboard entries") == 1
+    assert text.count("- leeboard entries: 3") == 1
     assert "- [newest] handoff released global: new lesson\n" in text
     assert "- [older] handoff superseded global: " + "x" * 199 + "…\n" in text
     assert "- [untitled] handoff active global: (untitled)\n" in text
@@ -145,7 +145,7 @@ def test_logbook_report_text_and_cli_json(
     assert len(fake_lb.calls()) == 2  # No cache across report invocations.
 
 
-def test_logbook_report_caps_entries_in_lb_order(ledger, data_dir, config, report_runs, fake_lb):
+def test_leeboard_report_caps_entries_in_lb_order(ledger, data_dir, config, report_runs, fake_lb):
     report_runs("many")
     entries = [lb_entry(f"entry-{i}") for i in range(25, 0, -1)]
     fake_lb.write_script(
@@ -159,10 +159,10 @@ def test_logbook_report_caps_entries_in_lb_order(ledger, data_dir, config, repor
     )
     result = build_report(ledger, data_dir, 86400, config=config)
     run = result["landed"][0]
-    assert run["logbook_entries"] == entries[:20]
-    assert run["logbook_more"] == 5
+    assert run["leeboard_entries"] == entries[:20]
+    assert run["leeboard_more"] == 5
     text = render_report(result, "24h")
-    assert "- logbook entries: 25\n" in text
+    assert "- leeboard entries: 25\n" in text
     assert "… 5 more — lb list" in text
     assert text.count("- [entry-") == 20
     assert "[entry-5]" not in text
@@ -170,13 +170,13 @@ def test_logbook_report_caps_entries_in_lb_order(ledger, data_dir, config, repor
     assert len(fake_lb.calls()) == 1
 
 
-def test_logbook_report_uses_cli_not_store_and_refreshes_status(
+def test_leeboard_report_uses_cli_not_store_and_refreshes_status(
     ledger, data_dir, config, report_runs, fake_lb
 ):
     report_runs("run")
     store_entry = lb_entry("from-file", title="Do not show this")
     store_entry["author"] = {"harness": "helmraiser", "session": "run"}
-    store = Path(os.environ["LOGBOOK_HOME"]) / "log.jsonl"
+    store = Path(os.environ["LEEBOARD_HOME"]) / "log.jsonl"
     store.write_text(json.dumps(store_entry) + "\n")
     summary = RunDir("run", data_dir).create().summary_md
     summary.write_text("## Existing summary\n\n### Review: pass\n\nExisting detail\n")
@@ -186,7 +186,7 @@ def test_logbook_report_uses_cli_not_store_and_refreshes_status(
         {"list": {"stdout": json.dumps([{**cli_entry, "author": {"session": "run"}}])}}
     )
     result = build_report(ledger, data_dir, 86400, config=config)
-    assert result["landed"][0]["logbook_entries"] == [cli_entry]
+    assert result["landed"][0]["leeboard_entries"] == [cli_entry]
     assert "from-file" not in render_report(result, "24h")
     cli_entry["status"] = "released"
     fake_lb.write_script(
@@ -200,7 +200,7 @@ def test_logbook_report_uses_cli_not_store_and_refreshes_status(
     assert len(fake_lb.calls()) == 2
 
 
-def test_logbook_report_missing_lb_is_indistinguishable_from_no_entries(
+def test_leeboard_report_missing_lb_is_indistinguishable_from_no_entries(
     ledger, data_dir, config, report_runs, fake_lb, monkeypatch
 ):
     for status in ("landed", "awaiting_approval", "failed"):
@@ -209,34 +209,34 @@ def test_logbook_report_missing_lb_is_indistinguishable_from_no_entries(
     now = time.time()
     empty = build_report(ledger, data_dir, 86400, now=now, config=config)
     assert len(fake_lb.calls()) == 1
-    monkeypatch.setattr(logbook, "find_lb", lambda: None)
+    monkeypatch.setattr(leeboard, "find_lb", lambda: None)
     missing = build_report(ledger, data_dir, 86400, now=now, config=config)
     assert missing == empty
     text = render_report(missing, "24h")
-    assert "### Logbook entries" not in text
-    assert "- logbook entries:" not in text
+    assert "### Leeboard entries" not in text
+    assert "- leeboard entries:" not in text
     assert len(fake_lb.calls()) == 1
 
 
-def test_logbook_report_deeply_nested_json_fails_soft(
+def test_leeboard_report_deeply_nested_json_fails_soft(
     ledger, data_dir, config, report_runs, fake_lb
 ):
     report_runs("deep-json")
     report_runs("healthy", "awaiting_approval")
     fake_lb.write_script({"list": {"stdout": "[" * 100000}})
     result = build_report(ledger, data_dir, 86400, config=config)
-    assert result["landed"][0]["logbook_entries"] == []
-    assert result["awaiting"][0]["logbook_entries"] == []
+    assert result["landed"][0]["leeboard_entries"] == []
+    assert result["awaiting"][0]["leeboard_entries"] == []
     text = render_report(result, "24h")
     assert "- run: `deep-json`" in text
     assert "- run: `healthy`" in text
-    assert "### Logbook entries" not in text
+    assert "### Leeboard entries" not in text
     assert [call["argv"] for call in fake_lb.calls()] == [
         ["list", "--harness", "helmraiser", "--json"]
     ]
 
 
-def test_logbook_report_parses_only_reported_tasks_once(
+def test_leeboard_report_parses_only_reported_tasks_once(
     ledger, data_dir, config, make_task, fake_lb, monkeypatch
 ):
     now = 2_000_000_000.0
@@ -295,7 +295,7 @@ def test_logbook_report_parses_only_reported_tasks_once(
     assert sorted(parsed) == sorted(snapshots[task_id] for task_id in reported_tasks)
 
 
-def test_logbook_report_excluded_tasks_do_not_parse_frontmatter(
+def test_leeboard_report_excluded_tasks_do_not_parse_frontmatter(
     ledger, data_dir, config, make_task, fake_lb, monkeypatch
 ):
     now = 2_000_000_000.0
@@ -320,8 +320,8 @@ def test_logbook_report_excluded_tasks_do_not_parse_frontmatter(
     assert fake_lb.calls() == []
 
 
-def test_logbook_report_empty_window_has_no_calls(ledger, data_dir, config, fake_lb):
+def test_leeboard_report_empty_window_has_no_calls(ledger, data_dir, config, fake_lb):
     result = build_report(ledger, data_dir, 86400, config=config)
     assert result["landed"] == result["awaiting"] == result["failed"] == []
-    assert "Logbook" not in render_report(result, "24h")
+    assert "Leeboard" not in render_report(result, "24h")
     assert fake_lb.calls() == []

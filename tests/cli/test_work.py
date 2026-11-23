@@ -299,17 +299,17 @@ def test_partial_work_models_use_queue_snapshot(cli_env, data_dir, tmp_project, 
 
 class TestDryRun:
     @pytest.mark.parametrize("as_json", [False, True])
-    def test_logbook_dry_run_does_not_fetch_brief(
+    def test_leeboard_dry_run_does_not_fetch_brief(
         self, tmp_project, data_dir, fake_pi, fake_lb, as_json
     ):
         task_id = queue_task(tmp_project, data_dir)
-        fake_lb.write_script({"brief": {"stdout": "RECOGNIZABLE LOGBOOK BRIEF"}})
+        fake_lb.write_script({"brief": {"stdout": "RECOGNIZABLE LEEBOARD BRIEF"}})
         result = work("--dry-run", *(["--json"] if as_json else []), data_dir=data_dir)
         assert result.exit_code == 0, result.output
         assert not [call for call in fake_lb.calls() if call["argv"][0] == "brief"]
-        assert "RECOGNIZABLE LOGBOOK BRIEF" not in result.output
-        assert "## Logbook" not in result.output
-        assert "Logbook is unavailable" not in result.output
+        assert "RECOGNIZABLE LEEBOARD BRIEF" not in result.output
+        assert "## Leeboard" not in result.output
+        assert "Leeboard is unavailable" not in result.output
         assert fake_pi.calls() == []
         assert Ledger(data_dir / "helmraiser.db").list_runs() == []
         assert Ledger(data_dir / "helmraiser.db").get_task(task_id)["status"] == "queued"

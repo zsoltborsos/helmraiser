@@ -1,4 +1,4 @@
-"""Main flows with Logbook genuinely absent from PATH."""
+"""Main flows with Leeboard genuinely absent from PATH."""
 
 import json
 import os
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from helmraiser import logbook
+from helmraiser import leeboard
 from helmraiser.cli import commands, supervisor
 from helmraiser.ledger.db import Ledger, ProjectScope
 from helmraiser.ledger.rundir import RunDir
@@ -19,7 +19,7 @@ from tests.cli.test_land import GH
 from tests.cli.test_supervisor import Harness, events, queue_real
 from tests.conftest import configured_test_config
 from tests.loop.test_reconcile import FakeController
-from tests.pi.test_logbook_directives import implement
+from tests.pi.test_leeboard_directives import implement
 from tests.pipeline.test_worktree import git
 
 
@@ -36,13 +36,13 @@ def cli_env(no_lb, monkeypatch, tmp_path):
 
 def assert_no_warning(text):
     lowered = text.lower()
-    for phrase in ("logbook: hold check skipped", "logbook is unavailable", "logbook hold"):
+    for phrase in ("leeboard: hold check skipped", "leeboard is unavailable", "leeboard hold"):
         assert phrase not in lowered
 
 
 def assert_unused(fake_lb):
-    assert logbook.find_lb() is None
-    assert list(logbook.logbook_home().iterdir()) == []
+    assert leeboard.find_lb() is None
+    assert list(leeboard.leeboard_home().iterdir()) == []
     assert fake_lb.calls() == []
 
 
@@ -79,25 +79,25 @@ def run_task(project, data, fake_pi, delivery):
     run_id = outcome["run_id"]
     assert ledger.pending_approval(run_id)["kind"] == "merge"
     directives = RunDir(run_id, data).directives_md
-    assert_no_logbook_context(directives.read_text())
+    assert_no_leeboard_context(directives.read_text())
     implement_calls = [call for call in fake_pi.calls() if str(directives) in call["argv"]]
     assert len(implement_calls) == 1
     assert "--append-system-prompt" in implement_calls[0]["argv"]
     for event in ledger.events(run_id):
         assert_no_warning(json.dumps(event))
-        assert "logbook_hold" not in json.dumps(event)
+        assert "leeboard_hold" not in json.dumps(event)
     return outcome
 
 
 def assert_report(data, run_id, lane):
     human = checked("report", data_dir=data)
-    assert "Logbook" not in human.output
+    assert "Leeboard" not in human.output
     report = json.loads(checked("report", "--json", data_dir=data).output)
     row = next(row for row in report[lane] if row["run_id"] == run_id)
-    assert row["logbook_entries"] == []
+    assert row["leeboard_entries"] == []
 
 
-def test_intake_work_approve_and_monitor_without_logbook(
+def test_intake_work_approve_and_monitor_without_leeboard(
     cli_env, tmp_project, tmp_path, fake_pi, fake_lb
 ):
     data = tmp_path / "data"
@@ -113,14 +113,14 @@ def test_intake_work_approve_and_monitor_without_logbook(
     assert (tmp_project / "done.txt").read_text() == "ok\n"
     assert_report(data, run_id, "landed")
     human = checked("doctor", data_dir=data)
-    assert "logbook" in human.output and "info" in human.output
+    assert "leeboard" in human.output and "info" in human.output
     assert "not installed (optional)" in " ".join(human.output.split())
     doctor = json.loads(checked("doctor", "--json", data_dir=data).output)
-    assert doctor["logbook"] == {"lb": None, "home": str(logbook.logbook_home()), "exists": True}
+    assert doctor["leeboard"] == {"lb": None, "home": str(leeboard.leeboard_home()), "exists": True}
     assert_unused(fake_lb)
 
 
-def test_pr_land_without_logbook(cli_env, tmp_project, tmp_path, fake_pi, fake_lb, monkeypatch):
+def test_pr_land_without_leeboard(cli_env, tmp_project, tmp_path, fake_pi, fake_lb, monkeypatch):
     origin = tmp_path / "origin.git"
     git(tmp_path, "init", "--bare", "-b", "main", str(origin))
     git(tmp_project, "remote", "add", "origin", str(origin))
@@ -167,12 +167,12 @@ def test_pr_land_without_logbook(cli_env, tmp_project, tmp_path, fake_pi, fake_l
     assert_unused(fake_lb)
 
 
-def assert_no_logbook_context(text):
-    for phrase in ("Logbook", "lb brief", "lb handoff", "lb request", "lb add rule"):
+def assert_no_leeboard_context(text):
+    for phrase in ("Leeboard", "lb brief", "lb handoff", "lb request", "lb add rule"):
         assert phrase not in text
 
 
-def test_worker_admits_without_logbook(
+def test_worker_admits_without_leeboard(
     cli_env, tmp_project, tmp_path, fake_lb, monkeypatch, capsys
 ):
     data = tmp_path / "data"
@@ -210,47 +210,47 @@ def test_worker_admits_without_logbook(
     emitted = events(output)
     assert emitted
     assert all("warning" not in event and "skipped" not in event for event in emitted)
-    assert "logbook_hold" not in output
+    assert "leeboard_hold" not in output
     assert len(harness.spawned) == 1
     assert len(harness.children) == 1 and harness.children[0].code == 0
     assert ledger.get_task(task_id)["status"] == "landed"
     assert_unused(fake_lb)
 
 
-def test_scout_context_without_logbook(no_lb, tmp_project, tmp_path, fake_lb, capsys):
+def test_scout_context_without_leeboard(no_lb, tmp_project, tmp_path, fake_lb, capsys):
     ledger = Ledger(tmp_path / "data" / "helmraiser.db")
     inputs = collect_scout_inputs(tmp_project, ledger, ())
-    assert inputs["logbook"] is None
+    assert inputs["leeboard"] is None
     text = render_scout_directives(
         scout_id="s", project=str(tmp_project), worktree=str(tmp_project), exclusions=()
     )
-    assert_no_logbook_context(text)
+    assert_no_leeboard_context(text)
     assert capsys.readouterr().out == ""
     assert_unused(fake_lb)
 
 
 def test_absent_brief_has_no_directive_context(no_lb, fake_lb, tmp_project):
-    brief = logbook.fetch_brief(tmp_project, "r")
-    assert brief == logbook.BriefResult(None, None)
-    assert_no_logbook_context(implement(logbook_brief=brief))
+    brief = leeboard.fetch_brief(tmp_project, "r")
+    assert brief == leeboard.BriefResult(None, None)
+    assert_no_leeboard_context(implement(leeboard_brief=brief))
     assert fake_lb.calls() == []
 
 
 def test_absent_hold_gate_is_silent(no_lb, fake_lb, tmp_project):
     warnings = []
-    gate = logbook.HoldGate(warnings.append)
-    assert gate.check(str(tmp_project)) == logbook.HoldCheck("clear")
-    assert gate.check(str(tmp_project)) == logbook.HoldCheck("clear")
+    gate = leeboard.HoldGate(warnings.append)
+    assert gate.check(str(tmp_project)) == leeboard.HoldCheck("clear")
+    assert gate.check(str(tmp_project)) == leeboard.HoldCheck("clear")
     gate.clear()
-    assert gate.check(str(tmp_project)) == logbook.HoldCheck("clear")
+    assert gate.check(str(tmp_project)) == leeboard.HoldCheck("clear")
     assert warnings == []
     assert fake_lb.calls() == []
 
 
 def test_no_lb_fixture_hides_binary(no_lb, fake_lb, fake_pi):
     assert shutil.which("lb") is None
-    assert logbook.find_lb() is None
-    assert list(Path(os.environ["LOGBOOK_HOME"]).iterdir()) == []
+    assert leeboard.find_lb() is None
+    assert list(Path(os.environ["LEEBOARD_HOME"]).iterdir()) == []
     assert shutil.which("git")
     assert shutil.which("pi") == str(fake_pi.bin)
     assert fake_lb.calls() == []

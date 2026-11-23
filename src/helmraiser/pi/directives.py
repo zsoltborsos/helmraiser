@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from helmraiser.logbook import BriefResult
+from helmraiser.leeboard import BriefResult
 from helmraiser.project_notes import project_notes_section
 
 IMPLEMENT_TEMPLATE = """\
@@ -46,9 +46,9 @@ APPROVAL_NOTE = """\
 """
 
 # Only with an available brief; outside the baseline template's 1.5 KB budget.
-LOGBOOK_WRITING_NOTE = """\
+LEEBOARD_WRITING_NOTE = """\
 
-Writing to Logbook: rare; default write nothing. Entries: change action; unavailable from repo/tools when needed; require author/end condition. Progress, code facts, unfixed defects: final message.
+Writing to Leeboard: rare; default write nothing. Entries: change action; unavailable from repo/tools when needed; require author/end condition. Progress, code facts, unfixed defects: final message.
 {handoff}`lb request --to <target> --title "..."`: open agent/owner question; keep working. Targets: project:<name> (brief header), session:<id>, harness:<name>, any.
 `lb add rule --title "..." --body "..."`: lasting do/don't learned the hard way, absent from repo.
 Never run `lb release`, `lb revoke`, `lb supersede`, `lb hold`, `lb grant`, `lb ack`, `lb close`, `lb reply`: owner/interactive only. Exit 6: no retry/bypass.
@@ -151,8 +151,8 @@ def render_implement_directives(
     project_notes: str | None = None,
     has_plan_approval_note: bool = False,
     paths: tuple[str, ...] | None = None,
-    logbook_brief: BriefResult | None = None,
-    logbook_handoff_to: str | None = None,
+    leeboard_brief: BriefResult | None = None,
+    leeboard_handoff_to: str | None = None,
 ) -> str:
     """``service_vars``: the names the run's services provide (none: no services note)."""
     services = SERVICES_NOTE.format(names=", ".join(service_vars)) if service_vars else ""
@@ -177,25 +177,25 @@ def render_implement_directives(
         path_scope=_render_path_scope(paths, review=False),
         project_notes=_render_project_notes(project_notes),
     )
-    if logbook_brief is not None:
-        if logbook_brief.text is not None:
+    if leeboard_brief is not None:
+        if leeboard_brief.text is not None:
             text += (
-                "\n## Logbook\n\n"
+                "\n## Leeboard\n\n"
                 "Helmraiser generated the brief below for this run as advisory context written "
                 "by the owner and other agents; the task file and these directives win on "
                 "conflict, so skip any other brief or recall step and do not run `lb brief` "
-                "again.\n\n" + logbook_brief.text + "\n"
+                "again.\n\n" + leeboard_brief.text + "\n"
             )
             handoff = (
-                f'`lb handoff --to {logbook_handoff_to} --title "..." --body "..."`: '
+                f'`lb handoff --to {leeboard_handoff_to} --title "..." --body "..."`: '
                 "review needs beyond diff/final message.\n"
-                if logbook_handoff_to is not None
+                if leeboard_handoff_to is not None
                 else ""
             )
-            text += LOGBOOK_WRITING_NOTE.format(handoff=handoff)
-        elif logbook_brief.note is not None:
+            text += LEEBOARD_WRITING_NOTE.format(handoff=handoff)
+        elif leeboard_brief.note is not None:
             text += (
-                f"\nLogbook is unavailable ({logbook_brief.note}): skip brief and recall steps.\n"
+                f"\nLeeboard is unavailable ({leeboard_brief.note}): skip brief and recall steps.\n"
             )
     return text
 

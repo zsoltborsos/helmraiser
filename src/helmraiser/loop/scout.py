@@ -6,7 +6,6 @@ import asyncio
 import hashlib
 import json
 import math
-import os
 import re
 import subprocess
 import sys
@@ -18,7 +17,7 @@ from typing import Any, Protocol, Required, TypedDict
 
 from helmraiser.ledger.db import TERMINAL_RUN_STATUSES, Ledger
 from helmraiser.ledger.rundir import RunDir
-from helmraiser.logbook import find_lb, logbook_identity
+from helmraiser.leeboard import find_lb, lb_environment, leeboard_identity
 from helmraiser.loop import spend
 from helmraiser.loop.preflight import (
     PreflightError,
@@ -176,13 +175,13 @@ def _brief_titles(value: Any) -> list[str]:
     return titles
 
 
-def _logbook_brief(repo: Path) -> dict[str, list[str]] | None:
+def _leeboard_brief(repo: Path) -> dict[str, list[str]] | None:
     try:
         executable = find_lb()
         if executable is None:
             return None
-        env = {**os.environ, **logbook_identity(None)}
-        env.pop("LOGBOOK_SESSION", None)  # Scouts must not write a session cursor.
+        env = lb_environment(leeboard_identity(None))
+        env.pop("LEEBOARD_SESSION", None)  # Scouts must not write a session cursor.
         result = subprocess.run(
             [executable, "brief", "--cwd", str(repo), "--json"],
             env=env,
@@ -244,7 +243,7 @@ def collect_scout_inputs(
         "tasks": task_rows,
         "dropped_drafts": dropped,
         "exclusions": list(exclusions),
-        "logbook": _logbook_brief(repo),
+        "leeboard": _leeboard_brief(repo),
         "project_notes": project_notes,
     }
 

@@ -361,6 +361,7 @@ class Replay:
     prompt_file: Path
     diff_text: str
     diff_check: str  # "exact" (inline diff matched) | "size" (out-of-line diff, size only)
+    reviewed_at: float  # the ledger ts of review N's review_verdict
 
     @property
     def title(self) -> str:
@@ -391,17 +392,22 @@ def _diff_section(diff_text: str, diff_path: Path) -> str:
 
 def review_prompt_file(
     ledger: Ledger, run_id: str, run_dir: Path, review: int
-) -> tuple[Path, float]:
-    """The stored prompt of review ``review`` and when that review stage started.
+) -> tuple[Path, float, float]:
+    """The stored prompt of review ``review``, when that review stage started and when its
+    ``review_verdict`` was recorded.
 
     Review sessions all spill with attempt 1, so review prompts are numbered in launch
     order (``prompt-review-1.md``, ``-2``, ...); a provider retry inside a review spills
     once more. Review stage starts and review retries in the ledger give the order.
     """
     starts: list[tuple[float, int]] = []
+    verdicts: list[float] = []
     launches = 0
-    for event in ledger.events(run_id, types=("stage_start", "retry")):
-        if event["type"] == "stage_start" and event["payload"].get("stage") == "review":
+    for event in ledger.events(run_id, types=("stage_start", "retry", "review_verdict")):
+        if event["type"] == "review_verdict":
+            if len(verdicts) < len(starts):
+                verdicts.append(float(event["ts"]))
+        elif event["type"] == "stage_start" and event["payload"].get("stage") == "review":
             starts.append((float(event["ts"]), launches))
             launches += 1
         elif event["type"] == "retry" and event["stage"] == "review" and starts:
@@ -422,7 +428,9 @@ def review_prompt_file(
             f"{run_dir}; cannot tell which is review {review}"
         )
     ts, index = starts[review - 1]
-    return files[index], ts
+    if len(verdicts) < review:
+        raise ReplayError(f"review {review} of run {run_id} recorded no verdict")
+    return files[index], ts, verdicts[review - 1]
 
 
 def _candidates(
@@ -459,7 +467,9 @@ def reconstruct(case: Case, ledger: Ledger, runs_dir: Path) -> Replay:
     if not project.is_dir():
         raise ReplayError(f"project of run {case.run_id} no longer exists: {project}")
     run_dir = runs_dir / case.run_id
-    prompt_file, started = review_prompt_file(ledger, case.run_id, run_dir, case.review)
+    prompt_file, started, reviewed_at = review_prompt_file(
+        ledger, case.run_id, run_dir, case.review
+    )
     recorded = case.meta.get("review_prompt")
     if recorded and Path(recorded).expanduser().resolve() != prompt_file.resolve():
         raise ReplayError(
@@ -508,6 +518,7 @@ def reconstruct(case: Case, ledger: Ledger, runs_dir: Path) -> Replay:
                     prompt_file=prompt_file,
                     diff_text=diff.stdout,
                     diff_check="exact" if inline else "size",
+                    reviewed_at=reviewed_at,
                 )
     raise ReplayError(
         f"no recorded commit of run {case.run_id} reproduces the diff in {prompt_file.name} "
@@ -555,15 +566,29 @@ def relocate(text: str, replay: Replay, worktree: Path, run_dir: Path) -> str:
     return text
 
 
-def prepare_run_dir(replay: Replay, run_dir: Path, diff_text: str) -> None:
-    """The replay's run dir: copies of the run's evidence and logs, and the reviewed diff."""
+def prepare_run_dir(replay: Replay, run_dir: Path, diff_text: str) -> tuple[list[str], list[str]]:
+    """The replay's run dir: the reviewed diff and the run's evidence and log files as they
+    were at review N. A later step (a rework's evidence) rewrites these files, so a file
+    last written after review N's verdict is withheld. Returns (copied, withheld) paths."""
     run_dir.mkdir(parents=True, exist_ok=True)
+    copied: list[str] = []
+    withheld: list[str] = []
     for name in ("evidence", "logs"):
-        source = replay.run_dir / name
-        if source.is_dir():
-            shutil.copytree(source, run_dir / name, symlinks=True)
+        for folder, dirs, files in os.walk(replay.run_dir / name):
+            dirs.sort()
+            for file in sorted(files):
+                path = Path(folder) / file
+                rel = path.relative_to(replay.run_dir).as_posix()
+                if path.lstat().st_mtime > replay.reviewed_at:
+                    withheld.append(rel)
+                    continue
+                target = run_dir / rel
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(path, target, follow_symlinks=False)
+                copied.append(rel)
     (run_dir / "evidence").mkdir(exist_ok=True)
     (run_dir / "diff.patch").write_text(diff_text, encoding="utf-8")
+    return copied, withheld
 
 
 # ── variants ─────────────────────────────────────────────────────────
@@ -934,7 +959,8 @@ def _run_pair(
     row["model"] = models["review"].render()
     with tempfile.TemporaryDirectory(prefix="helmraiser-eval-", dir=ctx.temp_root) as tmp:
         run_dir = Path(tmp) / "run"
-        prepare_run_dir(replay, run_dir, diff_text)
+        copied, withheld = prepare_run_dir(replay, run_dir, diff_text)
+        row.update(evidence_files_copied=copied, evidence_files_withheld=withheld)
         extra_args, read_paths = variant_args(variant, worktree)
         prompt = replay_prompt(replay, diff_text, worktree, run_dir)
         plans = variant_sessions(
@@ -1149,7 +1175,12 @@ def build_report(rows: list[dict[str, Any]]) -> dict[str, Any]:
             "cost_usd": {"total": round(sum(costs), 4), "median": _median(costs)},
             "seconds": {"total": round(sum(seconds), 3), "median": _median(seconds)},
         }
-    return {"pairs": len(latest), "variants": variants}
+    withheld = {
+        case: len(r["evidence_files_withheld"])
+        for (case, _), r in sorted(latest.items())
+        if r.get("evidence_files_withheld")
+    }
+    return {"pairs": len(latest), "variants": variants, "evidence_withheld": withheld}
 
 
 def _fraction(score: dict[str, Any]) -> str:
@@ -1214,6 +1245,19 @@ def render_report(report: dict[str, Any], name: str | None = None) -> str:
             ("median seconds", [_num(x["seconds"]["median"]) for x in v]),
         ],
     )
+    lines.extend(["## Evidence withheld", ""])
+    lines.append(
+        "Evidence and log files last written after the replayed review's verdict (by a "
+        "later step, such as a rework's evidence) are not given to the replay."
+    )
+    lines.append("")
+    withheld = report.get("evidence_withheld") or {}
+    if withheld:
+        lines.extend(["| case | evidence_withheld |", "|---|---|"])
+        lines.extend(f"| {case} | {count} |" for case, count in withheld.items())
+    else:
+        lines.append("None.")
+    lines.append("")
     return "\n".join(lines)
 
 

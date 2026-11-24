@@ -2,7 +2,7 @@
 
 `helmraiser stats --json` provides read-only window/project outcome, quality, failure, cost, latency, scout-funnel and weekly aggregates, with scout acceptance/scope fingerprints and cooldown scheduling errors isolated per project.
 
-`helmraiser eval review|report` (`loop/eval_review.py`) replays past review stages from their stored prompts at the verified reviewed commit under five reviewer variants (baseline, no skills, curated skills, Spec plus Standards, both), judges findings blind against labelled cases and reports recall, severity, clean-case findings and cost; nothing in the live loop changes.
+`helmraiser eval review|report` (`loop/eval_review.py`) replays past review stages from their stored prompts at the verified reviewed commit (withholding evidence files written after that review) under five reviewer variants (baseline, no skills, curated skills, Spec plus Standards, both), judges findings blind against labelled cases and reports recall, severity, clean-case findings and cost; nothing in the live loop changes.
 
 Reports fetch run-authored Leeboard entries with one bulk CLI listing per nonempty report and parse task bases once per reported task.
 

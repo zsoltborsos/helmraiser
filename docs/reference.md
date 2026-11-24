@@ -1595,8 +1595,11 @@ The case file is `{"name": …, "cases": [...]}`. Each case has `id`, `run_id`, 
 
 For each case the replay takes the stored `prompt-review-1[-<n>].md` of review N (the
 ledger's review stage starts and review retries give the order), the stored
-`directives-review.md`, and the run's evidence and logs, with the live run dir and
-worktree paths pointed at copies. It looks for the reviewed commit among the run's
+`directives-review.md`, and copies of the run's `evidence/` and `logs/` files, with the
+live run dir and worktree paths pointed at the copies. A later step (a rework's evidence)
+rewrites those files, so a file last written (by mtime) after review N's `review_verdict`
+is withheld; the prompt still names it, as stored, and the reviewer finds it missing.
+Each result line lists `evidence_files_copied` and `evidence_files_withheld`. It looks for the reviewed commit among the run's
 iteration commits and head, and keeps the one whose `git diff <base>..<commit>` is the
 diff in the stored prompt (above 200 KB, only the size is checked). `meta.reviewed_commit`
 and `meta.review_prompt` are tried first; a case fails when they disagree with the
@@ -1632,7 +1635,8 @@ and argv, prints them and calls no model; it writes no results.
 `helmraiser eval report <out>` writes `<out>/report.md` from the latest line of each pair:
 per variant, recall per positive bucket (`found` is a regression check), severity given
 on `undercall` and `miss` cases, `standards` cases split by written and unwritten rule,
-findings and severe findings on clean cases, and total and median cost and seconds.
+findings and severe findings on clean cases, and total and median cost and seconds,
+then the number of evidence files withheld per case (`evidence_withheld`).
 
 Exit codes: 0 on success (also when `--max-cost` stops, reported as `stopped`), 1 when a
 pair failed or the sandbox is unavailable, 2 for an invalid case file, variant, case id,

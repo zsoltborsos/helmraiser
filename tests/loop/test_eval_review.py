@@ -6,7 +6,9 @@ Reviewer and judge sessions run the scripted ``fake_pi`` (no wrapper); nothing c
 from __future__ import annotations
 
 import json
+import os
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -305,6 +307,36 @@ def test_reconstruct_needs_a_commit_that_reproduces_the_diff(fixture):
     prompt.write_text(prompt.read_text().replace("x = 1", "x = 9"))
     with pytest.raises(ReplayError, match="reproduces the diff"):
         reconstruct(make_case(), fixture.ledger, fixture.data_dir / "runs")
+
+
+def test_only_evidence_written_by_review_n_is_copied(fixture, tmp_path):
+    """A later step (a rework's evidence) rewrites evidence/: such files are withheld."""
+    later = fixture.run_dir / "evidence" / "junit.xml"
+    later.write_text("<testsuite tests='38'/>")
+    log = fixture.run_dir / "logs" / "verify.log"
+    log.parent.mkdir()
+    log.write_text("old log\n")
+    future = time.time() + 3600
+    os.utime(later, (future, future))
+    os.utime(log, (1_000_000, 1_000_000))  # written well before review 1
+    replay = reconstruct(make_case(), fixture.ledger, fixture.data_dir / "runs")
+    run_dir = tmp_path / "replay-run"
+    copied, withheld = eval_review.prepare_run_dir(replay, run_dir, replay.diff_text)
+    assert copied == ["evidence/out.txt", "logs/verify.log"]
+    assert withheld == ["evidence/junit.xml"]
+    assert (run_dir / "evidence" / "out.txt").read_text() == "all green\n"
+    assert (run_dir / "logs" / "verify.log").is_file()
+    assert not (run_dir / "evidence" / "junit.xml").exists()
+    # The prompt is left as stored, even where it names a withheld file.
+    stored = replay.prompt.replace(str(fixture.run_dir), str(run_dir))
+    assert replay_prompt(replay, replay.diff_text, tmp_path / "wt", run_dir) == stored
+
+
+def test_reconstruct_needs_review_n_to_have_a_verdict(fixture):
+    fixture.ledger.append_event(RUN_ID, "helmraiser", "stage_start", {"stage": "review"}, "review")
+    (fixture.run_dir / "prompt-review-1-4.md").write_text("# Review: Fix it\n")
+    with pytest.raises(ReplayError, match="review 3 of run .* recorded no verdict"):
+        reconstruct(make_case(review=3), fixture.ledger, fixture.data_dir / "runs")
 
 
 def test_seeded_worktree_reviews_the_seeded_diff(fixture, tmp_path):
@@ -656,6 +688,8 @@ def test_dry_run_builds_everything_without_model_calls(context, fixture, fake_pi
     argv = two_axis["sessions"][1]["argv"]
     assert "--no-skills" in argv and argv.count("--skill") == 2
     assert two_axis["judge_model"] == "prov/judge:high"
+    assert baseline["evidence_files_copied"] == ["evidence/out.txt"]
+    assert baseline["evidence_files_withheld"] == []
     assert not Path(baseline["worktree"]).exists()
 
 
@@ -727,3 +761,21 @@ def test_report_bucket_arithmetic(tmp_path):
     text = render_report(report)
     assert "| miss | 1/3 (33%), 1 unjudged | - |" in text
     assert "## Clean cases (false-alarm proxy)" in text and "v3-twoaxis" in text
+    assert report["evidence_withheld"] == {} and "## Evidence withheld\n" in text
+
+
+def test_report_counts_withheld_evidence_per_case():
+    rows = [
+        row("m1", "v0-baseline", "miss", judge=judged(False), evidence_files_withheld=["a", "b"]),
+        row("m1", "v1-noskills", "miss", judge=judged(False), evidence_files_withheld=["a", "b"]),
+        row(
+            "c1",
+            "v0-baseline",
+            "clean",
+            clean={"findings": 0, "severe": 0},
+            evidence_files_withheld=[],
+        ),
+    ]
+    report = build_report(rows)
+    assert report["evidence_withheld"] == {"m1": 2}
+    assert "| m1 | 2 |" in render_report(report)

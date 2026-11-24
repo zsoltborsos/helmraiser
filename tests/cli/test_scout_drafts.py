@@ -1266,6 +1266,75 @@ class TestScoutCommand:
             assert seen == ["first", "second", "later"]
             assert first["preflight"]["summary"] == "green"
 
+    def test_retry_prompt_hides_environment_values_and_url_passwords(
+        self, tmp_project, tmp_path, fake_pi, scout_srt_log, cli_config, monkeypatch
+    ):
+        from helmraiser.loop import intake as intake_logic
+
+        project_file(
+            tmp_project,
+            '[defaults.env]\nSERVICE_TOKEN = "tok-9f8e7d6c5b"\n\n'
+            '[[services]]\nname = "postgres"\nimage = "postgres:16"\nport = 5432\n'
+            'provides = { DATABASE_URL = "postgresql://app:pg-pass-4711@{host}:{port}/app" }\n',
+        )
+        prompts = []
+        build_prompt = intake_logic.build_intake_prompt
+
+        def capture(spec, config, feedback=None):
+            prompt = build_prompt(spec, config, feedback)
+            prompts.append(prompt)
+            return prompt
+
+        monkeypatch.setattr(intake_logic, "build_intake_prompt", capture)
+        fake_pi.write_script(
+            {
+                "sessions": {
+                    "*-scout": {"text": json.dumps([candidate(files=["README.md"])])},
+                    "*-intake": [
+                        {"text": intake_proposal(name="env-dump").replace("pytest", "env #")},
+                        {"text": intake_proposal(name="replacement")},
+                    ],
+                }
+            }
+        )
+        leaked = (
+            "SERVICE_TOKEN=tok-9f8e7d6c5b\n"
+            "DATABASE_URL=postgresql://app:pg-pass-4711@127.0.0.1:54321/app\n"
+            "retry against postgresql://admin:other-pw-99@db.internal:5432/app\n"
+            "connection refused"
+        )
+
+        def preflight(repo, steps, **kwargs):
+            failing = steps[0].name == "env-dump"
+            return {
+                "commands": [
+                    {
+                        "name": steps[0].name,
+                        "exit_code": 1 if failing else 0,
+                        "seconds": 0.1,
+                        "output": leaked,
+                        "tail": leaked if failing else "",
+                        "hints": [],
+                    }
+                ],
+                "services": [{"name": "postgres", "host_port": 54321}],
+                "error": None,
+            }
+
+        monkeypatch.setattr("helmraiser.loop.scout.run_preflight_steps", preflight)
+
+        result = run_scout(tmp_project, tmp_path / "data", "--force", "--max", "1")
+
+        assert result.exit_code == 0, result.output
+        assert len(prompts) == 2
+        retry_prompt = prompts[1]
+        assert "Step: env-dump" in retry_prompt and "connection refused" in retry_prompt
+        for secret in ("tok-9f8e7d6c5b", "pg-pass-4711", "other-pw-99"):
+            assert secret not in retry_prompt
+        assert "SERVICE_TOKEN=<redacted:SERVICE_TOKEN>" in retry_prompt
+        assert "DATABASE_URL=<redacted:DATABASE_URL>" in retry_prompt
+        assert "postgresql://admin:<redacted>@db.internal:5432/app" in retry_prompt
+
     @pytest.mark.parametrize(
         "evidence_class,second_fails,verify_fails",
         [

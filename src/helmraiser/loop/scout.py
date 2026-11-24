@@ -28,6 +28,7 @@ from helmraiser.loop.preflight import (
 from helmraiser.loop.preflight import classify_preflight_step as classify_preflight_step
 from helmraiser.loop.preflight import failed_scout_preflight as failed_scout_preflight
 from helmraiser.loop.preflight import normalize_scout_preflight as normalize_scout_preflight
+from helmraiser.loop.redact import redact_output, step_environment_values
 from helmraiser.loop.routing import calculate_headroom
 from helmraiser.pi.adapter import session_id_for
 from helmraiser.pi.directives import render_scout_directives
@@ -41,7 +42,7 @@ from helmraiser.project_notes import (
 from helmraiser.task.loader import TaskLoadError, origin_from_text, parse_task, write_task
 from helmraiser.task.model import ID_PATTERN, ModelSpec, TaskSpec, VerifyStep
 from helmraiser.task.paths import matches_paths, parse_paths
-from helmraiser.task.project import load_project_defaults, worktree_manager
+from helmraiser.task.project import effective_env, load_project_defaults, worktree_manager
 from helmraiser.task.schema import validate_task
 from helmraiser.utils.markdown import parse_frontmatter, serialize_frontmatter
 
@@ -1117,8 +1118,14 @@ def execute_scout(
                     "re-proposed after a failed acceptance check: "
                     + ", ".join(step["name"] for step, _ in failed)
                 )
+                secrets = step_environment_values(
+                    effective_env(intake_outcome.spec, defaults),
+                    defaults.services,
+                    preflight_payload.get("services") or [],
+                )
                 feedback = "\n\n".join(
-                    f"Step: {step['name']}\nCommand: {check.run}\nOutput:\n{step['tail'][-2000:]}"
+                    f"Step: {step['name']}\nCommand: {check.run}\n"
+                    f"Output:\n{redact_output(step['tail'], secrets)[-2000:]}"
                     for step, check in failed
                 )
             preparation = ledger.get_scout_draft(spec.task_id)

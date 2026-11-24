@@ -381,7 +381,9 @@ not expected red. Sandbox hints retain precedence.
 Marked passing steps are `fail` with the same diagnostic as intake checks.
 If any step is `fail` or `sandbox`, scout asks intake once more using the original
 acceptance-free draft and those steps' names, commands, and real diagnostics (the last
-2,000 characters per output tail). Green and expected-red steps do not trigger a retry.
+2,000 characters per output tail, after redaction: values of the project and task `env`
+and of the variables running services provide, when six characters or more, show as
+`<redacted:NAME>`, and the password of a `scheme://user:password@host` URL as `<redacted>`). Green and expected-red steps do not trigger a retry.
 The second proposal and preflight replace the first even if still failing. Intake notes
 retain `re-proposed after a failed acceptance check: <step names>` from the first attempt,
 also shown in the scout report. If retry intake fails, the first valid draft and preflight

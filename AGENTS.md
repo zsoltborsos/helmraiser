@@ -34,7 +34,7 @@ Update them in the commit that lands a slice.
 | `loop/runner.py` | `GovernedRun`, the outer loop |
 | `loop/intake.py` | Intake prompt, proposal parsing, acceptance merge and validation |
 | `loop/compare.py` | Run selection, blind prompt, verdict parsing and comparison rendering |
-| `loop/{verify,evidence,review,merge,delivery,budget,prompts,status,report,shell,excerpt}.py` | Loop pieces |
+| `loop/{verify,evidence,review,merge,delivery,budget,prompts,status,report,shell,excerpt,redact}.py` | Loop pieces |
 | `loop/reconcile.py`, `loop/model_report.py` | Closing ledger runs whose worker died; `report --models` efficiency view |
 | `loop/cleanup.py` | Failed/aborted worktree eligibility, safe removal and cleanup events; shared by `clean` and the worker sweep. Also removes a clean worktree when `record-landed` lands a run |
 | `loop/abort.py` | `AbortCoordinator`, `AbortResult`, and `abort_run`: exact-run abort through the project's lease |

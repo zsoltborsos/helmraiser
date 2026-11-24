@@ -7,11 +7,7 @@ and what comes next.
 
 ## Release
 
-1. **Retire the predecessor install** after a week of landed runs (switched 2026-11-14):
-   drop its harness name from Leeboard's list, remove its worker service and command stub,
-   archive its repository, and back up then delete its data directory. FunkyOctopus's port
-   is tracked in that project.
-2. **Finish release contact/settings checks, then go public.** Supply a real private
+1. **Finish release contact/settings checks, then go public.** Supply a real private
    enforcement contact for `CODE_OF_CONDUCT.md` (still a placeholder); confirm GitHub
    private vulnerability reporting works for the route in `SECURITY.md` (API returned
    404 while the repo was private). Review the alpha README on GitHub and try a clean-machine

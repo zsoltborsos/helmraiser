@@ -7,14 +7,12 @@ and what comes next.
 
 ## Release
 
-1. **Finish release contact/settings checks, then go public.** Supply a real private
-   enforcement contact for `CODE_OF_CONDUCT.md` (still a placeholder); confirm GitHub
-   private vulnerability reporting works for the route in `SECURITY.md` (API returned
-   404 while the repo was private). Review the alpha README on GitHub and try a clean-machine
-   installation before release. The first-task acceptance has passed real sandbox
-   preflight locally without models; a paid end-to-end example run remains opt-in.
-   Set the GitHub social preview (Settings) to `docs/brand/helmraiser-social.png`;
-   repository visibility stays the owner's decision.
+1. **Go public.** Repository visibility is the owner's decision. Then:
+   - enable GitHub private vulnerability reporting and confirm the `SECURITY.md` link
+     works (the API returned 404 while the repo was private);
+   - set the social preview (Settings) to `docs/brand/helmraiser-social.png`.
+   A clean-machine install passes the README's quick start up to the paid run, without
+   models configured. A paid end-to-end example run remains opt-in.
 
 ## Scout follow-ups
 

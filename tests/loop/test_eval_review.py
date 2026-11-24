@@ -332,6 +332,45 @@ def test_only_evidence_written_by_review_n_is_copied(fixture, tmp_path):
     assert replay_prompt(replay, replay.diff_text, tmp_path / "wt", run_dir) == stored
 
 
+def test_legacy_run_dir_and_worktree_paths_are_relocated(fixture, tmp_path):
+    """Squadron-era prompts name ~/.squadron/runs/<id> and other worktree roots."""
+    replay = reconstruct(make_case(), fixture.ledger, fixture.data_dir / "runs")
+    run_dir, worktree = tmp_path / "run", tmp_path / "wt"
+    text = "\n".join(
+        [
+            f"- junit.xml: `~/.squadron/runs/{RUN_ID}/evidence/x.xml`",
+            f"Full output: `/home/zsolt/.squadron/runs/{RUN_ID}/logs/verify.log`",
+            f"- shot.png (image, attached): @/srv/old-data/runs/{RUN_ID}/evidence/shot.png",
+            f"see /mnt/data/squadron-worktrees/proj/worktree-fix-it-{RUN_ID}/src/a.py.",
+            f"{LIVE_WORKTREE}/b.py and {fixture.run_dir}/diff.patch",
+            f"untouched: /srv/runs/{RUN_ID}-other and runs/{RUN_ID}",
+        ]
+    )
+    assert eval_review.relocate(text, replay, worktree, run_dir).splitlines() == [
+        f"- junit.xml: `{run_dir}/evidence/x.xml`",
+        f"Full output: `{run_dir}/logs/verify.log`",
+        f"- shot.png (image, attached): @{run_dir}/evidence/shot.png",
+        f"see {worktree}/src/a.py.",
+        f"{worktree}/b.py and {run_dir}/diff.patch",
+        f"untouched: /srv/runs/{RUN_ID}-other and runs/{RUN_ID}",
+    ]
+
+
+def test_dry_run_reports_paths_the_replay_cannot_resolve(context, fixture, fake_pi):
+    prompt = fixture.run_dir / "prompt-review-1.md"
+    prompt.write_text(
+        prompt.read_text()
+        + f"\n- out.txt: `~/.squadron/runs/{RUN_ID}/evidence/out.txt`"
+        + f"\n- x.xml: `~/.squadron/runs/{RUN_ID}/evidence/x.xml`"
+        + f"\nsee {LIVE_WORKTREE}/a.py, {LIVE_WORKTREE}/gone.py."
+        + f"\n  at {LIVE_WORKTREE}/a.py:1:5 and {LIVE_WORKTREE}/gone.py:12"
+    )
+    result = run_eval(context, [make_case()], [VARIANTS["v3-twoaxis"]], dry_run=True)
+    (pair,) = result["pairs"]
+    assert pair["unresolved_paths"] == ["run/evidence/x.xml", "worktree/gone.py"]
+    assert fake_pi.calls() == []
+
+
 def test_reconstruct_needs_review_n_to_have_a_verdict(fixture):
     fixture.ledger.append_event(RUN_ID, "helmraiser", "stage_start", {"stage": "review"}, "review")
     (fixture.run_dir / "prompt-review-1-4.md").write_text("# Review: Fix it\n")
@@ -690,6 +729,7 @@ def test_dry_run_builds_everything_without_model_calls(context, fixture, fake_pi
     assert two_axis["judge_model"] == "prov/judge:high"
     assert baseline["evidence_files_copied"] == ["evidence/out.txt"]
     assert baseline["evidence_files_withheld"] == []
+    assert baseline["unresolved_paths"] == two_axis["unresolved_paths"] == []
     assert not Path(baseline["worktree"]).exists()
 
 

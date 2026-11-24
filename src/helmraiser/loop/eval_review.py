@@ -558,12 +558,43 @@ def replay_prompt(replay: Replay, diff_text: str, worktree: Path, run_dir: Path)
     return relocate(prompt, replay, worktree, run_dir)
 
 
+# A path character in prompt text: not whitespace, quotes, backticks or brackets.
+_PATH_CHAR = r"[^\s`'\"()<>\[\]{}]"
+
+
+def _path_pattern(tail: str) -> re.Pattern[str]:
+    """An absolute (or ``~``) path ending in ``tail``, not inside a longer path or word."""
+    return re.compile(rf"(?<![\w.~/-])(?:~|/){_PATH_CHAR}*?{tail}(?![\w-])")
+
+
 def relocate(text: str, replay: Replay, worktree: Path, run_dir: Path) -> str:
-    """Point the live run dir and worktree paths at the replay's copies."""
+    """Point the live run dir and worktree paths at the replay's copies.
+
+    Older prompts name other data dirs (``~/.squadron/runs/<run_id>``) and worktree roots,
+    so any path ending in ``/runs/<run_id>`` is the run dir, and any ending in a
+    ``worktree-…-<run_id>`` directory is the worktree."""
+    run_id = re.escape(replay.case.run_id)
     text = text.replace(str(replay.run_dir), str(run_dir))
+    text = _path_pattern(rf"/runs/{run_id}").sub(lambda _m: str(run_dir), text)
     if replay.live_worktree:
         text = text.replace(replay.live_worktree, str(worktree))
-    return text
+    return _path_pattern(rf"/worktree-[^\s/`'\"]*{run_id}").sub(lambda _m: str(worktree), text)
+
+
+def unresolved_paths(texts: list[str], worktree: Path, run_dir: Path) -> list[str]:
+    """Paths under the replay run dir or worktree that ``texts`` name but that do not exist,
+    as ``run/<rel>`` or ``worktree/<rel>``."""
+    missing: dict[str, None] = {}
+    for label, root in (("run", run_dir), ("worktree", worktree)):
+        pattern = re.compile(re.escape(str(root)) + rf"(?:/{_PATH_CHAR}*)?")
+        for text in texts:
+            for match in pattern.finditer(text):
+                # Stack traces and tool output add ``:<line>[:<col>]``.
+                path = re.sub(r"(?::\d+)+$", "", match.group(0).rstrip(".,:;!?"))
+                if not os.path.lexists(path):
+                    rel = Path(path).relative_to(root).as_posix()
+                    missing[f"{label}/{rel}"] = None
+    return list(missing)
 
 
 def prepare_run_dir(replay: Replay, run_dir: Path, diff_text: str) -> tuple[list[str], list[str]]:
@@ -970,6 +1001,9 @@ def _run_pair(
             worktree=worktree,
             run_dir=run_dir,
             extra_args=extra_args,
+        )
+        row["unresolved_paths"] = unresolved_paths(
+            [prompt, *(plan.directives for plan in plans)], worktree, run_dir
         )
         adapter = ctx.review_adapter(replay.project, read_paths)
         requests = [

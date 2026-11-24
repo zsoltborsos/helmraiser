@@ -1595,11 +1595,15 @@ The case file is `{"name": …, "cases": [...]}`. Each case has `id`, `run_id`, 
 
 For each case the replay takes the stored `prompt-review-1[-<n>].md` of review N (the
 ledger's review stage starts and review retries give the order), the stored
-`directives-review.md`, and copies of the run's `evidence/` and `logs/` files, with the
-live run dir and worktree paths pointed at the copies. A later step (a rework's evidence)
+`directives-review.md`, and copies of the run's `evidence/` and `logs/` files. Any path
+ending in `/runs/<run_id>` (also an older data dir such as `~/.squadron`) is pointed at
+the replay's run dir, and the run's worktree path, or any path ending in a
+`worktree-…-<run_id>` directory, at the replay worktree. A later step (a rework's evidence)
 rewrites those files, so a file last written (by mtime) after review N's `review_verdict`
 is withheld; the prompt still names it, as stored, and the reviewer finds it missing.
-Each result line lists `evidence_files_copied` and `evidence_files_withheld`. It looks for the reviewed commit among the run's
+Each result line and dry-run pair lists `evidence_files_copied`, `evidence_files_withheld`
+and `unresolved_paths`: paths the prompt or directives name under the replay run dir or
+worktree that do not exist there. It looks for the reviewed commit among the run's
 iteration commits and head, and keeps the one whose `git diff <base>..<commit>` is the
 diff in the stored prompt (above 200 KB, only the size is checked). `meta.reviewed_commit`
 and `meta.review_prompt` are tried first; a case fails when they disagree with the

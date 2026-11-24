@@ -16,7 +16,7 @@ collects evidence for a separate model review. Results wait for your approval un
 you explicitly enable automatic delivery. A central ledger tracks progress, usage and
 outcomes across projects.
 
-**Status: public-release preparation, alpha.** Used for personal unattended work;
+**Status: alpha.** Used for personal unattended work;
 interfaces and behavior may change. Linux only. Start with a non-sensitive test repository.
 
 ## How it works

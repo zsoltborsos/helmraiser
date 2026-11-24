@@ -1053,10 +1053,11 @@ binary files keep the path-only fallback. A different model then reviews the
 diff, the verify results and the evidence in a clean, read-only context. It answers
 `pass`, `concerns` or `uncertain`. A `pass` is downgraded when an evidence check is not
 met or not assessed. A missing or malformed verdict, a failed review session, or a failed
-evidence step forces `uncertain`. Severe findings trigger a fix/verify/evidence/review
-round before policy is decided; remaining severe findings may trigger the fallback.
+evidence step forces `uncertain`. Any findings, severe or minor, in a parsed review
+that is not `uncertain` trigger a fix/verify/evidence/review round before policy is
+decided (bounded by `review_feedback_rounds`); remaining severe findings may trigger the fallback.
 A round that cannot verify or exceeds the budget is rolled back to the reviewed commit.
-For minor findings, an uncertain verdict, or your own concerns, use
+For findings that remain after the rounds, an uncertain verdict, or your own concerns, use
 `helmraiser rework <run> --note "<feedback>"` to hand a run awaiting merge approval back to the implementer
 rather than fixing it by hand or ending it with `reject`.
 

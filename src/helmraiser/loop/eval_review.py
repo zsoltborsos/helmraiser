@@ -53,11 +53,6 @@ NOTES_HEADING = "## Project notes (Helmraiser)"
 REVIEW_TIMEOUT_S = 1800
 JUDGE_TIMEOUT_S = 1800
 
-SKILLS_HUB = Path("/mnt/data/projects/personal/agent-skills-hub/skills/matt")
-HUB_SKILLS: tuple[Path, ...] = tuple(
-    SKILLS_HUB / name
-    for name in ("codebase-design", "tdd", "writing-for-agents", "domain-modeling")
-)
 PROJECT_SKILL_ROOTS: tuple[str, ...] = (".pi/skills", ".agents/skills")
 
 
@@ -667,11 +662,24 @@ def project_skill_dirs(start: Path) -> list[Path]:
         current = current.parent
 
 
-def skill_dirs(worktree: Path) -> list[Path]:
-    missing = [path for path in HUB_SKILLS if not (path / "SKILL.md").is_file()]
+def check_skills(variants: list[Variant], skills: tuple[Path, ...]) -> None:
+    """Refuse up front a skill variant that has no usable ``--skill`` directories."""
+    needing = next((variant for variant in variants if variant.skills), None)
+    if needing is None:
+        return
+    if not skills:
+        raise EvalError(f"variant {needing.name} needs --skill")
+    for path in skills:
+        if not (path / "SKILL.md").is_file():
+            raise EvalError(f"--skill {path} has no SKILL.md")
+
+
+def skill_dirs(worktree: Path, skills: tuple[Path, ...]) -> list[Path]:
+    """``skills`` (the ``--skill`` directories), then the project's own."""
+    missing = [path for path in skills if not (path / "SKILL.md").is_file()]
     if missing:
         raise ReplayError(f"skill not found: {missing[0]}")
-    return [*HUB_SKILLS, *project_skill_dirs(worktree)]
+    return [*skills, *project_skill_dirs(worktree)]
 
 
 def skill_read_paths(dirs: list[Path]) -> tuple[Path, ...]:
@@ -687,13 +695,15 @@ def skill_read_paths(dirs: list[Path]) -> tuple[Path, ...]:
     return tuple(dict.fromkeys(paths))
 
 
-def variant_args(variant: Variant, worktree: Path) -> tuple[tuple[str, ...], tuple[Path, ...]]:
+def variant_args(
+    variant: Variant, worktree: Path, skills: tuple[Path, ...]
+) -> tuple[tuple[str, ...], tuple[Path, ...]]:
     """The variant's extra pi flags and the paths they need readable in the sandbox."""
     if not variant.no_skills:
         return (), ()
     if not variant.skills:
         return ("--no-skills",), ()
-    dirs = skill_dirs(worktree)
+    dirs = skill_dirs(worktree, skills)
     args: list[str] = ["--no-skills"]
     for directory in dirs:
         args += ["--skill", str(directory)]
@@ -992,6 +1002,8 @@ class EvalContext:
     temp_root: Path | None = None
     # ``--review-model``: every reviewer session uses it (the judge keeps its profile).
     review_model: ModelSpec | None = None
+    # ``--skill``: the directories skill variants pass to pi, before the project's own.
+    skills: tuple[Path, ...] = ()
 
     def variant_key(self, variant: Variant) -> str:
         """A variant's identity in results: its name, plus ``@<model>`` when overridden."""
@@ -1046,7 +1058,7 @@ def _run_pair(
         run_dir = Path(tmp) / "run"
         copied, withheld = prepare_run_dir(replay, run_dir, diff_text)
         row.update(evidence_files_copied=copied, evidence_files_withheld=withheld)
-        extra_args, read_paths = variant_args(variant, worktree)
+        extra_args, read_paths = variant_args(variant, worktree, ctx.skills)
         prompt = replay_prompt(replay, diff_text, worktree, run_dir)
         plans = variant_sessions(
             variant,

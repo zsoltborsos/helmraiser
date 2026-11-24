@@ -9,7 +9,7 @@ from typer.testing import CliRunner
 
 from helmraiser.cli import app, eval_commands
 from helmraiser.pi.adapter import PiJsonAdapter
-from tests.loop.test_eval_review import build_fixture, case_entry, script, write_cases
+from tests.loop.test_eval_review import build_fixture, case_entry, script, skill, write_cases
 
 runner = CliRunner()
 
@@ -182,6 +182,90 @@ def test_review_repeat_and_model_validation(fixture, cases_file, args, message):
         str(fixture.data_dir),
     )
     assert result.exit_code == 2 and message in json.loads(result.output)["error"]
+
+
+def skill_args(argv):
+    return [argv[i + 1] for i, arg in enumerate(argv) if arg == "--skill"]
+
+
+@pytest.mark.parametrize("name", ["v2-skills", "v4-twoaxis-skills"])
+def test_review_skill_variant_without_skill_exits_2(fixture, cases_file, name):
+    result = invoke(
+        "review", str(cases_file), "--variant", name, "--data-dir", str(fixture.data_dir)
+    )
+    assert result.exit_code == 2
+    assert f"Error: variant {name} needs --skill" in result.output
+
+
+def test_review_skill_without_skill_md_exits_2(fixture, cases_file, tmp_path, fake_pi):
+    bare = tmp_path / "bare"
+    bare.mkdir()
+    result = invoke(
+        "review",
+        str(cases_file),
+        "--variant",
+        "v2-skills",
+        "--skill",
+        str(skill(tmp_path / "skills", "tdd")),
+        "--skill",
+        str(bare),
+        "--json",
+        "--data-dir",
+        str(fixture.data_dir),
+    )
+    assert result.exit_code == 2
+    assert json.loads(result.output)["error"] == f"--skill {bare.resolve()} has no SKILL.md"
+    assert fake_pi.calls() == []
+
+
+def test_review_skill_is_ignored_by_variants_without_skills(fixture, cases_file, tmp_path, fake_pi):
+    result = invoke(
+        "review",
+        str(cases_file),
+        "--variant",
+        "v1-noskills",
+        "--case",
+        "miss-1",
+        "--skill",
+        str(tmp_path / "gone"),
+        "--dry-run",
+        "--json",
+        "--data-dir",
+        str(fixture.data_dir),
+    )
+    assert result.exit_code == 0, result.output
+    (pair,) = json.loads(result.output)["pairs"]
+    assert skill_args(pair["sessions"][0]["argv"]) == []
+
+
+def test_review_skill_dirs_are_made_absolute_and_passed_in_order(
+    fixture, cases_file, tmp_path, monkeypatch, wiring
+):
+    home = tmp_path / "home"
+    first = skill(home / "skills", "codebase-design").resolve()
+    second = skill(tmp_path / "rel" / "skills", "tdd").resolve()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.chdir(tmp_path)
+    result = invoke(
+        "review",
+        str(cases_file),
+        "--variant",
+        "v2-skills",
+        "--case",
+        "miss-1",
+        "--skill",
+        "~/skills/codebase-design",
+        "--skill",
+        "rel/skills/tdd",
+        "--dry-run",
+        "--json",
+        "--data-dir",
+        str(fixture.data_dir),
+    )
+    assert result.exit_code == 0, result.output
+    (pair,) = json.loads(result.output)["pairs"]
+    assert skill_args(pair["sessions"][0]["argv"]) == [str(first), str(second)]
+    assert wiring[0][1] == (first, second)
 
 
 def test_held_out_case_file_gets_its_own_out_dir_and_report(fixture, fake_pi, tmp_path):

@@ -16,6 +16,7 @@ from helmraiser.loop.eval_review import (
     EvalError,
     ReplayIsolation,
     build_report,
+    check_skills,
     load_cases,
     read_results,
     render_report,
@@ -87,6 +88,11 @@ def eval_review(
     review_model: str | None = typer.Option(
         None, "--review-model", help="provider/id[:thinking] for every reviewer session"
     ),
+    skill: list[Path] = typer.Option(
+        [],
+        "--skill",
+        help="Skill directory (holds SKILL.md) for the skill variants; repeatable",
+    ),
     as_json: bool = typer.Option(False, "--json", help="Machine-readable output"),
     data_dir: Path | None = typer.Option(None, "--data-dir", help="Override HELMRAISER_DATA_DIR"),
 ) -> None:
@@ -97,6 +103,8 @@ def eval_review(
     try:
         _name, cases = load_cases(cases_file)
         chosen, variants = select(cases, case, variant)
+        skills = tuple(path.expanduser().resolve() for path in skill)
+        check_skills(variants, skills)
         if max_cost is not None and max_cost < 0:
             raise EvalError("--max-cost must not be negative")
         if repeat < 1:
@@ -134,6 +142,7 @@ def eval_review(
             judge_adapter=get_judge_adapter(config),
             timeout_s=max(1800, int(config.get("review_min_minutes", 10)) * 60),
             review_model=override,
+            skills=skills,
         )
         progress = (lambda _row: None) if as_json else (lambda row: typer.echo(_summary_line(row)))
         try:

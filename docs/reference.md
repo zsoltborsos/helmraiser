@@ -1402,7 +1402,7 @@ per command.
 | `helmraiser preflight <repo> [--run CMD]… [-- CMD…]` | Runs commands in a throwaway worktree of HEAD with the project's setup, services and the verify sandbox settings; prints each exit code, duration, output tail and hints for known sandbox failures. No ledger rows (see [Trying commands in the sandbox](#trying-commands-in-the-sandbox)) |
 | `helmraiser clean [--project PATH] [--dry-run] [--json] [--data-dir PATH]` | Removes clean superseded or old failed/aborted worktrees, keeping branches (see [Cleaning up failed runs’ worktrees](#cleaning-up-failed-runs-worktrees)) |
 | `helmraiser compare <run-a> <run-b> [--json]` / `helmraiser compare --variant-of <task> [--project P] [--json]` | Judges two runs blind, then reveals their setups (see [Comparing runs](#comparing-runs)) |
-| `helmraiser eval review <cases.json> --variant V… [--case ID]… [--out DIR] [--max-cost USD] [--repeat N] [--review-model M] [--dry-run] [--json]` / `helmraiser eval report <out> [--json]` | Replays past review stages under reviewer variants and scores them against labelled defects (see [Review replay](#review-replay)) |
+| `helmraiser eval review <cases.json> --variant V… [--case ID]… [--out DIR] [--max-cost USD] [--repeat N] [--review-model M] [--skill DIR]… [--dry-run] [--json]` / `helmraiser eval report <out> [--json]` | Replays past review stages under reviewer variants and scores them against labelled defects (see [Review replay](#review-replay)) |
 | `helmraiser scout <repo> [--lens NAME] [--max N] [--force]` | Runs one read-only scout session and writes validated, non-ruling candidates as draft task files (see [Scout drafts](#scout-drafts)) |
 | `helmraiser drafts [--project P]` / `drafts drop <task> --reason TEXT [--class CLASS]` | Lists pending scout drafts, or retains one as dropped with its reason and optional class |
 | `helmraiser drafts request <repo>…` / `drafts request --cancel <repo>…` | Requests safe worker-driven scouts for chosen focus projects, or cancels pending requests |
@@ -1612,11 +1612,18 @@ the project's current `review` profile, not the run's. `--review-model
 included; the judge keeps its profile) and makes the variant `<name>@<model>` in results
 and report columns, so it never shares resume state with the profile model's results.
 
+`--skill <dir>` (repeatable) names a skill directory, one that holds a `SKILL.md`, for the
+skill variants (`v2-skills`, `v4-twoaxis-skills`). Their reviewer sessions get each one
+through pi's `--skill`, before the project's own discovered skills, and the sandbox can
+read it. `~` is expanded and the path is stored absolute. A chosen skill variant without
+`--skill`, or a `--skill` directory without `SKILL.md`, is refused before anything runs.
+Other variants ignore `--skill`.
+
 | Variant | Reviewer sessions |
 | --- | --- |
 | `v0-baseline` | The live review argv: review tools, `--no-context-files`, pi's skill discovery on |
 | `v1-noskills` | v0 with `--no-skills` |
-| `v2-skills` | `--no-skills` and `--skill` for the agent-skills-hub `codebase-design`, `tdd`, `writing-for-agents` and `domain-modeling` skills and the project's `.pi/skills` and `.agents/skills` skills |
+| `v2-skills` | `--no-skills` and `--skill` for the `--skill` directories and the project's `.pi/skills` and `.agents/skills` skills |
 | `v3-twoaxis` | A Spec session (the live directives plus three spec questions), then a Standards session (a draft directive in `loop/eval_review.py`: cited breaches of the project's documented standards, plus a code-smell baseline that is always `minor`), both `--no-skills` |
 | `v4-twoaxis-skills` | v3 with v2's skills |
 | `v5-procedure` | v1 with a four-step review procedure (`REVIEW_PROCEDURE` in `loop/eval_review.py`) appended to the directives |
@@ -1654,7 +1661,7 @@ are per rep, and a Hits per case table shows each case found in k of N reps. It 
 
 Exit codes: 0 on success (also when `--max-cost` stops, reported as `stopped`), 1 when a
 pair failed or the sandbox is unavailable, 2 for an invalid case file, variant, case id,
-unknown run or missing models.
+unknown run, missing models, or a skill variant without a valid `--skill`.
 
 ### Omarchy widget
 

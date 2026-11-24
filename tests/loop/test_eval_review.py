@@ -341,7 +341,7 @@ def test_other_run_dir_and_worktree_paths_are_relocated(fixture, tmp_path):
             f"- junit.xml: `~/.old-data/runs/{RUN_ID}/evidence/x.xml`",
             f"Full output: `/home/user/.old-data/runs/{RUN_ID}/logs/verify.log`",
             f"- shot.png (image, attached): @/srv/old-data/runs/{RUN_ID}/evidence/shot.png",
-            f"see /mnt/data/old-worktrees/proj/worktree-fix-it-{RUN_ID}/src/a.py.",
+            f"see /srv/old-worktrees/proj/worktree-fix-it-{RUN_ID}/src/a.py.",
             f"{LIVE_WORKTREE}/b.py and {fixture.run_dir}/diff.patch",
             f"untouched: /srv/runs/{RUN_ID}-other and runs/{RUN_ID}",
         ]
@@ -417,15 +417,10 @@ def skill(root: Path, name: str) -> Path:
     return path
 
 
-def install_hub(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, ...]:
-    skills = tuple(skill(tmp_path / "hub", name) for name in ("codebase-design", "tdd"))
-    monkeypatch.setattr(eval_review, "HUB_SKILLS", skills)
-    return skills
-
-
 @pytest.fixture
-def hub(tmp_path, monkeypatch):
-    return install_hub(tmp_path, monkeypatch)
+def extra_skills(tmp_path):
+    """Two skill directories, as passed with ``--skill``."""
+    return tuple(skill(tmp_path / "extra-skills", name) for name in ("codebase-design", "tdd"))
 
 
 def test_project_skills_are_found_up_to_the_repo_root(tmp_path):
@@ -441,22 +436,22 @@ def test_project_skills_are_found_up_to_the_repo_root(tmp_path):
     assert project_skill_dirs(sub) == [sub_skill, nested, root_skill]
 
 
-def test_variant_args(hub, tmp_path):
+def test_variant_args(extra_skills, tmp_path):
     worktree = tmp_path / "wt"
     (worktree / ".git").mkdir(parents=True)
     own = skill(worktree / ".agents" / "skills", "own")
-    assert variant_args(VARIANTS["v0-baseline"], worktree) == ((), ())
-    assert variant_args(VARIANTS["v1-noskills"], worktree) == (("--no-skills",), ())
-    assert variant_args(VARIANTS["v3-twoaxis"], worktree) == (("--no-skills",), ())
+    assert variant_args(VARIANTS["v0-baseline"], worktree, extra_skills) == ((), ())
+    assert variant_args(VARIANTS["v1-noskills"], worktree, extra_skills) == (("--no-skills",), ())
+    assert variant_args(VARIANTS["v3-twoaxis"], worktree, extra_skills) == (("--no-skills",), ())
     for name in ("v2-skills", "v4-twoaxis-skills"):
-        args, read = variant_args(VARIANTS[name], worktree)
+        args, read = variant_args(VARIANTS[name], worktree, extra_skills)
         assert args == (
             "--no-skills",
-            *("--skill", str(hub[0])),
-            *("--skill", str(hub[1])),
+            *("--skill", str(extra_skills[0])),
+            *("--skill", str(extra_skills[1])),
             *("--skill", str(own)),
         )
-        assert read == (hub[0], hub[1], own)
+        assert read == (extra_skills[0], extra_skills[1], own)
 
 
 def test_skill_paths_include_symlink_targets(tmp_path):
@@ -467,13 +462,26 @@ def test_skill_paths_include_symlink_targets(tmp_path):
     assert skill_read_paths([linked]) == (linked.resolve(), target.resolve())
 
 
-def test_missing_hub_skill_fails_the_pair(tmp_path, monkeypatch):
-    monkeypatch.setattr(eval_review, "HUB_SKILLS", (tmp_path / "gone",))
+def test_skill_dir_without_skill_md_fails_the_pair(tmp_path):
     with pytest.raises(ReplayError, match="skill not found"):
-        variant_args(VARIANTS["v2-skills"], tmp_path)
+        variant_args(VARIANTS["v2-skills"], tmp_path, (tmp_path / "gone",))
 
 
-def test_build_argv_per_variant(hub, tmp_path):
+def test_check_skills_refuses_skill_variants_without_usable_skills(extra_skills, tmp_path):
+    skill_variants = [VARIANTS["v1-noskills"], VARIANTS["v4-twoaxis-skills"]]
+    with pytest.raises(EvalError, match="variant v4-twoaxis-skills needs --skill"):
+        eval_review.check_skills(skill_variants, ())
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    with pytest.raises(EvalError, match=f"--skill {empty} has no SKILL.md"):
+        eval_review.check_skills(skill_variants, (*extra_skills, empty))
+    eval_review.check_skills(skill_variants, extra_skills)
+    plain = [VARIANTS["v0-baseline"], VARIANTS["v3-twoaxis"]]
+    eval_review.check_skills(plain, ())
+    eval_review.check_skills(plain, (empty,))
+
+
+def test_build_argv_per_variant(extra_skills, tmp_path):
     adapter = PiJsonAdapter(pi_bin="pi")
     worktree = tmp_path / "wt"
     (worktree / ".git").mkdir(parents=True)
@@ -481,7 +489,7 @@ def test_build_argv_per_variant(hub, tmp_path):
     run_dir.mkdir()
     argvs = {}
     for name, variant in VARIANTS.items():
-        extra, _ = variant_args(variant, worktree)
+        extra, _ = variant_args(variant, worktree, extra_skills)
         plan = eval_review.SessionPlan("review", "directives", "prompt", extra)
         req = eval_review._request(
             plan,
@@ -571,7 +579,7 @@ def test_two_axis_sessions(fixture, tmp_path):
 
 
 @pytest.fixture
-def context(fixture, fake_pi, tmp_path, hub):
+def context(fixture, fake_pi, tmp_path, extra_skills):
     calls: list[tuple[Path, tuple[Path, ...]]] = []
 
     def review_adapter(project: Path, extra: tuple[Path, ...]) -> PiJsonAdapter:
@@ -587,6 +595,7 @@ def context(fixture, fake_pi, tmp_path, hub):
         review_adapter=review_adapter,
         judge_adapter=PiJsonAdapter(pi_bin=str(fake_pi.bin)),
         timeout_s=60,
+        skills=extra_skills,
     )
     ctx.adapter_calls = calls  # type: ignore[attr-defined]
     return ctx
@@ -646,12 +655,12 @@ def test_run_eval_two_axis_runs_sequentially_and_judges(context, fixture, fake_p
     assert "worktree-eval-" not in worktrees
 
 
-def test_run_eval_skill_variant_passes_skills_and_read_paths(context, fake_pi, hub):
+def test_run_eval_skill_variant_passes_skills_and_read_paths(context, fake_pi, extra_skills):
     script(fake_pi)
     run_eval(context, [make_case()], [VARIANTS["v2-skills"]])
     (call,) = [c for c in fake_pi.calls() if c["session_id"].endswith("-review")]
-    assert call["argv"].count("--skill") == 2 and str(hub[0]) in call["argv"]
-    assert context.adapter_calls[-1][1] == (hub[0].resolve(), hub[1].resolve())
+    assert call["argv"].count("--skill") == 2 and str(extra_skills[0]) in call["argv"]
+    assert context.adapter_calls[-1][1] == (extra_skills[0].resolve(), extra_skills[1].resolve())
 
 
 def test_run_eval_resumes_without_redoing_finished_pairs(context, fake_pi):
@@ -871,7 +880,7 @@ def test_procedure_variants(fixture, tmp_path):
     run_dir.mkdir()
 
     def plans(name: str) -> list[eval_review.SessionPlan]:
-        extra, read = variant_args(VARIANTS[name], worktree)
+        extra, read = variant_args(VARIANTS[name], worktree, ())
         assert extra == ("--no-skills",) and read == ()
         return eval_review.variant_sessions(
             VARIANTS[name],

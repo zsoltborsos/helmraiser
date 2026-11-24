@@ -24,6 +24,11 @@ and what comes next.
 
 ## Next
 
+0. **Make the suite independent of the working directory.** Run from the primary
+   checkout, 16 doctor and no-Leeboard tests fail: doctor reads the untracked
+   `.helmraiser/project.toml` there (`delivery = "pr"`), adds the `gh` check, and the
+   suite's fake `gh` reports not ready. From a clean worktree the suite passes. Point
+   those tests at a temporary project instead of the current directory.
 1. **Decide how to roll out RPC implement sessions.** `pi_rpc_implement` is off by
    default. One dogfood run matched json mode in events, per-message usage, iteration cost
    and `agent_settled`; RPC mode emits no `session` header event, which nothing reads.

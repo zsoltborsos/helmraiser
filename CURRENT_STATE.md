@@ -111,7 +111,7 @@ Remaining public-release checks are in `TASKS.md`.
   their settings. OpenCode Go and Codex share Omarchy record reading, refreshing
   through their collectors after 15 minutes or when `limitsStale` is true.
   Stale records remain usable if collection fails; OpenCode Go falls back to its usage
-  API without usable record windows. Helmraiser no longer publishes a duplicate record.
+  API without usable record windows.
 
 - **Implement-session Git writes are limited.** In the primary `.git`, sessions can
   write only their own branch's ref directory (plus objects and their worktree's
@@ -151,8 +151,7 @@ Remaining public-release checks are in `TASKS.md`.
 
 - **External worktrees.** Defaults live outside the repository under
   `$HELMRAISER_DATA_DIR/worktrees/<repo-name>-<path-hash>`. Nested overrides can upset
-  scanners or a project whose tests reject a nested `.git`. Legacy worktrees and
-  metadata are recovered in place, not moved.
+  scanners or a project whose tests reject a nested `.git`.
 
 - **pnpm's store must share the worktree's filesystem.** Configure `worktree_root`
   or project `worktree_dir` accordingly, and put a store such as `/data/.pnpm-store`

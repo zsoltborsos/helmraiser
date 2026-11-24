@@ -586,7 +586,7 @@ def _path_pattern(tail: str) -> re.Pattern[str]:
 def relocate(text: str, replay: Replay, worktree: Path, run_dir: Path) -> str:
     """Point the live run dir and worktree paths at the replay's copies.
 
-    Older prompts name other data dirs (``~/.squadron/runs/<run_id>``) and worktree roots,
+    Older prompts name other data dirs (``~/<dir>/runs/<run_id>``) and worktree roots,
     so any path ending in ``/runs/<run_id>`` is the run dir, and any ending in a
     ``worktree-…-<run_id>`` directory is the worktree."""
     run_id = re.escape(replay.case.run_id)

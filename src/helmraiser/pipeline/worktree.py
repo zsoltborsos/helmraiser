@@ -33,23 +33,15 @@ class WorktreeManager:
         """The configured worktree directory, without creating it."""
         return self._worktree_dir
 
-    def _directory_for(self, run_id: str) -> Path:
-        if (self._worktree_dir / f"{run_id}.json").exists():
-            return self._worktree_dir
-        legacy = self.codebase_dir / ".helmraiser" / "worktrees"
-        if (legacy / f"{run_id}.json").exists():
-            return legacy
-        return self._worktree_dir
-
     def _path(self, topic_id: str, run_id: str) -> Path:
-        return self._directory_for(run_id) / f"worktree-{topic_id}-{run_id}"
+        return self._worktree_dir / f"worktree-{topic_id}-{run_id}"
 
     @staticmethod
     def _branch(topic_id: str, run_id: str) -> str:
         return f"feature/{topic_id}/{run_id}"
 
     def _metadata_path(self, run_id: str) -> Path:
-        return self._directory_for(run_id) / f"{run_id}.json"
+        return self._worktree_dir / f"{run_id}.json"
 
     def _git(
         self,
@@ -449,11 +441,7 @@ class WorktreeManager:
         if branch_name != self._branch(topic_id, run_id):
             raise RuntimeError("run branch does not match its identity")
         path = Path(worktree_path).resolve()
-        directories = {
-            self._worktree_dir.resolve(),
-            (self.codebase_dir / ".helmraiser" / "worktrees").resolve(),
-        }
-        if path not in {d / f"worktree-{topic_id}-{run_id}" for d in directories}:
+        if path != self._worktree_dir.resolve() / f"worktree-{topic_id}-{run_id}":
             raise RuntimeError("recorded worktree is outside its expected path")
         previous_timeout = self.command_timeout
         self.command_timeout = previous_timeout if previous_timeout is not None else 60
@@ -462,19 +450,16 @@ class WorktreeManager:
             with self._finalization_lock():
                 try:
                     metadata_path = path.parent / f"{run_id}.json"
-                    for directory in directories:
-                        candidate = directory / f"{run_id}.json"
-                        if candidate.exists():
-                            recorded = json.loads(candidate.read_text(encoding="utf-8"))
-                            if (
-                                recorded.get("run_id") != run_id
-                                or recorded.get("topic_id") != topic_id
-                                or recorded.get("branch_name") != branch_name
-                                or recorded.get("base_branch") != base_branch
-                                or Path(recorded.get("worktree_path", "")).resolve() != path
-                                or candidate != metadata_path
-                            ):
-                                raise RuntimeError("run worktree metadata does not match")
+                    if metadata_path.exists():
+                        recorded = json.loads(metadata_path.read_text(encoding="utf-8"))
+                        if (
+                            recorded.get("run_id") != run_id
+                            or recorded.get("topic_id") != topic_id
+                            or recorded.get("branch_name") != branch_name
+                            or recorded.get("base_branch") != base_branch
+                            or Path(recorded.get("worktree_path", "")).resolve() != path
+                        ):
+                            raise RuntimeError("run worktree metadata does not match")
                     info = self.get_info(topic_id, run_id)
                     if info is not None and Path(info["path"]).resolve() != path:
                         raise RuntimeError("run branch is checked out outside its expected path")
@@ -570,15 +555,7 @@ class WorktreeManager:
             if line.startswith("worktree ")
         }
         orphaned: list[dict[str, Any]] = []
-        directories = {
-            self._worktree_dir.resolve(),
-            (self.codebase_dir / ".helmraiser" / "worktrees").resolve(),
-        }
-        for metadata_path in sorted(
-            path for directory in directories for path in directory.glob("*.json")
-        ):
-            if metadata_path.resolve() != self._metadata_path(metadata_path.stem).resolve():
-                continue
+        for metadata_path in sorted(self._worktree_dir.glob("*.json")):
             metadata = cast(dict[str, Any], json.loads(metadata_path.read_text(encoding="utf-8")))
             if Path(metadata["worktree_path"]).resolve() in registered:
                 continue

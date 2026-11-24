@@ -24,7 +24,7 @@ def require_work_models(
     dry_run: bool = False,
     as_json: bool = False,
 ) -> None:
-    """Inspect existing queue snapshots without creating or migrating a ledger."""
+    """Inspect existing queue snapshots without creating or writing to a ledger."""
     if not missing_models(config, WORK_MODEL_ROLES):
         return
     db = base / "helmraiser.db"

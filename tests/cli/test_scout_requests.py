@@ -13,7 +13,7 @@ from typer.testing import CliRunner
 
 from helmraiser.cli import app, monitor, scout_commands, supervisor
 from helmraiser.config import SUBSCRIPTION_TEMPLATES
-from helmraiser.ledger.db import SCHEMA_VERSION, Ledger, ProjectScope, ScoutRequestUnavailable
+from helmraiser.ledger.db import Ledger, ProjectScope, ScoutRequestUnavailable
 from helmraiser.loop import scout as scout_module
 from helmraiser.loop.scout import ScoutError, scout_gate
 from helmraiser.loop.status import build_scout_status
@@ -255,40 +255,6 @@ def test_cli_claim_safety_race_before_model(
             assert ledger.get_scout_request(request["id"])["scout_id"] == "child"
         else:
             assert ledger.list_scout_requests() == [request]
-
-
-def test_schema_six_migrates_existing_scout_and_is_idempotent(tmp_path: Path) -> None:
-    db = tmp_path / "old.db"
-    connection = sqlite3.connect(db)
-    connection.executescript("""
-        CREATE TABLE scouts (
-          id TEXT PRIMARY KEY, project TEXT NOT NULL, model TEXT NOT NULL,
-          head_commit TEXT, started_at REAL NOT NULL, ended_at REAL,
-          cost_usd REAL NOT NULL DEFAULT 0, tokens_in INTEGER NOT NULL DEFAULT 0,
-          tokens_out INTEGER NOT NULL DEFAULT 0, outcome TEXT NOT NULL,
-          drafts_written TEXT NOT NULL DEFAULT '[]', report_path TEXT NOT NULL
-        );
-        INSERT INTO scouts
-          (id, project, model, started_at, outcome, report_path)
-          VALUES ('old', '/repo', 'p/m', 1, 'succeeded', '/report');
-        PRAGMA user_version = 6;
-        """)
-    connection.commit()
-    connection.close()
-
-    ledger = Ledger(db)
-    assert ledger.get_scout("old")["request_id"] is None
-    assert ledger.get_scout("old")["error"] is None
-    assert ledger.request_scouts(["/repo"], requested_at=2.0) == (["/repo"], [])
-    ledger.close()
-    reopened = Ledger(db)
-    assert reopened.list_scout_requests()[0]["project"] == "/repo"
-    assert reopened._get_conn().execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
-    indexes = {
-        row[1]
-        for row in reopened._get_conn().execute("PRAGMA index_list(scout_requests)").fetchall()
-    }
-    assert "scout_requests_pending_project" in indexes
 
 
 def test_request_cli_json_idempotency_duplicates_and_cancel(
@@ -953,19 +919,23 @@ def test_child_resolves_requested_lens(tmp_project, tmp_path, monkeypatch, lens)
     assert ledger.get_scout_request(request["id"])["started_at"] is not None
 
 
-@pytest.mark.parametrize("lens", [None, "docs", "tests", "guardrails"])
-def test_child_only_running_lens_and_legacy_fallback(tmp_path, lens):
+@pytest.mark.parametrize("lens", ["state", "docs", "tests", "guardrails"])
+def test_child_only_running_lens(tmp_path, lens):
     ledger = Ledger(tmp_path / "ledger.db")
-    child = {"kind": "scout", "scout_id": "child", "project": "/one", "started_at": 10}
-    if lens is not None:
-        child["lens"] = lens
+    child = {
+        "kind": "scout",
+        "scout_id": "child",
+        "project": "/one",
+        "started_at": 10,
+        "lens": lens,
+    }
     payload = build_scout_status(ledger, config_for(), 20, {"children": [child]})
     assert payload["running"] == [
         {
             "scout_id": "child",
             "project": "/one",
             "started_at": "1970-01-01T00:00:10+00:00",
-            "lens": lens or "state",
+            "lens": lens,
         },
     ]
 

@@ -258,63 +258,12 @@ def new_id() -> str:
     return str(uuid.uuid4())
 
 
-@pytest.mark.parametrize("finish", ["discard", "local", "remote"])
-def test_legacy_run_recovery(repo: Path, tmp_path: Path, finish: str):
-    legacy = WorktreeManager(repo)
-    run_id = new_id()
-    worktree = legacy.create("topic", run_id)
-    metadata_path = legacy._metadata_path(run_id)
+def test_tampered_path_is_refused(repo: Path, tmp_path: Path):
     manager = WorktreeManager(repo, worktree_dir=tmp_path / "external")
-
-    assert manager.path_for("topic", run_id) == worktree
-    assert manager.metadata(run_id) == legacy.metadata(run_id)
-    assert manager.create("topic", run_id, resume=True) == worktree
-    assert manager.path_for("topic", new_id()).parent == tmp_path / "external"
-    manager.adopt_base(run_id, git(repo, "rev-parse", "HEAD"))
-    assert metadata_path.exists()
-    assert not (tmp_path / "external").exists()
-
-    (worktree / "result.txt").write_text("done\n")
-    git(worktree, "add", ".")
-    git(worktree, "commit", "-m", "result")
-    if finish == "discard":
-        manager.discard("topic", run_id)
-        assert git(repo, "rev-parse", f"feature/topic/{run_id}")
-    elif finish == "local":
-        manager.finalize_local("topic", run_id)
-        assert (repo / "result.txt").read_text() == "done\n"
-    else:
-        remote = tmp_path / "remote.git"
-        git(tmp_path, "init", "--bare", str(remote))
-        git(repo, "remote", "add", "origin", str(remote))
-        manager.finalize_remote("topic", run_id)
-        assert git(remote, "rev-parse", f"feature/topic/{run_id}")
-    assert not worktree.exists()
-    assert not metadata_path.exists()
-
-
-def test_current_metadata_wins_over_legacy(repo: Path, tmp_path: Path):
-    legacy = WorktreeManager(repo)
     run_id = new_id()
-    legacy.create("topic", run_id)
-    external = tmp_path / "external"
-    external.mkdir()
-    current = {**legacy.metadata(run_id), "base_commit": "current"}
-    (external / f"{run_id}.json").write_text(json.dumps(current))
-    manager = WorktreeManager(repo, worktree_dir=external)
-    assert manager.metadata(run_id) == current
-    assert manager.path_for("topic", run_id).parent == external
-    with pytest.raises(RuntimeError, match="metadata does not match"):
-        manager.create("topic", run_id, resume=True)
-
-
-def test_legacy_tampered_path_is_still_refused(repo: Path, tmp_path: Path):
-    legacy = WorktreeManager(repo)
-    run_id = new_id()
-    legacy.create("topic", run_id)
-    metadata = {**legacy.metadata(run_id), "worktree_path": str(tmp_path / "wrong")}
-    legacy._metadata_path(run_id).write_text(json.dumps(metadata))
-    manager = WorktreeManager(repo, worktree_dir=tmp_path / "external")
+    manager.create("topic", run_id)
+    metadata = {**manager.metadata(run_id), "worktree_path": str(tmp_path / "wrong")}
+    manager._metadata_path(run_id).write_text(json.dumps(metadata))
     with pytest.raises(RuntimeError, match="metadata does not match"):
         manager.create("topic", run_id, resume=True)
     with pytest.raises(RuntimeError, match="outside its expected path"):
@@ -452,30 +401,6 @@ def test_orphaned_metadata_reports_only_removed_worktrees(repo: Path) -> None:
             "branch_exists": True,
         }
     ]
-
-
-def test_orphans_scan_both_directories_with_current_precedence(repo: Path, tmp_path: Path):
-    legacy = WorktreeManager(repo)
-    manager = WorktreeManager(repo, worktree_dir=tmp_path / "external")
-    old_id, current_id = new_id(), new_id()
-    old = legacy.create("old", old_id)
-    current = manager.create("current", current_id)
-    git(repo, "worktree", "remove", str(old))
-    git(repo, "worktree", "remove", str(current))
-    duplicate = manager._worktree_dir / f"{old_id}.json"
-    duplicate.write_text(legacy._metadata_path(old_id).read_text())
-
-    orphans = manager.orphaned_metadata()
-
-    assert {item["run_id"] for item in orphans} == {old_id, current_id}
-    assert len(orphans) == 2
-    assert next(item for item in orphans if item["run_id"] == old_id)["metadata_path"] == str(
-        duplicate
-    )
-    duplicate.unlink()
-    assert next(item for item in manager.orphaned_metadata() if item["run_id"] == old_id)[
-        "metadata_path"
-    ] == str(legacy._metadata_path(old_id))
 
 
 def test_create_never_reuses_another_runs_worktree_or_branch(repo: Path):
@@ -790,13 +715,12 @@ def test_git_hooks_do_not_see_the_worker_code_snapshot(
     assert seen.read_text(encoding="utf-8").strip() == "/keep|"
 
 
-@pytest.mark.parametrize("legacy", [False, True])
 @pytest.mark.parametrize("retained", [False, True])
-def test_restore_pr(repo, tmp_path, legacy, retained):
+def test_restore_pr(repo, tmp_path, retained):
     remote = tmp_path / "origin.git"
     git(tmp_path, "init", "--bare", str(remote))
     git(repo, "remote", "add", "origin", str(remote))
-    manager = WorktreeManager(repo, None if legacy else tmp_path / "trees")
+    manager = WorktreeManager(repo, tmp_path / "trees")
     run_id = new_id()
     tree = manager.create("topic", run_id)
     metadata = manager.metadata(run_id)
@@ -805,8 +729,6 @@ def test_restore_pr(repo, tmp_path, legacy, retained):
     git(tree, "push", "origin", metadata["branch_name"])
     if not retained:
         manager.discard("topic", run_id)
-    # A newly configured manager must still recover an old canonical legacy path.
-    manager = WorktreeManager(repo, tmp_path / "trees")
     restored = manager.restore_pr(
         "topic",
         run_id,

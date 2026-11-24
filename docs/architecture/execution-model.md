@@ -134,11 +134,8 @@ relative roots resolve from the current working directory. This lets package sto
 and worktrees share a filesystem (for example a separate data disk for pnpm).
 
 An explicit project `worktree_dir` bypasses this root and suffix; its environment
-variables expand and relative paths resolve from the repository. For each run,
-current-location metadata wins, otherwise legacy metadata under
-`<repo>/.helmraiser/worktrees/` is used for recovery and doctor reporting. Existing
-worktrees and metadata are not moved or migrated. Per-project `.helmraiser/state.db`,
-tasks and `finalize.lock` remain in the repository.
+variables expand and relative paths resolve from the repository. Per-project
+`.helmraiser/state.db`, tasks and `finalize.lock` remain in the repository.
 
 ## Abort
 

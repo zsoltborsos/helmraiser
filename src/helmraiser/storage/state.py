@@ -110,20 +110,21 @@ class StateManager:
 
     def _init_db(self):
         try:
-            self._migrate()
+            self._create_schema()
         except sqlite3.DatabaseError as exc:
             # Only a damaged file is recovered. "database is locked" and every other
             # error propagate and leave the file alone: it holds live leases and locks.
             if not _is_corruption(exc):
                 raise
             self._recover_corrupt_db()
-            self._migrate()
+            self._create_schema()
 
-    def _migrate(self) -> None:
-        """Create or migrate the schema; a current one is only read, so opening the DB
+    def _create_schema(self) -> None:
+        """Create missing tables; a complete schema is only read, so opening the DB
         takes no write lock and never queues behind other writers."""
         conn = self._get_conn()
-        if self._schema_is_current(conn):
+        names = {row[0] for row in conn.execute("SELECT name FROM sqlite_master").fetchall()}
+        if {"runs", "locks", "active_processes"} <= names:
             return
         with self._write_lock:
             # Not ``executescript``: it would commit the open transaction first.
@@ -132,37 +133,10 @@ class StateManager:
                 for statement in _SCHEMA.split(";"):
                     if statement.strip():
                         conn.execute(statement)
-                self._ensure_schema_columns(conn)
-                self._ensure_topic_lock_index(conn)
             except BaseException:
                 conn.rollback()
                 raise
             conn.commit()
-
-    @staticmethod
-    def _schema_is_current(conn: sqlite3.Connection) -> bool:
-        names = {row[0] for row in conn.execute("SELECT name FROM sqlite_master").fetchall()}
-        if not {"runs", "locks", "active_processes", "locks_topic_id"} <= names:
-            return False
-        legacy = conn.execute(
-            "SELECT 1 FROM runs WHERE status IN ('pending', 'done', 'completed', 'cancelled') "
-            "LIMIT 1"
-        ).fetchall()
-        return not legacy
-
-    @staticmethod
-    def _ensure_schema_columns(conn: sqlite3.Connection) -> None:
-        conn.execute("UPDATE runs SET status = 'starting' WHERE status = 'pending'")
-        conn.execute("UPDATE runs SET status = 'succeeded' WHERE status IN ('done', 'completed')")
-        conn.execute("UPDATE runs SET status = 'aborted' WHERE status = 'cancelled'")
-
-    @staticmethod
-    def _ensure_topic_lock_index(conn: sqlite3.Connection) -> None:
-        """Migrate legacy run-scoped locks to one active lock per topic."""
-        conn.execute(
-            "DELETE FROM locks WHERE id NOT IN " "(SELECT MIN(id) FROM locks GROUP BY topic_id)"
-        )
-        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS locks_topic_id ON locks(topic_id)")
 
     def _recover_corrupt_db(self) -> Path | None:
         """Back up a corrupt DB file; remove it only if SQLite cannot dump it.

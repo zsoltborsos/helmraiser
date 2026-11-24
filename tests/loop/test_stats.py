@@ -480,26 +480,3 @@ def test_window_week_boundary(ledger, make_task):
     assert [(w["week"], w["landed"]) for w in data["weekly"]] == [("2026-W01", 1), ("2026-W02", 1)]
     assert build(ledger, since="all")["runs"]["overall"]["landed"] == 3
     assert build(ledger, since="24h")["runs"]["overall"]["landed"] == 2
-
-
-def test_hash_column_migration(ledger, make_task, tmp_project):
-    import sqlite3
-
-    from helmraiser.ledger.db import Ledger
-
-    task = make_task()
-    ledger.create_scout(
-        {"id": "s", "project": str(tmp_project), "model": "fake", "report_path": "unused"}
-    )
-    ledger.create_scout_draft(task.task_id, "s", {})
-    db_path = ledger._get_conn().execute("PRAGMA database_list").fetchone()[2]
-    ledger.close()
-    with sqlite3.connect(db_path) as conn:
-        conn.execute("ALTER TABLE scout_drafts DROP COLUMN acceptance_scope_sha256")
-        conn.execute("PRAGMA user_version=10")
-    with pytest.raises(ValueError):
-        Ledger(db_path, read_only=True)
-    with Ledger(db_path) as migrated:
-        assert migrated.get_scout_draft(task.task_id)["acceptance_scope_sha256"] is None
-        migrated.set_scout_draft_hash(task.task_id, "abc")
-        assert migrated.stats_drafts()[0]["acceptance_scope_sha256"] == "abc"

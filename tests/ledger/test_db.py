@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import gc
+import json
 import sqlite3
 import threading
 import time
 import warnings
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -23,6 +25,37 @@ from helmraiser.ledger.db import (
 from helmraiser.ledger.rundir import RunDir
 from helmraiser.task.loader import render_task
 from helmraiser.task.model import Budget, ModelSpec, TaskSpec, VerifyStep
+
+
+def schema_shape(conn: sqlite3.Connection) -> dict[str, Any]:
+    """Tables' columns and foreign keys, indexes and ``user_version``, ignoring column order
+    and DDL text, so a created and an upgraded ledger compare equal."""
+    shape: dict[str, Any] = {}
+    tables = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%' "
+        "ORDER BY name"
+    ).fetchall()
+    for (table,) in tables:
+        shape[f"table:{table}"] = sorted(
+            list(row)[1:] for row in conn.execute(f"PRAGMA table_xinfo({table})")
+        )
+        shape[f"fk:{table}"] = sorted(
+            list(row)[2:5] for row in conn.execute(f"PRAGMA foreign_key_list({table})")
+        )
+        for index in conn.execute(f"PRAGMA index_list({table})").fetchall():
+            name = index[1]
+            columns = [row[2] for row in conn.execute(f"PRAGMA index_info({name})")]
+            sql = conn.execute("SELECT sql FROM sqlite_master WHERE name = ?", (name,)).fetchone()
+            shape[f"index:{table}:{name}"] = [
+                index[2],
+                index[3],
+                index[4],
+                columns,
+                sql[0] if sql else None,
+            ]
+    shape["user_version"] = conn.execute("PRAGMA user_version").fetchone()[0]
+    return shape
+
 
 EXPECTED_TABLES = {
     "tasks",
@@ -103,35 +136,14 @@ class TestSchema:
             Ledger(parent / "helmraiser.db", read_only=True)
         assert not parent.exists()
 
-    def test_read_only_refuses_migration(self, ledger):
+    def test_read_only_refuses_an_older_version(self, ledger):
         conn = ledger._get_conn()
         conn.execute("PRAGMA user_version = 8")
         before = list(conn.iterdump())
-        with pytest.raises(ValueError, match="migration"):
+        with pytest.raises(ValueError, match="schema version 8"):
             Ledger(ledger.db_path, read_only=True)
         assert list(conn.iterdump()) == before
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 8
-
-    @pytest.mark.parametrize("pending", [None, "plan", "merge"])
-    def test_rework_migration_pending_approvals(self, tmp_path: Path, pending):
-        path = tmp_path / "v8.db"
-        with Ledger(path) as ledger:
-            task_id = ledger.upsert_task(make_spec(tmp_path), "snapshot")
-            ledger.create_run(run_row("parked", task_id, str(tmp_path), "awaiting_approval"))
-            for status in ("running", "landed", "failed"):
-                ledger.create_run(run_row(status, task_id, str(tmp_path), status))
-            if pending:
-                ledger.record_approval("parked", pending, "pending")
-        with sqlite3.connect(path) as conn:
-            conn.execute("PRAGMA user_version = 8")
-        for _ in range(2):
-            with Ledger(path) as ledger:
-                approvals = ledger.approvals("parked")
-                assert len(approvals) == 1
-                assert approvals[0]["kind"] == (pending or "merge")
-                assert approvals[0]["decision"] == "pending"
-                for status in ("running", "landed", "failed"):
-                    assert ledger.approvals(status) == []
 
     def test_ddl_and_user_version(self, ledger: Ledger, tmp_path: Path):
         conn = sqlite3.connect(tmp_path / "helmraiser.db")
@@ -145,6 +157,39 @@ class TestSchema:
         indexes = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")}
         assert "run_events_run" in indexes
         assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+
+    def test_new_ledger_schema_matches_version_11(self, ledger: Ledger, tmp_path: Path):
+        assert SCHEMA_VERSION == 11
+        expected = json.loads((Path(__file__).parent / "schema_v11.json").read_text())
+        conn = sqlite3.connect(tmp_path / "helmraiser.db")
+        try:
+            assert json.loads(json.dumps(schema_shape(conn))) == expected
+        finally:
+            conn.close()
+
+    @pytest.mark.parametrize("version", range(1, SCHEMA_VERSION))
+    def test_older_version_is_refused_unchanged(self, tmp_path: Path, version: int):
+        path = tmp_path / "helmraiser.db"
+        Ledger(path).close()
+        conn = sqlite3.connect(path)
+        conn.execute(f"PRAGMA user_version = {version}")
+        conn.commit()
+        before = list(conn.iterdump())
+        message = f"has schema version {version}; this Helmraiser expects version {SCHEMA_VERSION}"
+        try:
+            for read_only in (False, True):
+                with pytest.raises(ValueError, match=message):
+                    Ledger(path, read_only=read_only)
+            assert list(conn.iterdump()) == before
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == version
+        finally:
+            conn.close()
+
+    def test_read_only_refuses_an_empty_file(self, tmp_path: Path):
+        path = tmp_path / "helmraiser.db"
+        sqlite3.connect(path).close()
+        with pytest.raises(ValueError, match="no schema"):
+            Ledger(path, read_only=True)
 
     def test_reopen_is_idempotent(self, tmp_path: Path):
         Ledger(tmp_path / "helmraiser.db")
@@ -174,14 +219,12 @@ class TestSchema:
             writer.close()
             thread.join()
 
-    def test_concurrent_opens_of_version_3_all_migrate(self, tmp_path: Path):
+    def test_concurrent_opens_of_a_new_ledger_all_succeed(self, tmp_path: Path):
         path = tmp_path / "helmraiser.db"
-        Ledger(path).close()
-        conn = sqlite3.connect(path)
-        conn.execute("DROP TABLE scouts")
-        conn.execute("PRAGMA user_version = 3")
-        conn.commit()
-        conn.close()
+        # An empty file already in WAL mode: concurrent opens race only on the schema.
+        empty = sqlite3.connect(path)
+        empty.execute("PRAGMA journal_mode=WAL").fetchone()
+        empty.close()
         barrier = threading.Barrier(8)
         errors: list[BaseException] = []
 
@@ -190,7 +233,7 @@ class TestSchema:
             try:
                 with Ledger(path) as ledger:
                     ledger.is_paused()
-            except sqlite3.Error as exc:
+            except (sqlite3.Error, ValueError) as exc:
                 errors.append(exc)
 
         threads = [threading.Thread(target=open_ledger) for _ in range(8)]
@@ -202,139 +245,7 @@ class TestSchema:
         assert errors == []
         conn = sqlite3.connect(path)
         assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
-        assert conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'scouts'"
-        ).fetchone()
         conn.close()
-
-    def test_version_4_database_migrates_scout_drafts_and_preserves_rows(self, tmp_path: Path):
-        path = tmp_path / "v4.db"
-        ledger = Ledger(path)
-        task_id = ledger.upsert_task(make_spec(tmp_path, status="draft"), "snapshot")
-        ledger.create_scout(
-            {"id": "scout", "project": str(tmp_path), "model": "p/m", "report_path": "/r"}
-        )
-        ledger.close()
-        conn = sqlite3.connect(path)
-        conn.execute("DROP TABLE scout_drafts")
-        conn.execute("PRAGMA user_version = 4")
-        conn.commit()
-        conn.close()
-
-        migrated = Ledger(path)
-
-        assert migrated._get_conn().execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
-        assert migrated.get_task(task_id)["snapshot"] == "snapshot"
-        assert migrated.get_scout("scout")["project"] == str(tmp_path)
-        assert (
-            migrated._get_conn()
-            .execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'scout_drafts'")
-            .fetchone()
-        )
-
-    def test_version_7_database_migrates_intake_notes_and_preserves_proposal(self, tmp_path: Path):
-        path = tmp_path / "v7.db"
-        with Ledger(path) as ledger:
-            task_id = ledger.upsert_task(make_spec(tmp_path, status="draft"), "snapshot")
-            ledger.create_scout(
-                {"id": "scout", "project": str(tmp_path), "model": "p/m", "report_path": "/r"}
-            )
-            ledger.create_scout_draft(task_id, "scout", {"id": "candidate"})
-            ledger.set_scout_draft_intake(
-                task_id, status="proposed", proposal={"verify": ["true"]}, error=None
-            )
-        with sqlite3.connect(path) as conn:
-            conn.execute("ALTER TABLE scout_drafts DROP COLUMN intake_notes")
-            conn.execute("PRAGMA user_version = 7")
-
-        with Ledger(path) as migrated:
-            draft = migrated.get_scout_draft(task_id)
-            assert draft["intake_notes"] == []
-            assert draft["proposal"] == {"verify": ["true"]}
-            assert draft["candidate"] == {"id": "candidate"}
-            assert (
-                migrated._get_conn().execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
-            )
-            migrated.set_scout_draft_intake(
-                task_id,
-                status="proposed",
-                proposal=draft["proposal"],
-                error=None,
-                notes=["diagnostic"],
-            )
-        with Ledger(path) as reopened:
-            assert reopened.get_scout_draft(task_id)["intake_notes"] == ["diagnostic"]
-
-    def test_version_3_database_migrates_scouts_table(self, tmp_path: Path):
-        path = tmp_path / "v3.db"
-        Ledger(path).close()
-        conn = sqlite3.connect(path)
-        conn.execute("DROP TABLE scouts")
-        conn.execute("PRAGMA user_version = 3")
-        conn.commit()
-        conn.close()
-
-        with Ledger(path) as ledger:
-            assert ledger._get_conn().execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
-            assert (
-                ledger._get_conn()
-                .execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'scouts'")
-                .fetchone()
-            )
-
-    def test_version_2_database_migrates_plan_columns(self, tmp_path: Path):
-        path = tmp_path / "v2.db"
-        conn = sqlite3.connect(path)
-        conn.execute(
-            "CREATE TABLE runs (run_id TEXT PRIMARY KEY, "
-            "delivery TEXT NOT NULL DEFAULT 'merge', pr_url TEXT)"
-        )
-        conn.execute("PRAGMA user_version = 2")
-        conn.commit()
-        conn.close()
-
-        ledger = Ledger(path)
-        columns = {row[1]: row for row in ledger._get_conn().execute("PRAGMA table_info(runs)")}
-
-        assert ledger._get_conn().execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
-        assert columns["model_plan"][2] == "TEXT"
-        assert columns["plan_cost_usd"][2] == "REAL"
-        assert columns["plan_cost_usd"][4] == "0"
-
-    def test_version_5_database_adds_scout_head_and_preserves_rows(self, tmp_path: Path):
-        path = tmp_path / "v5.db"
-        conn = sqlite3.connect(path)
-        conn.execute(
-            "CREATE TABLE scouts (id TEXT PRIMARY KEY, project TEXT NOT NULL, "
-            "model TEXT NOT NULL, started_at REAL NOT NULL, ended_at REAL, "
-            "cost_usd REAL NOT NULL DEFAULT 0, tokens_in INTEGER NOT NULL DEFAULT 0, "
-            "tokens_out INTEGER NOT NULL DEFAULT 0, outcome TEXT NOT NULL, "
-            "drafts_written TEXT NOT NULL DEFAULT '[]', report_path TEXT NOT NULL)"
-        )
-        conn.execute(
-            "INSERT INTO scouts (id, project, model, started_at, outcome, report_path) "
-            "VALUES ('old', '/project', 'p/m', 1, 'succeeded', '/report')"
-        )
-        conn.execute("PRAGMA user_version = 5")
-        conn.commit()
-        conn.close()
-
-        ledger = Ledger(path)
-
-        assert ledger._get_conn().execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
-        old = ledger.get_scout("old")
-        assert old is not None and old["head_commit"] is None
-        ledger.create_scout(
-            {
-                "id": "new",
-                "project": "/project",
-                "model": "p/m",
-                "head_commit": "abc123",
-                "report_path": "/report",
-            }
-        )
-        new = ledger.get_scout("new")
-        assert new is not None and new["head_commit"] == "abc123"
 
     def test_default_path_honours_env(self, tmp_path: Path, monkeypatch):
         monkeypatch.setenv("HELMRAISER_DATA_DIR", str(tmp_path / "data"))
@@ -1216,34 +1127,6 @@ class TestRunDir:
         assert RunDir("x", data_dir=tmp_path / "d").path == tmp_path / "d" / "runs" / "x"
 
 
-def test_opening_previous_runs_schema_adds_delivery_columns(tmp_path: Path) -> None:
-    db_path = tmp_path / "old.db"
-    conn = sqlite3.connect(db_path)
-    conn.execute("""CREATE TABLE runs (
-          run_id TEXT PRIMARY KEY,
-          task_id TEXT NOT NULL,
-          project TEXT NOT NULL, worktree_path TEXT, branch_name TEXT,
-          base_branch TEXT, base_commit TEXT, head_commit TEXT,
-          status TEXT NOT NULL, stage TEXT,
-          policy TEXT NOT NULL, isolation TEXT NOT NULL,
-          model_implement TEXT NOT NULL, model_fallback TEXT, model_review TEXT NOT NULL,
-          escalated INTEGER NOT NULL DEFAULT 0, pi_version TEXT NOT NULL,
-          cost_usd REAL NOT NULL DEFAULT 0, tokens_in INTEGER NOT NULL DEFAULT 0,
-          tokens_out INTEGER NOT NULL DEFAULT 0, verdict TEXT, failure_reason TEXT,
-          started_at REAL NOT NULL, ended_at REAL
-        )""")
-    conn.commit()
-    conn.close()
-
-    ledger = Ledger(db_path)
-
-    columns = {
-        row[1] for row in sqlite3.connect(db_path).execute("PRAGMA table_info(runs)").fetchall()
-    }
-    assert {"delivery", "pr_url"} <= columns
-    assert ledger.list_runs() == []
-
-
 def test_ledger_close_reopen_context_and_gc(tmp_path: Path) -> None:
     """close() reopens on next use; context manager closes; GC emits no ResourceWarning."""
     ledger = Ledger(tmp_path / "close.db")
@@ -1324,34 +1207,6 @@ def test_depends_on_combined_hold(ledger, tmp_project):
         "unmet": [{"id": "missing", "reason": "unknown", "text": "missing: unknown dependency id"}],
     }
     assert ledger.next_queued() is None
-
-
-def test_version_nine_scout_lens_migration(tmp_path):
-    import sqlite3
-
-    path = tmp_path / "old.db"
-    ledger = Ledger(path)
-    ledger.create_scout({"id": "old", "project": "/repo", "model": "p/m", "report_path": "/report"})
-    ledger.request_scouts(["/repo"], requested_at=12)
-    ledger.close()
-    with sqlite3.connect(path) as conn:
-        conn.execute("DROP INDEX scout_requests_pending_project")
-        conn.execute("ALTER TABLE scout_requests DROP COLUMN lens")
-        conn.execute("ALTER TABLE scouts DROP COLUMN lens")
-        conn.execute(
-            "CREATE UNIQUE INDEX scout_requests_pending_project ON scout_requests(project) WHERE started_at IS NULL"
-        )
-        conn.execute("PRAGMA user_version = 9")
-    ledger = Ledger(path)
-    assert ledger.get_scout("old")["lens"] == "state"
-    request = ledger.list_scout_requests()[0]
-    assert request["lens"] == "state"
-    assert request["requested_at"] == 12
-    assert ledger.request_scouts(["/repo"], lens="docs") == (["/repo"], [])
-    assert ledger.request_scouts(["/repo"]) == ([], ["/repo"])
-    ledger.close()
-    with Ledger(path, read_only=True) as reopened:
-        assert [r["lens"] for r in reopened.list_scout_requests()] == ["state", "docs"]
 
 
 def test_scout_overrides(ledger):

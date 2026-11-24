@@ -742,38 +742,6 @@ def test_stop_block_uses_the_live_value(
     assert block["fraction"] == pytest.approx(0.87)
 
 
-# ── Omarchy record ──────────────────────────────────────────────────────
-
-
-def test_legacy_publish_setting_is_ignored(
-    home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> None:
-    from helmraiser import config as config_module
-
-    config_dir = tmp_path / "config"
-    config_dir.mkdir()
-    config_file = config_dir / "config.json"
-    original = json.dumps({"subscriptions": {"opencode-go": {"publish_omarchy": True}}})
-    config_file.write_text(original)
-    monkeypatch.setattr(config_module, "CONFIG_DIR", config_dir)
-    monkeypatch.setattr(config_module, "CONFIG_FILE", config_file)
-
-    config = config_module.load_config()
-
-    monkeypatch.setattr(lu, "read_opencode", REAL_READ_OPENCODE)
-    monkeypatch.setattr(lu, "opencode_go_key", lambda: "fake-key")
-    monkeypatch.setattr(lu, "fetch_opencode_go", lambda key: _live_windows(NOW))
-    data_dir = tmp_path / "data"
-
-    assert live_usage(data_dir, config, now=NOW, refresh=True) == {
-        "opencode-go": _live_windows(NOW)
-    }
-    cache = json.loads((data_dir / "live-usage.json").read_text())
-    assert cache == {"fetched_at": NOW, "opencode-go": _live_windows(NOW)}
-    assert not (home / "state" / "omarchy" / "agents" / "usage" / "opencode-go.json").exists()
-    assert config_file.read_text() == original
-
-
 @pytest.mark.parametrize("provider", ["opencode-go", "openai-codex"])
 @pytest.mark.parametrize("config", [{}, {"subscriptions": {}}, {"subscriptions": {"other": {}}}])
 def test_live_setting_without_a_block_is_off(provider, config):
@@ -832,5 +800,4 @@ def test_only_named_provider_is_fetched(tmp_path, monkeypatch, provider):
 def test_subscription_templates_include_live_sources() -> None:
     subs = SUBSCRIPTION_TEMPLATES
     assert subs["opencode-go"]["live"] == "opencode-go-api"
-    assert "publish_omarchy" not in subs["opencode-go"]
     assert subs["openai-codex"] == {"live": "omarchy-codex", "warn_at": 0.8, "stop_at": None}

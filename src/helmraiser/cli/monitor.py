@@ -367,18 +367,6 @@ def doctor(
                     f"{orphan['name']} (run {orphan['run_id'][:8]}, {orphan['run_status']});"
                     " `helmraiser work` removes it",
                 )
-        if "night_max_cost_usd" in (config.get("budget") or {}):
-            table.add_row(
-                "budget.night_max_cost_usd",
-                "[cyan]info[/cyan]",
-                "no longer used; see subscriptions",
-            )
-        if "caps" in (config.get("budget") or {}):
-            table.add_row(
-                "budget.caps",
-                "[cyan]info[/cyan]",
-                "no longer used; see subscriptions",
-            )
         if orphaned:
             summary = ", ".join(f"{item['run_id'][:8]} ({item['topic_id']})" for item in orphaned)
             cleanup = "; ".join(

@@ -23,8 +23,8 @@ from typing import Any, cast
 from helmraiser.config import load_config
 from helmraiser.task.model import PRIORITY_RANK, TaskSpec
 
-# Bump on schema changes or data migrations: a ledger whose ``user_version``
-# matches is opened read-only and never migrated.
+# Bump on schema changes: a new ledger is created at this ``user_version`` and a ledger
+# at any other version is refused.
 SCHEMA_VERSION = 11
 
 _SCHEMA = """
@@ -97,6 +97,7 @@ CREATE TABLE IF NOT EXISTS scout_requests (
   started_at REAL,
   scout_id TEXT
 );
+CREATE UNIQUE INDEX IF NOT EXISTS scout_requests_pending_project ON scout_requests(project, lens) WHERE started_at IS NULL;
 CREATE TABLE IF NOT EXISTS scouts (
   id TEXT PRIMARY KEY,
   project TEXT NOT NULL,
@@ -126,25 +127,6 @@ CREATE TABLE IF NOT EXISTS scout_drafts (
   preflight TEXT
 );
 """
-# ``runs`` columns added after the table was first created, with their DDL.
-_ADDED_RUN_COLUMNS = {
-    "delivery": "TEXT NOT NULL DEFAULT 'merge'",
-    "pr_url": "TEXT",
-    "model_plan": "TEXT",
-    "plan_cost_usd": "REAL NOT NULL DEFAULT 0",
-}
-_ADDED_SCOUT_COLUMNS = {
-    "lens": "TEXT NOT NULL DEFAULT 'state'",
-    "head_commit": "TEXT",
-    "request_id": "INTEGER REFERENCES scout_requests(id)",
-    "error": "TEXT",
-}
-
-_ADDED_SCOUT_DRAFT_COLUMNS = {
-    "intake_notes": "TEXT NOT NULL DEFAULT '[]'",
-    "acceptance_scope_sha256": "TEXT",
-}
-
 TERMINAL_RUN_STATUSES = frozenset({"landed", "failed", "aborted"})
 PARKED_RUN_STATUSES = frozenset({"awaiting_approval"})
 # A run handed back to the worker (plan approved, or ``helmraiser retry``). It has no
@@ -346,91 +328,42 @@ class Ledger:
         self.close()
 
     def _init_db(self) -> None:
-        """Create or migrate the schema.
+        """Create the schema in a new ledger; refuse a ledger at another version.
 
-        A current schema is only read, so opening the ledger takes no write lock and
-        never queues behind other writers. A migration runs under ``BEGIN IMMEDIATE``
-        and reads the columns again under that lock: another process may have
-        migrated meanwhile.
+        A ledger at ``SCHEMA_VERSION`` is only read, so opening it takes no write lock
+        and never queues behind other writers. Creation runs under ``BEGIN IMMEDIATE``
+        and checks the file again under that lock: another process may have created
+        the schema meanwhile.
         """
         if self._schema_is_current(self._get_conn()):
             return
         if self.read_only:
-            raise ValueError("ledger schema requires migration; cannot open read-only")
+            raise ValueError("ledger has no schema; cannot create it read-only")
         with self._write() as conn:
+            if self._schema_is_current(conn):
+                return
             # Not ``executescript``: it would commit the open transaction first.
             for statement in _SCHEMA.split(";"):
                 if statement.strip():
                     conn.execute(statement)
-            run_columns = self._table_columns(conn, "runs")
-            for column, ddl in _ADDED_RUN_COLUMNS.items():
-                if column not in run_columns:
-                    conn.execute(f"ALTER TABLE runs ADD COLUMN {column} {ddl}")
-            scout_columns = self._table_columns(conn, "scouts")
-            for column, ddl in _ADDED_SCOUT_COLUMNS.items():
-                if column not in scout_columns:
-                    conn.execute(f"ALTER TABLE scouts ADD COLUMN {column} {ddl}")
-            if "lens" not in self._table_columns(conn, "scout_requests"):
-                conn.execute(
-                    "ALTER TABLE scout_requests ADD COLUMN lens TEXT NOT NULL DEFAULT 'state'"
-                )
-            if not self._scout_request_index_is_current(conn):
-                conn.execute("DROP INDEX IF EXISTS scout_requests_pending_project")
-                conn.execute(
-                    "CREATE UNIQUE INDEX scout_requests_pending_project "
-                    "ON scout_requests(project, lens) WHERE started_at IS NULL"
-                )
-            draft_columns = self._table_columns(conn, "scout_drafts")
-            for column, ddl in _ADDED_SCOUT_DRAFT_COLUMNS.items():
-                if column not in draft_columns:
-                    conn.execute(f"ALTER TABLE scout_drafts ADD COLUMN {column} {ddl}")
-            if (
-                conn.execute("PRAGMA user_version").fetchone()[0] < 9
-                and {"status", "started_at", "ended_at"} <= run_columns
-            ):
-                conn.execute(
-                    "INSERT INTO approvals (run_id, kind, decision, decided_at) "
-                    "SELECT run_id, 'merge', 'pending', COALESCE(ended_at, started_at) "
-                    "FROM runs WHERE status = 'awaiting_approval' AND NOT EXISTS "
-                    "(SELECT 1 FROM approvals WHERE approvals.run_id = runs.run_id "
-                    "AND decision = 'pending')"
-                )
             conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
-    @classmethod
-    def _schema_is_current(cls, conn: sqlite3.Connection) -> bool:
-        version = conn.execute("PRAGMA user_version").fetchall()[0][0]
-        return bool(
-            version == SCHEMA_VERSION
-            and set(_ADDED_RUN_COLUMNS) <= cls._table_columns(conn, "runs")
-            and set(_ADDED_SCOUT_COLUMNS) <= cls._table_columns(conn, "scouts")
-            and set(_ADDED_SCOUT_DRAFT_COLUMNS) <= cls._table_columns(conn, "scout_drafts")
-            and cls._table_columns(conn, "scout_requests")
-            >= {"id", "project", "requested_at", "started_at", "scout_id", "lens"}
-            and cls._scout_request_index_is_current(conn)
-        )
+    def _schema_is_current(self, conn: sqlite3.Connection) -> bool:
+        """True at ``SCHEMA_VERSION``, False for an empty file; any other version raises.
 
-    @staticmethod
-    def _scout_request_index_is_current(conn: sqlite3.Connection) -> bool:
-        columns = [
-            row[2] for row in conn.execute("PRAGMA index_info(scout_requests_pending_project)")
-        ]
-        definition = conn.execute(
-            "SELECT sql FROM sqlite_master WHERE name = 'scout_requests_pending_project'"
+        One statement reads both, so another process creating the schema in between
+        cannot make a new file look like a ledger at version 0."""
+        version, has_schema = conn.execute(
+            "SELECT user_version, EXISTS (SELECT 1 FROM sqlite_master) FROM pragma_user_version"
         ).fetchone()
-        return (
-            columns == ["project", "lens"]
-            and definition is not None
-            and "WHERE started_at IS NULL" in definition[0]
-            and any(
-                str(row[1]) == "scout_requests_pending_project" and bool(row[2]) and bool(row[4])
-                for row in conn.execute("PRAGMA index_list(scout_requests)").fetchall()
-            )
+        if version == SCHEMA_VERSION:
+            return True
+        if version == 0 and not has_schema:
+            return False
+        raise ValueError(
+            f"ledger {self.db_path} has schema version {version}; "
+            f"this Helmraiser expects version {SCHEMA_VERSION}"
         )
-
-    @staticmethod
-    def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
-        return {str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
 
     @contextmanager
     def read_snapshot(self) -> Iterator[None]:

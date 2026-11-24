@@ -332,24 +332,6 @@ def test_pnpm_store_text_and_json(
     assert not worktrees.exists()
 
 
-def test_retired_night_cap_is_reported_as_info(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    data_dir = tmp_path / "data"
-    Ledger(data_dir / "helmraiser.db")
-    config = configured_test_config()
-    config["budget"]["night_max_cost_usd"] = 30.0
-    config["budget"]["caps"] = {"opencode-go": {"5h": 9.6}}
-    monkeypatch.setattr(monitor, "load_config", lambda: config)
-
-    result = invoke(data_dir)
-
-    assert result.exit_code == 0, result.output
-    assert "budget.night_max_cost_usd" in result.output
-    assert "no longer used; see subscriptions" in result.output
-    assert "budget.caps" in result.output
-
-
 @pytest.mark.parametrize("data_dir_exists", [False, True])
 def test_missing_ledger_is_informational(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, data_dir_exists: bool
@@ -581,7 +563,7 @@ def test_phantom_runs_row_appears_only_when_needed(tmp_project: Path, tmp_path: 
     assert payload["phantom_runs"][0]["run_id"] == run_id
 
 
-@pytest.mark.parametrize("location", ["explicit", "default", "legacy"])
+@pytest.mark.parametrize("location", ["explicit", "default"])
 def test_json_reports_orphaned_worktree_without_affecting_readiness(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, location: str
 ) -> None:
@@ -602,8 +584,6 @@ def test_json_reports_orphaned_worktree_without_affecting_readiness(
         (repo / ".helmraiser" / "project.toml").write_text(
             f'[defaults]\nworktree_dir = "{metadata_dir}"\n', encoding="utf-8"
         )
-    elif location == "legacy":
-        metadata_dir = repo / ".helmraiser" / "worktrees"
     else:
         metadata_dir = worktree_manager(repo).path_for("demo", run_id).parent
     metadata_dir.mkdir(parents=True)

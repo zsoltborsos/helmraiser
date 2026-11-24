@@ -2306,6 +2306,7 @@ class TestScoutSupervisorGateHeadroomAndDrafts:
         ).stdout.strip()
         recent = {
             "outcome": "succeeded",
+            "lens": "state",
             "head_commit": head,
             "started_at": now - 20,
             "ended_at": now - 10,

@@ -1,8 +1,7 @@
 """Load and write task files (spec §1.3–1.4).
 
-``load_task`` resolves model profiles and budgets from config and accepts the
-legacy topic sugar (``quality_gates`` strings, old ``status`` values). Files are
-never rewritten here; ``write_task`` is used by ``intake`` and status transitions.
+``load_task`` resolves model profiles and budgets from config. Files are never
+rewritten here; ``write_task`` is used by ``intake`` and status transitions.
 """
 
 from __future__ import annotations
@@ -44,7 +43,6 @@ SCHEMA_KEYS: frozenset[str] = frozenset(
         "verify",
         "evidence",
         "tags",
-        "quality_gates",
         "setup",
         "env",
         "origin",
@@ -52,14 +50,6 @@ SCHEMA_KEYS: frozenset[str] = frozenset(
         "paths",
     }
 )
-
-LEGACY_STATUS: dict[str, str] = {
-    "todo": "draft",
-    "in_progress": "running",
-    "review": "awaiting_approval",
-    "done": "landed",
-}
-LEGACY_PRIORITY: dict[str, str] = {"medium": "normal"}
 
 
 class TaskLoadError(ValueError):
@@ -124,8 +114,6 @@ def _step_red_on_base(raw: dict[str, Any], kind: str, n: int) -> bool:
 
 def _verify_steps(fm: dict[str, Any]) -> tuple[VerifyStep, ...]:
     steps: list[VerifyStep] = []
-    for n, gate in enumerate(fm.get("quality_gates") or [], start=1):
-        steps.append(VerifyStep(name=f"gate-{n}", run=str(gate)))
     for n, raw in enumerate(fm.get("verify") or [], start=1):
         if isinstance(raw, str):
             steps.append(VerifyStep(name=f"verify-{n}", run=raw))
@@ -196,9 +184,7 @@ def parse_task(content: str, source_path: Path, config: dict[str, Any]) -> TaskS
         raise TaskLoadError(f"no frontmatter found in {source_path}")
 
     status = str(fm.get("status") or "draft")
-    status = LEGACY_STATUS.get(status, status)
     priority = str(fm.get("priority") or "normal")
-    priority = LEGACY_PRIORITY.get(priority, priority)
     policy = fm.get("policy")
     tags = fm.get("tags") or []
     if isinstance(tags, str):
@@ -263,7 +249,7 @@ def parse_task(content: str, source_path: Path, config: dict[str, Any]) -> TaskS
 
 
 def load_task(path: Path | str, config: dict[str, Any]) -> TaskSpec:
-    """Load a task file, applying profile resolution and legacy mapping."""
+    """Load a task file, applying profile resolution."""
     source = Path(path)
     if not source.is_file():
         raise TaskLoadError(f"task file not found: {source}")

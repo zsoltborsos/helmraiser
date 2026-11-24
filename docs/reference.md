@@ -2436,9 +2436,7 @@ The host-generated brief reaches the implementer through its directives; this de
 does not change sandbox read permissions.
 
 Setup, verify and evidence commands strip `LEEBOARD_HARNESS` and `LEEBOARD_SESSION`
-(the worker's interactive identity) from the worker's environment, and every `LOGBOOK_*`
-name (`lb` exits 1 while one is set); Helmraiser's own host `lb` calls drop `LOGBOOK_*`
-too. pi's allowlist
+(the worker's interactive identity) from the worker's environment. pi's allowlist
 includes `LEEBOARD_HOME` when set (otherwise `lb` uses `HOME/.leeboard`).
 pi sessions also receive `LEEBOARD_HARNESS=helmraiser` and
 `LEEBOARD_SESSION=<run_id>` (scouts use their supplied scout ID), not the worker's

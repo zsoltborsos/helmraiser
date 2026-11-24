@@ -115,7 +115,6 @@ STRIPPED_PATTERNS: tuple[str, ...] = (
     "*API_KEY*",
     "*CREDENTIAL*",
     "CLAUDE_*",
-    "LOGBOOK_*",
     "ANTHROPIC_*",
     "OPENAI_*",
     "GH_*",

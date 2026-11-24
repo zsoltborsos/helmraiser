@@ -17,7 +17,6 @@ CHECK_TIMEOUT_S = 5.0
 BRIEF_TIMEOUT_S = 15.0
 BRIEF_MAX_CHARS = 8000
 LIST_TIMEOUT_S = 10.0
-RETIRED_ENV_PREFIX = "LOGBOOK_"
 
 
 def find_lb() -> str | None:
@@ -41,10 +40,8 @@ def leeboard_home(env: Mapping[str, str] | None = None) -> Path:
 
 
 def lb_environment(identity: Mapping[str, str]) -> dict[str, str]:
-    """The host environment for an lb call: ``os.environ`` without the retired
-    ``LOGBOOK_*`` names (lb refuses to run while one is set), plus ``identity``."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith(RETIRED_ENV_PREFIX)}
-    return {**env, **identity}
+    """The host environment for an lb call: ``os.environ`` plus ``identity``."""
+    return {**os.environ, **identity}
 
 
 def leeboard_identity(run_id: str | None) -> dict[str, str]:

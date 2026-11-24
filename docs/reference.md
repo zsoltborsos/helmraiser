@@ -387,6 +387,11 @@ retain `re-proposed after a failed acceptance check: <step names>` from the firs
 also shown in the scout report. If retry intake fails, the first valid draft and preflight
 remain available with `intake_failed` and the retry note. Standalone `helmraiser intake`
 does not retry.
+Intake and preflight take minutes, so before it rewrites a draft (and before the retry
+intake) scout checks that the ledger task is still `draft` and the file is exactly what it
+last wrote. If you dropped, queued or edited the draft meanwhile, preparation stops
+without touching it and adds `preparation stopped: the draft changed after Helmraiser
+last wrote it` to the draft's intake notes, also shown in the scout report.
 An intake failure is retained on the reviewable draft and does not stop later drafts.
 The scout report records each proposal, intake result, and preflight result.
 

@@ -47,6 +47,7 @@ from helmraiser.utils.markdown import parse_frontmatter, serialize_frontmatter
 
 SCOUT_TOOLS = ("read", "grep", "find", "ls")
 DROP_CLASSES = ("wrong", "unwanted", "duplicate", "unusable")
+PREPARATION_STOPPED_NOTE = "preparation stopped: the draft changed after Helmraiser last wrote it"
 _CANDIDATE_KEYS = frozenset(
     {
         "id",
@@ -834,6 +835,34 @@ def _usage_dict(tokens_in: int, tokens_out: int, cost_usd: float) -> dict[str, A
     return {"tokens_in": tokens_in, "tokens_out": tokens_out, "cost_usd": cost_usd}
 
 
+def _draft_unchanged(ledger: Ledger, task_id: str, path: Path, written: str) -> bool:
+    """True while the draft is still exactly what preparation last wrote.
+
+    Intake and preflight take minutes, so the owner may drop, queue or edit the draft
+    meanwhile; preparation must not rewrite it then.
+    """
+    task = ledger.get_task(task_id)
+    try:
+        current = path.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    return task is not None and task["status"] == "draft" and current == written
+
+
+def _record_preparation_stopped(ledger: Ledger, task_id: str) -> None:
+    """Add the stop note to the scout draft, leaving its intake state as it is."""
+    draft = ledger.get_scout_draft(task_id)
+    if draft is None:
+        return
+    ledger.set_scout_draft_intake(
+        task_id,
+        status=draft["intake_status"],
+        proposal=draft["proposal"],
+        error=draft["intake_error"],
+        notes=[*(draft["intake_notes"] or []), PREPARATION_STOPPED_NOTE],
+    )
+
+
 def _validate_draft_destination(repo: Path, path: Path) -> None:
     """Refuse symlinked task paths and any destination resolving outside ``repo``."""
     task_dir = repo / ".helmraiser" / "tasks"
@@ -1013,6 +1042,7 @@ def execute_scout(
             written_ids.append(spec.task_id)
             written_paths.append(str(path))
             original_spec = spec
+            written = text
             feedback = None
             intake_notes: list[str] = []
             for attempt in range(2):
@@ -1033,12 +1063,14 @@ def execute_scout(
                         notes=intake_notes,
                     )
                     break
+                if not _draft_unchanged(ledger, spec.task_id, path, written):
+                    _record_preparation_stopped(ledger, spec.task_id)
+                    break
                 intake_notes = list(dict.fromkeys([*intake_notes, *intake_outcome.notes]))
                 write_task(intake_outcome.spec, path)
-                ledger.upsert_task(intake_outcome.spec, path.read_text(encoding="utf-8"))
-                ledger.set_scout_draft_hash(
-                    spec.task_id, draft_acceptance_scope_hash(path.read_text(encoding="utf-8"))
-                )
+                written = path.read_text(encoding="utf-8")
+                ledger.upsert_task(intake_outcome.spec, written)
+                ledger.set_scout_draft_hash(spec.task_id, draft_acceptance_scope_hash(written))
                 ledger.set_scout_draft_intake(
                     spec.task_id,
                     status="proposed",
@@ -1077,6 +1109,9 @@ def execute_scout(
                     if step["class"] in {"fail", "sandbox"}
                 ]
                 if attempt or not failed:
+                    break
+                if not _draft_unchanged(ledger, spec.task_id, path, written):
+                    _record_preparation_stopped(ledger, spec.task_id)
                     break
                 intake_notes.append(
                     "re-proposed after a failed acceptance check: "

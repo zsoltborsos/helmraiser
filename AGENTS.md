@@ -19,6 +19,7 @@ Update them in the commit that lands a slice.
 | `cli/clean_commands.py` | Manual `clean` command: dry-run, project filtering and JSON results |
 | `cli/land_commands.py`, `loop/landing.py` | `land`: Leeboard holds, shared PR approval, CI, non-force base push, best-effort local fast-forward and merge confirmation |
 | `cli/compare_commands.py` | Blind comparison CLI and one-shot judge session |
+| `cli/eval_commands.py`, `loop/eval_review.py` | `eval review\|report`: review replay of past runs under reviewer variants, blind judging and the report |
 | `cli/scout_commands.py`, `loop/scout.py` | `scout` (one read-only scout session that writes drafts) and `drafts list\|request` |
 | `cli/caps_commands.py`, `loop/spend.py`, `loop/live_usage.py`, `loop/routing.py` | `caps on\|off\|reset`; ledger-derived subscription usage, live Omarchy / OpenCode Go readings, headroom and model routing |
 | `cli/base_sync.py` | Host-side base refresh for PR tasks held by delivered-head ancestry |

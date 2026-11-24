@@ -125,6 +125,7 @@ class PiJsonAdapter:
             argv.append("--no-tools")
         if not req.context_files:
             argv.append("--no-context-files")
+        argv += req.extra_args
         if not req.rpc:
             if prompt_file is not None:
                 prompt_arg = f"@{prompt_file}"

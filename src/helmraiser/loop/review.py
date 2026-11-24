@@ -263,6 +263,16 @@ def parse_verdict(text: str) -> Verdict:
     )
 
 
+def diff_block(diff_text: str, diff_path: Path) -> str:
+    """The review prompt's diff: inline below ``DIFF_INLINE_LIMIT``, else a pointer to the file."""
+    if len(diff_text.encode("utf-8")) < DIFF_INLINE_LIMIT:
+        return "\n".join(["```diff", diff_text.rstrip("\n") or "(empty diff)", "```"])
+    return (
+        f"The diff is {len(diff_text) // 1024} KB; read it from `{diff_path}` "
+        "(and inspect the worktree) before judging."
+    )
+
+
 def build_review_prompt(
     task: TaskSpec,
     *,
@@ -376,14 +386,7 @@ def build_review_prompt(
         if cut:
             parts += ["", f"[Plan cut after {EVIDENCE_INLINE_LIMIT} bytes.]"]
 
-    parts += ["", "## Diff", ""]
-    if len(diff_text.encode("utf-8")) < DIFF_INLINE_LIMIT:
-        parts += ["```diff", diff_text.rstrip("\n") or "(empty diff)", "```"]
-    else:
-        parts.append(
-            f"The diff is {len(diff_text) // 1024} KB; read it from `{diff_path}` "
-            "(and inspect the worktree) before judging."
-        )
+    parts += ["", "## Diff", "", diff_block(diff_text, diff_path)]
 
     parts += ["", "## Verify results", ""]
     for result in verify_results:

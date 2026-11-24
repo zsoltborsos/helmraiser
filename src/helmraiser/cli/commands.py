@@ -3027,6 +3027,7 @@ def register_commands(app: typer.Typer) -> None:
     from helmraiser.cli.caps_commands import caps_app
     from helmraiser.cli.clean_commands import clean
     from helmraiser.cli.compare_commands import compare
+    from helmraiser.cli.eval_commands import eval_app
     from helmraiser.cli.land_commands import land
     from helmraiser.cli.monitor import register_monitor_commands  # avoids an import cycle
     from helmraiser.cli.preflight_commands import preflight
@@ -3035,6 +3036,7 @@ def register_commands(app: typer.Typer) -> None:
     register_monitor_commands(app)
     app.command("preflight")(preflight)
     app.command("compare")(compare)
+    app.add_typer(eval_app, name="eval")
     app.command("scout")(scout)
     app.add_typer(drafts_app, name="drafts")
     app.command("add")(add)

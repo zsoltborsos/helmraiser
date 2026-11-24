@@ -7,12 +7,10 @@ and what comes next.
 
 ## Release
 
-1. **Go public.** Repository visibility is the owner's decision. Then:
-   - enable GitHub private vulnerability reporting and confirm the `SECURITY.md` link
-     works (the API returned 404 while the repo was private);
-   - set the social preview (Settings) to `docs/brand/helmraiser-social.png`.
-   A clean-machine install passes the README's quick start up to the paid run, without
-   models configured. A paid end-to-end example run remains opt-in.
+1. **Set the GitHub social preview** (Settings; there is no API) to
+   `docs/brand/helmraiser-social.png`.
+2. **Optional: a paid end-to-end run of the README quick start.** A clean-machine
+   install passes it up to the paid run, without models configured.
 
 ## Scout follow-ups
 

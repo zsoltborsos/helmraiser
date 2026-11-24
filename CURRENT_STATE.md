@@ -80,7 +80,8 @@ implementation → green, incorrect output → rejected, without model calls or 
 Model-selection guidance distinguishes configuration from historical personal trials.
 The README opens with the ZB Code Shipyard brand-kit lockup and lines; marks, lockups and
 the social preview image are in `docs/brand/`.
-Remaining public-release checks are in `TASKS.md`.
+The repository is public since 2026-11-24, with GitHub private vulnerability reporting
+enabled for the route in `SECURITY.md`. The remaining release item is in `TASKS.md`.
 `log --follow` help and reference document stopping at terminal runs or approval waits (plan, scope or merge), and restarting following after resumption.
 
 ## Known gaps

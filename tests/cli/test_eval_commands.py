@@ -132,3 +132,68 @@ def test_review_error_pair_exits_1(fixture, tmp_path, fake_pi):
 def test_report_without_results_exits_2(tmp_path):
     result = invoke("report", str(tmp_path), "--json")
     assert result.exit_code == 2 and "no results" in result.output
+
+
+def test_review_repeat_and_review_model(fixture, cases_file, fake_pi, tmp_path):
+    result = invoke(
+        "review",
+        str(cases_file),
+        "--variant",
+        "v1-noskills",
+        "--case",
+        "miss-1",
+        "--repeat",
+        "2",
+        "--review-model",
+        "prov/strong:xhigh",
+        "--dry-run",
+        "--json",
+        "--data-dir",
+        str(fixture.data_dir),
+    )
+    assert result.exit_code == 0, result.output
+    pairs = json.loads(result.output)["pairs"]
+    assert [(p["variant"], p["rep"]) for p in pairs] == [
+        ("v1-noskills@prov/strong:xhigh", 1),
+        ("v1-noskills@prov/strong:xhigh", 2),
+    ]
+    argv = pairs[0]["sessions"][0]["argv"]
+    assert argv[argv.index("--model") + 1] == "prov/strong:xhigh"
+    assert pairs[0]["model"] == "prov/strong:xhigh"
+    assert pairs[0]["judge_model"] == "openai-codex/gpt-6-astra:high"
+
+
+@pytest.mark.parametrize(
+    ("args", "message"),
+    [
+        (["--repeat", "0"], "--repeat must be at least 1"),
+        (["--review-model", "no-provider"], "--review-model must be provider/id"),
+    ],
+)
+def test_review_repeat_and_model_validation(fixture, cases_file, args, message):
+    result = invoke(
+        "review",
+        str(cases_file),
+        "--variant",
+        "v0-baseline",
+        *args,
+        "--json",
+        "--data-dir",
+        str(fixture.data_dir),
+    )
+    assert result.exit_code == 2 and message in json.loads(result.output)["error"]
+
+
+def test_held_out_case_file_gets_its_own_out_dir_and_report(fixture, fake_pi, tmp_path):
+    script(fake_pi)
+    held_out = tmp_path / "held-out"
+    held_out.mkdir()
+    cases = write_cases(held_out / "cases.json", [case_entry("miss-h1")])
+    result = invoke(
+        "review", str(cases), "--variant", "v0-baseline", "--data-dir", str(fixture.data_dir)
+    )
+    assert result.exit_code == 0, result.output
+    report = invoke("report", str(held_out / "out"), "--json")
+    assert report.exit_code == 0, report.output
+    assert json.loads(report.output)["variants"]["v0-baseline"]["pairs"] == 1
+    assert (held_out / "out" / "report.md").is_file()

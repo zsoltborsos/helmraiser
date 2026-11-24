@@ -75,6 +75,8 @@ class Variant:
     two_axis: bool
     no_skills: bool
     skills: bool
+    # Append REVIEW_PROCEDURE to the (Spec) reviewer's directive.
+    procedure: bool = False
 
 
 VARIANTS: dict[str, Variant] = {
@@ -85,11 +87,25 @@ VARIANTS: dict[str, Variant] = {
         Variant("v2-skills", two_axis=False, no_skills=True, skills=True),
         Variant("v3-twoaxis", two_axis=True, no_skills=True, skills=False),
         Variant("v4-twoaxis-skills", two_axis=True, no_skills=True, skills=True),
+        Variant("v5-procedure", two_axis=False, no_skills=True, skills=False, procedure=True),
+        Variant(
+            "v6-twoaxis-procedure", two_axis=True, no_skills=True, skills=False, procedure=True
+        ),
     )
 }
 
 
-# ── directives for the two-axis variants ─────────────────────────────
+# ── directives for the procedure and two-axis variants ──────────────
+
+REVIEW_PROCEDURE = """
+## Review procedure
+
+Before you give a verdict:
+1. Compare against the base. For each removed or changed line, say what the old code did, and confirm the new code keeps that behaviour unless the task asks to change it. A silent change of base behaviour the task did not ask for is a finding.
+2. Read what the change depends on and feeds. Open the code that consumes, parses or validates what the diff produces (callers, parsers, regexes, schemas, sibling modules), even when the diff does not name it. Read every changed test file in full, including its fixtures and mocks.
+3. Try to break it. For any requirement phrased as "any", "all", "never", "only" or "exactly", build concrete counter-examples: look-alike or unusual inputs, repeated or concurrent calls, old or stale state. Name the ones you tried.
+4. Check admitted limits. Compare every limitation the diff admits (in comments, docs or the PR text) against the task's requirements. An admitted gap that breaks a requirement is a severe finding.
+"""  # noqa: E501
 
 SPEC_AXIS = """
 ## Spec axis
@@ -703,7 +719,10 @@ def variant_sessions(
 ) -> list[SessionPlan]:
     """The reviewer sessions of ``variant``, in the order they run."""
     directives = relocate(replay.directives, replay, worktree, run_dir)
+    procedure = REVIEW_PROCEDURE if variant.procedure else ""
     if not variant.two_axis:
+        if procedure:
+            directives = directives.rstrip("\n") + "\n" + procedure
         return [SessionPlan("review", directives, prompt, extra_args)]
     standards = render_standards_directives(
         run_id=replay.case.run_id,
@@ -712,7 +731,9 @@ def variant_sessions(
         notes_section=replay.notes_section,
     )
     return [
-        SessionPlan("spec", directives.rstrip("\n") + "\n" + SPEC_AXIS, prompt, extra_args),
+        SessionPlan(
+            "spec", directives.rstrip("\n") + "\n" + SPEC_AXIS + procedure, prompt, extra_args
+        ),
         SessionPlan("standards", standards, prompt, extra_args),
     ]
 
@@ -798,9 +819,23 @@ def _request(
 
 
 def run_review_session(adapter: PiAdapter, req: PiRequest, run_id: str) -> dict[str, Any]:
-    """One reviewer session, its verdict parsed as the live review parses it."""
+    """One reviewer session, its verdict parsed as the live review parses it, with what it
+    read: distinct paths through ``read`` and tool calls by tool name."""
+    tool_calls: dict[str, int] = {}
+    files_read: set[str] = set()
+
+    async def on_event(event: PiEvent) -> None:
+        if event.type != "tool_execution_start":
+            return
+        tool = str(event.raw.get("toolName") or "unknown")
+        tool_calls[tool] = tool_calls.get(tool, 0) + 1
+        args = event.raw.get("args")
+        path = args.get("path") if isinstance(args, dict) else None
+        if tool == "read" and isinstance(path, str) and path:
+            files_read.add(os.path.normpath(os.path.join(req.cwd, path)))
+
     started = time.monotonic()
-    res = asyncio.run(adapter.run(req, _noop_event, run_id))
+    res = asyncio.run(adapter.run(req, on_event, run_id))
     seconds = round(time.monotonic() - started, 3)
     verdict = parse_verdict(res.final_text)
     if res.error_kind is not None:
@@ -816,6 +851,8 @@ def run_review_session(adapter: PiAdapter, req: PiRequest, run_id: str) -> dict[
         "tokens_in": res.usage.tokens_in,
         "tokens_out": res.usage.tokens_out,
         "seconds": seconds,
+        "files_read": len(files_read),
+        "tool_calls": dict(sorted(tool_calls.items())),
         "text": res.final_text,
     }
 
@@ -953,12 +990,25 @@ class EvalContext:
     judge_adapter: PiAdapter
     timeout_s: int = REVIEW_TIMEOUT_S
     temp_root: Path | None = None
+    # ``--review-model``: every reviewer session uses it (the judge keeps its profile).
+    review_model: ModelSpec | None = None
+
+    def variant_key(self, variant: Variant) -> str:
+        """A variant's identity in results: its name, plus ``@<model>`` when overridden."""
+        model = f"@{self.review_model.render()}" if self.review_model is not None else ""
+        return variant.name + model
 
 
-def _base_row(case: Case, variant: Variant) -> dict[str, Any]:
+def rep_of(row: dict[str, Any]) -> int:
+    """A row's repetition; rows written before ``--repeat`` are rep 1."""
+    return int(row.get("rep") or 1)
+
+
+def _base_row(case: Case, key: str, rep: int) -> dict[str, Any]:
     return {
         "case": case.id,
-        "variant": variant.name,
+        "variant": key,
+        "rep": rep,
         "run_id": case.run_id,
         "review": case.review,
         "bucket": case.bucket,
@@ -975,10 +1025,12 @@ def _run_pair(
     worktree: Path,
     diff_text: str,
     *,
+    rep: int,
     dry_run: bool,
 ) -> dict[str, Any]:
     case = replay.case
-    row = _base_row(case, variant)
+    row = _base_row(case, ctx.variant_key(variant), rep)
+    row["variant_name"] = variant.name
     row.update(
         reviewed_commit=replay.commit,
         base_commit=replay.base,
@@ -986,7 +1038,9 @@ def _run_pair(
         seeded=case.seed_patch is not None,
     )
     pair_id = str(uuid.uuid4())
-    models = ctx.models(replay.project)
+    models = dict(ctx.models(replay.project))
+    if ctx.review_model is not None:
+        models["review"] = ctx.review_model
     row["model"] = models["review"].render()
     with tempfile.TemporaryDirectory(prefix="helmraiser-eval-", dir=ctx.temp_root) as tmp:
         run_dir = Path(tmp) / "run"
@@ -1038,13 +1092,20 @@ def _run_pair(
             sessions.append(session)
             if session["error_kind"] in STOP_ERRORS:
                 break
-        dest = ctx.out / "pairs" / case.id / variant.name / pair_id
+        folder = re.sub(r"[^A-Za-z0-9._@:-]", "_", row["variant"])  # the model's "/"
+        dest = ctx.out / "pairs" / case.id / folder / pair_id
         shutil.copytree(run_dir, dest, ignore=shutil.ignore_patterns("evidence", "logs"))
     row["artifacts"] = str(dest)
     row["sessions"] = sessions
     row["cost_usd"] = sum(s["cost_usd"] for s in sessions)
     row["tokens_in"] = sum(s["tokens_in"] for s in sessions)
     row["tokens_out"] = sum(s["tokens_out"] for s in sessions)
+    row["files_read"] = sum(s["files_read"] for s in sessions)
+    tool_calls: dict[str, int] = {}
+    for session in sessions:
+        for tool, count in session["tool_calls"].items():
+            tool_calls[tool] = tool_calls.get(tool, 0) + count
+    row["tool_calls"] = dict(sorted(tool_calls.items()))
     row["seconds"] = round(sum(s["seconds"] for s in sessions), 3)
     failed = [s for s in sessions if s["error_kind"] is not None]
     if failed:
@@ -1078,15 +1139,17 @@ def run_eval(
     *,
     dry_run: bool = False,
     max_cost: float | None = None,
+    repeat: int = 1,
     progress: Callable[[dict[str, Any]], None] = lambda _row: None,
 ) -> dict[str, Any]:
-    """Replay every (case, variant) pair not already ``ok`` in ``<out>/results.jsonl``."""
+    """Replay each (case, variant) ``repeat`` times, skipping every (case, variant, rep)
+    already ``ok`` in ``<out>/results.jsonl``."""
     results = ctx.out / "results.jsonl"
     previous = read_results(results)
-    done = {(r["case"], r["variant"]) for r in previous if r.get("status") == "ok"}
+    done = {(r["case"], r["variant"], rep_of(r)) for r in previous if r.get("status") == "ok"}
     history = list(previous)
     pairs: list[dict[str, Any]] = []
-    skipped: list[dict[str, str]] = []
+    skipped: list[dict[str, Any]] = []
     spent = 0.0
     stopped: str | None = None
 
@@ -1100,37 +1163,51 @@ def run_eval(
         with results.open("a", encoding="utf-8") as handle:
             handle.write(json.dumps(row) + "\n")
 
+    def error_rows(case: Case, todo: list[tuple[Variant, int]], exc: Exception) -> None:
+        for variant, n in todo:
+            key = ctx.variant_key(variant)
+            if not any(
+                p["case"] == case.id and p["variant"] == key and p["rep"] == n for p in pairs
+            ):
+                record({**_base_row(case, key, n), "status": "error", "error": str(exc)})
+
     for case in cases:
-        todo = [v for v in variants if (case.id, v.name) not in done]
-        skipped += [{"case": case.id, "variant": v.name} for v in variants if v not in todo]
+        jobs = [(v, n) for v in variants for n in range(1, repeat + 1)]
+        todo = [(v, n) for v, n in jobs if (case.id, ctx.variant_key(v), n) not in done]
+        skipped += [
+            {"case": case.id, "variant": ctx.variant_key(v), "rep": n}
+            for v, n in jobs
+            if (v, n) not in todo
+        ]
         if not todo or stopped:
             continue
+
         try:
             replay = reconstruct(case, ctx.ledger, ctx.runs_dir)
         except ReplayError as exc:
-            for variant in todo:
-                record({**_base_row(case, variant), "status": "error", "error": str(exc)})
+            error_rows(case, todo, exc)
             continue
         try:
             with replay_worktree(replay, str(uuid.uuid4())) as (worktree, diff_text):
-                for variant in todo:
+                for variant, n in todo:
+                    key = ctx.variant_key(variant)
                     if not dry_run and max_cost is not None:
-                        if spent + _estimate(history, variant.name) > max_cost:
+                        if spent + _estimate(history, key) > max_cost:
                             stopped = "max_cost"
                             break
                     try:
-                        row = _run_pair(ctx, replay, variant, worktree, diff_text, dry_run=dry_run)
+                        row = _run_pair(
+                            ctx, replay, variant, worktree, diff_text, rep=n, dry_run=dry_run
+                        )
                     except ReplayError as exc:
-                        row = {**_base_row(case, variant), "status": "error", "error": str(exc)}
+                        row = {**_base_row(case, key, n), "status": "error", "error": str(exc)}
                     spent += _pair_cost(row)
                     record(row)
                     if row.get("error_kind") in STOP_ERRORS:
                         stopped = str(row["error_kind"])
                         break
         except ReplayError as exc:
-            for variant in todo:
-                if not any(p["case"] == case.id and p["variant"] == variant.name for p in pairs):
-                    record({**_base_row(case, variant), "status": "error", "error": str(exc)})
+            error_rows(case, todo, exc)
     return {
         "out": str(ctx.out),
         "results": str(results),
@@ -1156,6 +1233,33 @@ def _recall(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+def _recall_reps(rows: list[dict[str, Any]], reps: list[int]) -> dict[str, Any]:
+    """Counts pooled over reps; ``recall`` is the mean of each rep's recall, and with more
+    than one rep ``spread`` is its [min, max]."""
+    score = _recall(rows)
+    per_rep = [_recall([r for r in rows if rep_of(r) == n])["recall"] for n in reps]
+    recalls = [value for value in per_rep if value is not None]
+    score["recall"] = round(statistics.fmean(recalls), 3) if recalls else None
+    if len(reps) > 1:
+        score["spread"] = [min(recalls), max(recalls)] if recalls else None
+    return score
+
+
+def _reading(rows: list[dict[str, Any]]) -> dict[str, float | None]:
+    """Medians of distinct files read, tool calls and input tokens, over rows that recorded
+    them (rows from before this was recorded are left out)."""
+    rows = [r for r in rows if "files_read" in r]
+    return {
+        "files_read": _median([float(r["files_read"]) for r in rows]),
+        "tool_calls": _median([float(sum(r["tool_calls"].values())) for r in rows]),
+        "tokens_in": _median([float(r.get("tokens_in") or 0) for r in rows]),
+    }
+
+
+def _per_rep(total: int, reps: int) -> float | int:
+    return total if reps == 1 else round(total / reps, 2)
+
+
 def _severity(rows: list[dict[str, Any]]) -> dict[str, int]:
     counts = {"severe": 0, "minor": 0, "unknown": 0}
     for row in rows:
@@ -1169,16 +1273,21 @@ def _median(values: list[float]) -> float | None:
     return round(statistics.median(values), 4) if values else None
 
 
+def _variant_order(key: str) -> tuple[int, str]:
+    names = list(VARIANTS)
+    name = key.split("@", 1)[0]
+    return (names.index(name) if name in names else len(names), key)
+
+
 def build_report(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """Per-variant scores from the latest row of each (case, variant) pair."""
-    latest: dict[tuple[str, str], dict[str, Any]] = {}
+    """Per-variant scores from the latest row of each (case, variant, rep)."""
+    latest: dict[tuple[str, str, int], dict[str, Any]] = {}
     for row in rows:
-        latest[(row["case"], row["variant"])] = row
-    names = [name for name in VARIANTS if any(v == name for _, v in latest)]
-    names += sorted({v for _, v in latest} - set(names))
+        latest[(row["case"], row["variant"], rep_of(row))] = row
     variants: dict[str, Any] = {}
-    for name in names:
-        mine = [r for (_, v), r in latest.items() if v == name]
+    for name in sorted({v for _, v, _ in latest}, key=_variant_order):
+        mine = [r for (_, v, _), r in latest.items() if v == name]
+        reps = sorted({rep_of(r) for r in mine})
         ok = [r for r in mine if r.get("status") == "ok"]
         clean = [r for r in ok if r["bucket"] == "clean"]
         standards = [r for r in ok if r["label_axis"] == "standards" and r["bucket"] != "clean"]
@@ -1186,10 +1295,11 @@ def build_report(rows: list[dict[str, Any]]) -> dict[str, Any]:
         seconds = [float(r.get("seconds") or 0) for r in ok]
         variants[name] = {
             "pairs": len(mine),
+            "reps": len(reps),
             "ok": len(ok),
             "errors": len(mine) - len(ok),
             "recall": {
-                bucket: _recall([r for r in ok if r["bucket"] == bucket])
+                bucket: _recall_reps([r for r in ok if r["bucket"] == bucket], reps)
                 for bucket in POSITIVE_BUCKETS
             },
             "severity_called": {
@@ -1197,21 +1307,39 @@ def build_report(rows: list[dict[str, Any]]) -> dict[str, Any]:
                 for bucket in ("undercall", "miss")
             },
             "standards": {
-                "written": _recall([r for r in standards if r.get("rule_written") is True]),
-                "unwritten": _recall([r for r in standards if r.get("rule_written") is not True]),
+                "written": _recall_reps(
+                    [r for r in standards if r.get("rule_written") is True], reps
+                ),
+                "unwritten": _recall_reps(
+                    [r for r in standards if r.get("rule_written") is not True], reps
+                ),
             },
             "clean": {
-                "cases": len(clean),
-                "findings": sum(r["clean"]["findings"] for r in clean),
-                "severe": sum(r["clean"]["severe"] for r in clean),
-                "cases_with_severe": sum(1 for r in clean if r["clean"]["severe"]),
+                "cases": len({r["case"] for r in clean}),
+                "findings": _per_rep(sum(r["clean"]["findings"] for r in clean), len(reps)),
+                "severe": _per_rep(sum(r["clean"]["severe"] for r in clean), len(reps)),
+                "cases_with_severe": _per_rep(
+                    sum(1 for r in clean if r["clean"]["severe"]), len(reps)
+                ),
             },
             "cost_usd": {"total": round(sum(costs), 4), "median": _median(costs)},
             "seconds": {"total": round(sum(seconds), 3), "median": _median(seconds)},
+            "reading": {
+                kind: _reading([r for r in ok if (r["bucket"] == "clean") == (kind == "clean")])
+                for kind in ("positive", "clean")
+            },
         }
+        if len(reps) > 1:
+            hits: dict[str, dict[str, int]] = {}
+            for row in sorted(ok, key=lambda r: r["case"]):
+                if row["bucket"] != "clean" and row.get("judge") is not None:
+                    hit = hits.setdefault(row["case"], {"found": 0, "judged": 0})
+                    hit["found"] += int(bool(row["judge"]["found"]))
+                    hit["judged"] += 1
+            variants[name]["hits"] = hits
     withheld = {
         case: len(r["evidence_files_withheld"])
-        for (case, _), r in sorted(latest.items())
+        for (case, _, _), r in sorted(latest.items())
         if r.get("evidence_files_withheld")
     }
     return {"pairs": len(latest), "variants": variants, "evidence_withheld": withheld}
@@ -1220,7 +1348,14 @@ def build_report(rows: list[dict[str, Any]]) -> dict[str, Any]:
 def _fraction(score: dict[str, Any]) -> str:
     if not score["judged"]:
         return "-"
-    text = f"{score['found']}/{score['judged']} ({score['recall']:.0%})"
+    if score.get("spread"):
+        low, high = score["spread"]
+        text = (
+            f"{score['recall']:.0%} mean ({low:.0%}..{high:.0%}), "
+            f"{score['found']}/{score['judged']} found"
+        )
+    else:
+        text = f"{score['found']}/{score['judged']} ({score['recall']:.0%})"
     return text + (f", {score['unjudged']} unjudged" if score["unjudged"] else "")
 
 
@@ -1279,6 +1414,42 @@ def render_report(report: dict[str, Any], name: str | None = None) -> str:
             ("median seconds", [_num(x["seconds"]["median"]) for x in v]),
         ],
     )
+    if any(
+        value is not None for x in v for kind in x["reading"].values() for value in kind.values()
+    ):
+        table(
+            "Reading",
+            [
+                (f"{label} ({kind})", [_count(x["reading"][kind][field]) for x in v])
+                for field, label in (
+                    ("files_read", "median distinct files read"),
+                    ("tool_calls", "median tool calls"),
+                    ("tokens_in", "median input tokens"),
+                )
+                for kind in ("positive", "clean")
+            ],
+        )
+    if any(x.get("hits") is not None for x in v):
+        cases = sorted({case for x in v for case in x.get("hits") or {}})
+        table(
+            "Hits per case",
+            [
+                (
+                    case,
+                    [
+                        (
+                            "{found} of {judged}".format(**x["hits"][case])
+                            if case in (x.get("hits") or {})
+                            else "-"
+                        )
+                        for x in v
+                    ],
+                )
+                for case in cases
+            ],
+            "Found in k of the judged reps. Recall above is the mean across reps "
+            "(min..max); clean-case counts are per rep.",
+        )
     lines.extend(["## Evidence withheld", ""])
     lines.append(
         "Evidence and log files last written after the replayed review's verdict (by a "
@@ -1297,3 +1468,8 @@ def render_report(report: dict[str, Any], name: str | None = None) -> str:
 
 def _num(value: float | None) -> str:
     return "-" if value is None else f"{value:g}"
+
+
+def _count(value: float | None) -> str:
+    """A median count without exponent notation (``12345``, ``2.5``)."""
+    return "-" if value is None else f"{value:.1f}".removesuffix(".0")

@@ -1405,7 +1405,7 @@ per command.
 | `helmraiser preflight <repo> [--run CMD]… [-- CMD…]` | Runs commands in a throwaway worktree of HEAD with the project's setup, services and the verify sandbox settings; prints each exit code, duration, output tail and hints for known sandbox failures. No ledger rows (see [Trying commands in the sandbox](#trying-commands-in-the-sandbox)) |
 | `helmraiser clean [--project PATH] [--dry-run] [--json] [--data-dir PATH]` | Removes clean superseded or old failed/aborted worktrees, keeping branches (see [Cleaning up failed runs’ worktrees](#cleaning-up-failed-runs-worktrees)) |
 | `helmraiser compare <run-a> <run-b> [--json]` / `helmraiser compare --variant-of <task> [--project P] [--json]` | Judges two runs blind, then reveals their setups (see [Comparing runs](#comparing-runs)) |
-| `helmraiser eval review <cases.json> --variant V… [--case ID]… [--out DIR] [--max-cost USD] [--dry-run] [--json]` / `helmraiser eval report <out> [--json]` | Replays past review stages under reviewer variants and scores them against labelled defects (see [Review replay](#review-replay)) |
+| `helmraiser eval review <cases.json> --variant V… [--case ID]… [--out DIR] [--max-cost USD] [--repeat N] [--review-model M] [--dry-run] [--json]` / `helmraiser eval report <out> [--json]` | Replays past review stages under reviewer variants and scores them against labelled defects (see [Review replay](#review-replay)) |
 | `helmraiser scout <repo> [--lens NAME] [--max N] [--force]` | Runs one read-only scout session and writes validated, non-ruling candidates as draft task files (see [Scout drafts](#scout-drafts)) |
 | `helmraiser drafts [--project P]` / `drafts drop <task> --reason TEXT [--class CLASS]` | Lists pending scout drafts, or retains one as dropped with its reason and optional class |
 | `helmraiser drafts request <repo>…` / `drafts request --cancel <repo>…` | Requests safe worker-driven scouts for chosen focus projects, or cancels pending requests |
@@ -1610,7 +1610,10 @@ diff in the stored prompt (above 200 KB, only the size is checked). `meta.review
 and `meta.review_prompt` are tried first; a case fails when they disagree with the
 ledger. The reviewer works in a detached worktree at that commit, removed afterwards; a
 seeded case applies its patch there and its diff replaces the stored one. The model is
-the project's current `review` profile, not the run's.
+the project's current `review` profile, not the run's. `--review-model
+<provider/id[:thinking]>` replaces it in every reviewer session (Spec and Standards
+included; the judge keeps its profile) and makes the variant `<name>@<model>` in results
+and report columns, so it never shares resume state with the profile model's results.
 
 | Variant | Reviewer sessions |
 | --- | --- |
@@ -1619,6 +1622,8 @@ the project's current `review` profile, not the run's.
 | `v2-skills` | `--no-skills` and `--skill` for the agent-skills-hub `codebase-design`, `tdd`, `writing-for-agents` and `domain-modeling` skills and the project's `.pi/skills` and `.agents/skills` skills |
 | `v3-twoaxis` | A Spec session (the live directives plus three spec questions), then a Standards session (a draft directive in `loop/eval_review.py`: cited breaches of the project's documented standards, plus a code-smell baseline that is always `minor`), both `--no-skills` |
 | `v4-twoaxis-skills` | v3 with v2's skills |
+| `v5-procedure` | v1 with a four-step review procedure (`REVIEW_PROCEDURE` in `loop/eval_review.py`) appended to the directives |
+| `v6-twoaxis-procedure` | v3 with the same procedure appended to the Spec directives only |
 
 Sessions run one at a time under the scout's read-only process isolation, with
 `allowRead` carve-outs for skill paths that the other-project denial hides. A two-axis
@@ -1628,11 +1633,13 @@ positive case with findings, a blind `judge` session (no tools, as `compare`) ge
 label and the findings and says whether one names the defect; severity and axis come from
 the matched finding. A clean case records its finding and severe-finding counts.
 
-Each (case, variant) appends one line to `<out>/results.jsonl` (verdict, findings,
-sessions with cost, tokens and seconds, judge answer and cost), and the pair's run dir
-(prompt, directives, review texts, pi sessions, sandbox settings) goes to
-`<out>/pairs/<case>/<variant>/<pair>/`. A rerun skips pairs whose latest line is `ok` and
-retries the others. `--max-cost` stops before a pair whose estimated cost (the mean of
+`--repeat N` (default 1) runs each (case, variant) N times as reps 1..N. Each run appends
+one line to `<out>/results.jsonl` with its `rep` (verdict, findings, sessions with cost,
+tokens, seconds, `files_read` (distinct paths through `read`) and `tool_calls` by tool,
+summed over a two-axis pair, judge answer and cost), and the pair's run dir (prompt,
+directives, review texts, pi sessions, sandbox settings) goes to
+`<out>/pairs/<case>/<variant>/<pair>/`. A rerun skips (case, variant, rep) whose latest
+line is `ok` and retries the others; a line without `rep` is rep 1. `--max-cost` stops before a pair whose estimated cost (the mean of
 that variant's finished pairs, else of all) would take this invocation's spend past it.
 A quota or contract error stops the evaluation. `--dry-run` builds each worktree, prompt
 and argv, prints them and calls no model; it writes no results.
@@ -1640,8 +1647,13 @@ and argv, prints them and calls no model; it writes no results.
 `helmraiser eval report <out>` writes `<out>/report.md` from the latest line of each pair:
 per variant, recall per positive bucket (`found` is a regression check), severity given
 on `undercall` and `miss` cases, `standards` cases split by written and unwritten rule,
-findings and severe findings on clean cases, and total and median cost and seconds,
-then the number of evidence files withheld per case (`evidence_withheld`).
+findings and severe findings on clean cases, total and median cost and seconds, a
+Reading table (median distinct files read, tool calls and input tokens, positive and clean
+cases apart; rows from before these were recorded are left out), then the number of
+evidence files withheld per case (`evidence_withheld`). With several reps, recall is the
+mean of each rep's recall with its min..max, severity counts are summed, clean-case counts
+are per rep, and a Hits per case table shows each case found in k of N reps. It reads only
+`<out>`, so a held-out case file with its own `--out` gets its own report.
 
 Exit codes: 0 on success (also when `--max-cost` stops, reported as `stopped`), 1 when a
 pair failed or the sandbox is unavailable, 2 for an invalid case file, variant, case id,

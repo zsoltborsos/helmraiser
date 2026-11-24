@@ -25,7 +25,8 @@ Spec keys (all optional):
 
 - ``text`` final assistant text; ``stop_reason`` (default ``stop``);
   ``error_message``; ``cost`` (USD); ``tokens_in``/``tokens_out``;
-  ``tools`` list of tool names (one start/end pair each); ``settle`` (default
+  ``tools`` list of tool names, or ``[name, args]`` pairs (one start/end pair
+  each); ``settle`` (default
   true, emit ``agent_settled``);
 - ``events`` raw records emitted instead of the synthesized sequence (the
   session header is still emitted first unless ``header`` is false);
@@ -174,10 +175,11 @@ def _synthesize(spec: dict[str, Any], opts: dict[str, Any]) -> list[dict[str, An
             "message": {**assistant, "content": [], "stopReason": "pending"},
         },
     ]
-    for n, tool in enumerate(spec.get("tools", []), start=1):
+    for n, entry in enumerate(spec.get("tools", []), start=1):
         call_id = f"call_{n}"
+        tool, args = (entry[0], entry[1]) if isinstance(entry, list) else (entry, {})
         events.append(
-            {"type": "tool_execution_start", "toolCallId": call_id, "toolName": tool, "args": {}}
+            {"type": "tool_execution_start", "toolCallId": call_id, "toolName": tool, "args": args}
         )
         events.append(
             {

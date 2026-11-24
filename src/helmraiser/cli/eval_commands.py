@@ -56,7 +56,7 @@ def get_judge_adapter(config: dict[str, Any]) -> PiAdapter:
 
 
 def _summary_line(row: dict[str, Any]) -> str:
-    head = f"{row['case']} {row['variant']}"
+    head = f"{row['case']} {row['variant']}" + (f" rep {row['rep']}" if row["rep"] > 1 else "")
     if row.get("status") == "error":
         return f"{head}: error: {row['error']}"
     if "verdict" not in row:  # dry run
@@ -83,6 +83,10 @@ def eval_review(
         None, "--max-cost", help="Stop before a pair would take this run's spend past USD"
     ),
     dry_run: bool = typer.Option(False, "--dry-run", help="Build everything, call no model"),
+    repeat: int = typer.Option(1, "--repeat", help="Run each (case, variant) N times"),
+    review_model: str | None = typer.Option(
+        None, "--review-model", help="provider/id[:thinking] for every reviewer session"
+    ),
     as_json: bool = typer.Option(False, "--json", help="Machine-readable output"),
     data_dir: Path | None = typer.Option(None, "--data-dir", help="Override HELMRAISER_DATA_DIR"),
 ) -> None:
@@ -95,6 +99,11 @@ def eval_review(
         chosen, variants = select(cases, case, variant)
         if max_cost is not None and max_cost < 0:
             raise EvalError("--max-cost must not be negative")
+        if repeat < 1:
+            raise EvalError("--repeat must be at least 1")
+        override = ModelSpec.parse(review_model) if review_model is not None else None
+        if override is not None and "/" not in override.model.strip("/"):
+            raise EvalError("--review-model must be provider/id[:thinking]")
         if not (base / "helmraiser.db").is_file():
             raise EvalError(f"no ledger in {base}")
     except EvalError as exc:
@@ -114,7 +123,8 @@ def eval_review(
             except ValueError as exc:
                 _fail(str(exc), as_json=as_json, code=EXIT_VALIDATION)
             profiles = {role: spec.render() for role, spec in models[project].items()}
-            require_models({"profiles": profiles}, ("review", "judge"), as_json=as_json)
+            roles = ("judge",) if override is not None else ("review", "judge")
+            require_models({"profiles": profiles}, roles, as_json=as_json)
         ctx = EvalContext(
             out=out_dir,
             ledger=ledger,
@@ -123,11 +133,18 @@ def eval_review(
             review_adapter=lambda project, extra: get_review_adapter(config, project, extra, base),
             judge_adapter=get_judge_adapter(config),
             timeout_s=max(1800, int(config.get("review_min_minutes", 10)) * 60),
+            review_model=override,
         )
         progress = (lambda _row: None) if as_json else (lambda row: typer.echo(_summary_line(row)))
         try:
             result = run_eval(
-                ctx, chosen, variants, dry_run=dry_run, max_cost=max_cost, progress=progress
+                ctx,
+                chosen,
+                variants,
+                dry_run=dry_run,
+                max_cost=max_cost,
+                repeat=repeat,
+                progress=progress,
             )
         except EvalError as exc:
             _fail(str(exc), as_json=as_json)
@@ -136,7 +153,7 @@ def eval_review(
         typer.echo(json.dumps(result))
     else:
         for item in result["skipped_done"]:
-            typer.echo(f"{item['case']} {item['variant']}: already done")
+            typer.echo(f"{item['case']} {item['variant']} rep {item['rep']}: already done")
         if result["stopped"]:
             typer.echo(f"stopped: {result['stopped']} (spent ${result['spent_usd']:.4f})")
         if not dry_run:

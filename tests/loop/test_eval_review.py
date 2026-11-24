@@ -819,3 +819,182 @@ def test_report_counts_withheld_evidence_per_case():
     report = build_report(rows)
     assert report["evidence_withheld"] == {"m1": 2}
     assert "| m1 | 2 |" in render_report(report)
+
+
+# ── repeats, review-model override, procedure variants, reading ──────
+
+
+def test_repeat_runs_each_pair_n_times_and_resumes_per_rep(context, fake_pi):
+    script(fake_pi)
+    first = run_eval(context, [make_case()], [VARIANTS["v0-baseline"]], repeat=2)
+    assert [(p["variant"], p["rep"]) for p in first["pairs"]] == [
+        ("v0-baseline", 1),
+        ("v0-baseline", 2),
+    ]
+    again = run_eval(context, [make_case()], [VARIANTS["v0-baseline"]], repeat=3)
+    assert [p["rep"] for p in again["pairs"]] == [3]
+    assert [s["rep"] for s in again["skipped_done"]] == [1, 2]
+    assert len(fake_pi.calls()) == 3
+
+
+def test_rows_without_rep_count_as_rep_1(context, fake_pi):
+    script(fake_pi)
+    context.out.mkdir()
+    legacy = {"case": "miss-1", "variant": "v0-baseline", "status": "ok", "bucket": "miss"}
+    (context.out / "results.jsonl").write_text(json.dumps(legacy) + "\n")
+    result = run_eval(context, [make_case()], [VARIANTS["v0-baseline"]], repeat=2)
+    assert [p["rep"] for p in result["pairs"]] == [2]
+
+
+def test_review_model_overrides_every_reviewer_and_keys_the_variant(context, fake_pi):
+    script(fake_pi)
+    run_eval(context, [make_case()], [VARIANTS["v3-twoaxis"]])  # the profile model
+    context.review_model = ModelSpec("prov/strong", "xhigh")
+    result = run_eval(context, [make_case()], [VARIANTS["v3-twoaxis"]])
+    (row,) = result["pairs"]
+    assert row["variant"] == "v3-twoaxis@prov/strong:xhigh"
+    assert row["variant_name"] == "v3-twoaxis" and row["model"] == "prov/strong:xhigh"
+    assert row["judge_model"] == "prov/judge:high"
+    calls = fake_pi.calls()[3:]
+    models = [c["argv"][c["argv"].index("--model") + 1] for c in calls]
+    assert models == ["prov/strong:xhigh", "prov/strong:xhigh", "prov/judge:high"]
+    assert Path(row["artifacts"]).parent.name == "v3-twoaxis@prov_strong:xhigh"
+    report = build_report(read_results(context.out / "results.jsonl"))
+    assert list(report["variants"]) == ["v3-twoaxis", "v3-twoaxis@prov/strong:xhigh"]
+
+
+def test_procedure_variants(fixture, tmp_path):
+    replay = reconstruct(make_case(), fixture.ledger, fixture.data_dir / "runs")
+    worktree = tmp_path / "wt"
+    (worktree / ".git").mkdir(parents=True)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+
+    def plans(name: str) -> list[eval_review.SessionPlan]:
+        extra, read = variant_args(VARIANTS[name], worktree)
+        assert extra == ("--no-skills",) and read == ()
+        return eval_review.variant_sessions(
+            VARIANTS[name],
+            replay,
+            prompt="P",
+            worktree=worktree,
+            run_dir=run_dir,
+            extra_args=extra,
+        )
+
+    procedure = eval_review.REVIEW_PROCEDURE
+    assert procedure.startswith("\n## Review procedure\n\nBefore you give a verdict:\n1. ")
+    assert "An admitted gap that breaks a requirement is a severe finding.\n" in procedure
+    (single,) = plans("v5-procedure")
+    (plain,) = plans("v1-noskills")
+    assert single.directives == plain.directives.rstrip("\n") + "\n" + procedure
+    spec, standards = plans("v6-twoaxis-procedure")
+    spec3, standards3 = plans("v3-twoaxis")
+    assert spec.directives == spec3.directives + procedure
+    assert spec.directives.endswith(procedure) and "## Spec axis" in spec.directives
+    assert standards.directives == standards3.directives
+    assert "Review procedure" not in standards.directives
+    adapter = PiJsonAdapter(pi_bin="pi")
+    for plan in (single, spec, standards):
+        req = eval_review._request(
+            plan,
+            model=ModelSpec("prov/rev", "high"),
+            worktree=worktree,
+            run_dir=run_dir,
+            session_id="s",
+            timeout_s=60,
+        )
+        argv = adapter.build_argv(req)
+        assert "--no-skills" in argv and "--skill" not in argv
+        directives = Path(argv[argv.index("--append-system-prompt") + 1])
+        assert directives.read_text() == plan.directives
+
+
+def test_sessions_record_files_read_and_tool_calls(context, fake_pi):
+    reads = [["read", {"path": "a.py"}], ["read", {"path": "./a.py"}], ["grep", {"pattern": "x"}]]
+    fake_pi.write_script(
+        {
+            "sessions": {
+                "*-review-spec": {
+                    "text": verdict_text("pass", []),
+                    "tools": [*reads, ["read", {"path": "AGENTS.md"}]],
+                    "tokens_in": 100,
+                },
+                "*-review-standards": {
+                    "text": verdict_text("pass", []),
+                    "tools": [["read", {"path": "a.py"}], "ls"],
+                    "tokens_in": 50,
+                },
+            }
+        }
+    )
+    clean = make_case(id="clean-1", bucket="clean", axis=None, label=None)
+    (row,) = run_eval(context, [clean], [VARIANTS["v3-twoaxis"]])["pairs"]
+    spec, standards = row["sessions"]
+    assert spec["files_read"] == 2 and spec["tool_calls"] == {"grep": 1, "read": 3}
+    assert standards["files_read"] == 1 and standards["tool_calls"] == {"ls": 1, "read": 1}
+    assert row["files_read"] == 3 and row["tool_calls"] == {"grep": 1, "ls": 1, "read": 4}
+    assert row["tokens_in"] == 150
+    reading = build_report([row])["variants"]["v3-twoaxis"]["reading"]
+    assert reading["clean"] == {"files_read": 3.0, "tool_calls": 6.0, "tokens_in": 150.0}
+    assert reading["positive"] == {"files_read": None, "tool_calls": None, "tokens_in": None}
+
+
+def test_report_aggregates_across_reps():
+    def found(case, rep, hit, severity=None, bucket="miss", **extra):
+        return row(case, "v1-noskills", bucket, rep=rep, judge=judged(hit, severity), **extra)
+
+    rows = [
+        found("m1", 1, True, "minor"),
+        found("m1", 2, True, "severe"),
+        found("m2", 1, False),
+        found("m2", 2, True, "minor"),
+        found("u1", 1, True, "severe", bucket="undercall"),
+        found("u1", 2, False, bucket="undercall"),
+        row("c1", "v1-noskills", "clean", rep=1, clean={"findings": 3, "severe": 1}),
+        row("c1", "v1-noskills", "clean", rep=2, clean={"findings": 1, "severe": 0}),
+        row(
+            "m1",
+            "v1-noskills",
+            "miss",
+            rep=1,
+            judge=None,
+            files_read=4,
+            tool_calls={"read": 6},
+            tokens_in=1_234_567,
+        ),
+    ]
+    variant = build_report(rows)["variants"]["v1-noskills"]
+    assert variant["reps"] == 2
+    # miss: rep 1 is 0/1 (the later m1 rep-1 row wins and is unjudged), rep 2 is 2/2.
+    assert variant["recall"]["miss"]["recall"] == 0.5
+    assert variant["recall"]["miss"]["spread"] == [0.0, 1.0]
+    assert variant["recall"]["undercall"]["recall"] == 0.5
+    assert variant["recall"]["undercall"]["spread"] == [0.0, 1.0]
+    assert variant["severity_called"]["miss"] == {"severe": 1, "minor": 1, "unknown": 0}
+    assert variant["severity_called"]["undercall"] == {"severe": 1, "minor": 0, "unknown": 0}
+    assert variant["clean"] == {
+        "cases": 1,
+        "findings": 2.0,
+        "severe": 0.5,
+        "cases_with_severe": 0.5,
+    }
+    assert variant["hits"] == {
+        "m1": {"found": 1, "judged": 1},
+        "m2": {"found": 1, "judged": 2},
+        "u1": {"found": 1, "judged": 2},
+    }
+    text = render_report(build_report(rows))
+    assert "| miss | 50% mean (0%..100%), 2/3 found, 1 unjudged |" in text
+    assert "## Hits per case" in text and "| m2 | 1 of 2 |" in text
+    assert "| median input tokens (positive) | 1234567 |" in text
+    assert "| findings | 2.0 |" in text
+
+
+def test_report_with_one_rep_has_no_rep_extras():
+    rows = [row("m1", "v0-baseline", "miss", judge=judged(True, "minor"))]
+    variant = build_report(rows)["variants"]["v0-baseline"]
+    assert "spread" not in variant["recall"]["miss"] and "hits" not in variant
+    text = render_report(build_report(rows))
+    assert "| miss | 1/1 (100%) |" in text
+    assert "Hits per case" not in text and "## Reading" not in text

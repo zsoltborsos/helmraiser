@@ -47,8 +47,20 @@ and what comes next.
 4. **Evaluation pack.** A fixed set of replayed tasks with hidden checks, rerun against
    one variant at a time and stored for comparison. The review replay exists
    (`helmraiser eval review|report`): it reruns past reviews under reviewer variants.
-   Remaining: the implement-stage pass, first `pi_rpc_implement` on against off, which
-   informs item 1.
+   The first replay moved the review profile to `openai-codex/gpt-6.2-astra:high`: it
+   found 13 of 33 held-out misses, where every variant on the previous model found none.
+   After the codex weekly reset (2026-11-26 12:17 UTC), measure:
+   - the stronger model without the review procedure (`v1-noskills`), on the held-out set;
+   - the stronger model on the derivation set, as a regression check;
+   - more held-out Standards cases with a written rule (only one so far), before any
+     two-reviewer slice.
+   Remaining after that: the implement-stage pass, first `pi_rpc_implement` on against
+   off, which informs item 1.
+5. **Decide on redacting verify output sent to models.** Verify and evidence tails reach
+   the implementer (`feedback_prompt` in `loop/prompts.py`, the iteration history) and the
+   reviewer (`loop/review.py`) verbatim. Service-provided variables such as database URLs
+   reach those models only through these tails. `loop/redact.py` already redacts the
+   scout's intake retry feedback and could be applied there too.
 
 ## Waiting
 

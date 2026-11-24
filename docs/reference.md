@@ -257,7 +257,7 @@ and any sandbox hint. Exit 0 means all steps are green or expected red; otherwis
 exits 2 without queueing. A step with `red_on_base: true` is expected red only after a
 completed nonzero exit whose captured output contains its `red_output` as a literal,
 case-sensitive substring. Missing or mismatched markers produce `fail` with a tail
-diagnostic; legacy tasks without the field still load. Timeouts and launch failures
+diagnostic; a task without the field still loads. Timeouts and launch failures
 remain failures, and sandbox hints retain precedence. If it passes, it is `fail`: the diagnostic says
 it was declared red on base but passed on unchanged code, so it cannot detect the change.
 This diagnostic appears in human failure output and JSON `check.steps[].tail`.
@@ -304,11 +304,11 @@ Each field resolves independently: ledger, explicit
 The default inherits global `routing.scout.enabled` for state (false for other lenses)
 and global `cooldown_hours` for every lens. Missing globals default to true and 24.
 Sources are `ledger`, `config`, or `default`; inherited globals count as `default`.
-Legacy global zero cooldown remains valid; new per-lens cooldowns must be positive.
+A global zero cooldown is valid; per-lens cooldowns must be positive.
 
-**The legacy enabled switch is not a global automatic veto:** an explicit per-lens
+**`routing.scout.enabled` is not a global automatic veto:** an explicit per-lens
 `auto` (config or ledger) can enable automation even with `routing.scout.enabled=false`.
-Use queue pause to stop all starts. Direct `scout` retains the legacy enabled check
+Use queue pause to stop all starts. Direct `scout` checks `routing.scout.enabled`
 unless forced; requests bypass enablement and cooldown. There is one pending request per `(project, lens)`.
 Cancellation without `--lens` cancels every pending lens for each project;
 `--cancel --lens NAME` cancels only that lens. Requested scouts already bypass
@@ -507,8 +507,7 @@ Omitted or `[]` means no dependencies. IDs must match the task ID pattern; a
 self-dependency is rejected at `add`/`intake`. Unknown IDs may be added later.
 
 To be queued, a task also needs an existing git repository and a reviewer model that
-differs from the implementer. Helmraiser still reads legacy topic files: it accepts
-`quality_gates:` strings as verify steps and maps `todo`/`medium` to `draft`/`normal`.
+differs from the implementer.
 
 Every setup, verify and evidence command runs under `bash -o pipefail` and sees
 `HELMRAISER_RUN_ID`, `HELMRAISER_WORKTREE`, `HELMRAISER_EVIDENCE_DIR` and
@@ -624,10 +623,8 @@ An optional project `worktree_dir` overrides the global root and repository suff
 entirely. It expands environment variables such as `$HOME`; relative paths resolve
 from the repository. Use it for projects whose package store needs a different
 filesystem. Keeping worktrees external also avoids nested-checkout failures in repo
-scanners and projects whose tests reject a nested `.git`. Existing runs fall back to their legacy metadata in
-`<repo>/.helmraiser/worktrees` when no current-location metadata exists; nothing is moved
-or rewritten to migrate them. Project state (`.helmraiser/state.db`), tasks and
-`finalize.lock` stay in the repository.
+scanners and projects whose tests reject a nested `.git`. Project state
+(`.helmraiser/state.db`), tasks and `finalize.lock` stay in the repository.
 See [`examples/project.toml`](../examples/project.toml):
 
 ```toml
@@ -1597,7 +1594,7 @@ The case file is `{"name": …, "cases": [...]}`. Each case has `id`, `run_id`, 
 For each case the replay takes the stored `prompt-review-1[-<n>].md` of review N (the
 ledger's review stage starts and review retries give the order), the stored
 `directives-review.md`, and copies of the run's `evidence/` and `logs/` files. Any path
-ending in `/runs/<run_id>` (also an older data dir such as `~/.squadron`) is pointed at
+ending in `/runs/<run_id>` (also under an older data dir) is pointed at
 the replay's run dir, and the run's worktree path, or any path ending in a
 `worktree-…-<run_id>` directory, at the replay worktree. A later step (a rework's evidence)
 rewrites those files, so a file last written (by mtime) after review N's `review_verdict`
@@ -1782,7 +1779,7 @@ The `status.json` object has these fields:
 | `usage` | object | Per subscription and window: `fraction`, `spend_usd`, `resets_at`, `warn_at`, `stop_at` |
 | `routing` | object | `headroom` maps every configured or reported subscription to `has_headroom` and its available `5h`, `week` and `month` windows. Each window has `used`, `elapsed`, `target` and `headroom`; unavailable numeric values are `null`. `has_headroom` is true only when at least one window is present and every window's headroom is strictly above the configured margin |
 | `scouts` | object | Scout routing and activity: `focus_projects`, `paused_projects`, `pending`, `running`, and `recent` as described below |
-| `caps_enforced` | boolean | Whether `stop_at` enforcement is active (ledger switch overrides config) |
+| `caps_enforced` | boolean | Whether `stop_at` enforcement is active: the `helmraiser caps on` / `off` switch, otherwise on |
 | `paused` | `null` or `{reason, until}` | Queue pause state; `until` is a Unix timestamp or `null` |
 | `held_providers` | object | Provider → `{until, detail}` for active provider holds; expired holds are omitted |
 | `worker` | object | The background worker: its `worker.json` record (`pid`, `started_at`, `argv`, `log`, `projects`, `exclude_projects`, `max_parallel_runs`) with `state` `running` or `exited`, or `{"state": "none"}` without a record. A running worker also has `children`: one `{pid, project, run_id, kind, started_at}` per child in flight (`kind` is `run` or `scout`; scout children also have `scout_id`; `run_id` is available for fresh runs after registration via their task lock and child PID, and for selected resumptions), and `errors`: one `{project, stage, error, since, retry_at}` per project whose work currently fails (`stage` is `reconcile`, `task`, `start`, `run` or `scout`; `since` and `retry_at` are Unix timestamps). A running worker also has `skips: [{task_id, reason}]` for all current scheduler skip reasons (invalid tasks, quota, caps and optional [Leeboard holds](#leeboard-optional)), not skip history. The record also carries `code` (`{commit, snapshot}`: the commit of the code snapshot the worker runs, and its directory), `restarted` (`{at, from, to}`, the last restart on new code, commit hashes) after one, and `exit` (`{at, reason, error}`) once the worker has ended: `reason` is `stopped`, `max_runs`, or `error` with `error` saying why |

@@ -213,7 +213,7 @@ def build_scout_status(
             {
                 "project": str(Path(str(child["project"])).expanduser().resolve()),
                 "scout_id": scout_id,
-                "lens": child.get("lens", "state"),
+                "lens": child["lens"],
                 "started_at": _iso_timestamp(float(child["started_at"])),
             }
         )

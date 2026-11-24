@@ -82,9 +82,9 @@ def abort_run(
     Raises ``ValueError`` when ``run_id`` is not a canonical UUID4.
     """
     canonical_run_id = resolve_run_id(run_id)
-    squad_dir = project_dir.resolve() / ".helmraiser"
-    squad_dir.mkdir(parents=True, exist_ok=True)
-    state = StateManager(squad_dir / "state.db")
+    state_dir = project_dir.resolve() / ".helmraiser"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    state = StateManager(state_dir / "state.db")
     run = state.get_run(canonical_run_id)
     coordinator = AbortCoordinator(state, process_controller or PosixProcessController())
     result = coordinator.abort(canonical_run_id)

@@ -114,7 +114,7 @@ class TestLoadConfig:
         assert config["pi_bin"] == "/opt/pi"
         assert config["profiles"]["implement"] == {"model": "p/m"}
 
-    def test_migrates_missing_keys(self, isolated_config):
+    def test_fills_missing_keys_with_defaults(self, isolated_config):
         """load_config should add missing keys and missing profiles/budget entries."""
         isolated_config.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         with open(isolated_config.CONFIG_FILE, "w") as f:
@@ -128,7 +128,6 @@ class TestLoadConfig:
         )
         assert config["profiles"] == isolated_config.DEFAULT_PROFILES
         assert config["intake"] == {"avoid_models": []}
-        assert "supported_pi" not in config
         assert config["base_sync_interval_seconds"] == 300
 
     @pytest.mark.parametrize(
@@ -207,7 +206,7 @@ class TestLoadConfig:
             ),
         ],
     )
-    def test_intake_migration(self, isolated_config, data, expected):
+    def test_intake_defaults_fill(self, isolated_config, data, expected):
         original = json.dumps(data)
         isolated_config.CONFIG_FILE.write_text(original)
         config = isolated_config.load_config()
@@ -242,7 +241,7 @@ class TestLoadConfig:
             ),
         ],
     )
-    def test_cleanup_migration(self, isolated_config, data, expected):
+    def test_cleanup_defaults_fill(self, isolated_config, data, expected):
         original = json.dumps(data)
         isolated_config.CONFIG_FILE.write_text(original)
         config = isolated_config.load_config()
@@ -269,7 +268,7 @@ class TestLoadConfig:
         ):
             isolated_config.load_config()
 
-    def test_judge_profile_default_and_migration(self, isolated_config):
+    def test_judge_profile_default_and_fill(self, isolated_config):
         expected = {"thinking": "high"}
         assert isolated_config.DEFAULT_CONFIG["profiles"]["judge"] == expected
         data = {"profiles": {"implement": {"model": "p/custom"}}}
@@ -288,7 +287,7 @@ class TestLoadConfig:
             isolated_config.load_config()
 
     @pytest.mark.parametrize("data, expected", [({}, 1), ({"max_runs_per_project": 2}, 2)])
-    def test_run_limit_migration(self, isolated_config, data, expected):
+    def test_run_limit_defaults_fill(self, isolated_config, data, expected):
         original = json.dumps(data)
         isolated_config.CONFIG_FILE.write_text(original)
         assert isolated_config.load_config()["max_runs_per_project"] == expected
@@ -297,7 +296,7 @@ class TestLoadConfig:
     @pytest.mark.parametrize(
         "data, expected", [({}, None), ({"worktree_root": "/mnt/runs"}, "/mnt/runs")]
     )
-    def test_worktree_root_migration(self, isolated_config, data, expected):
+    def test_worktree_root_defaults_fill(self, isolated_config, data, expected):
         original = json.dumps(data)
         isolated_config.CONFIG_FILE.write_text(original)
         assert isolated_config.load_config()["worktree_root"] == expected
@@ -354,16 +353,6 @@ class TestLoadConfig:
             "codex_headroom": 0.15 if threshold is None else threshold,
         }
         assert isolated_config.CONFIG_FILE.read_text() == original
-
-    def test_retired_supported_pi_key_still_loads(self, isolated_config):
-        """A config written before the pi version range was removed loads unchanged."""
-        isolated_config.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        with open(isolated_config.CONFIG_FILE, "w") as f:
-            json.dump({"supported_pi": ">=0.87,<0.90"}, f)
-
-        config = isolated_config.load_config()
-        assert config["pi_bin"] == "pi"
-        assert config["profiles"] == isolated_config.DEFAULT_PROFILES
 
     def test_recovers_from_corrupt_config_file(self, isolated_config):
         """An empty or invalid config.json is replaced with the defaults."""

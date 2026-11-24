@@ -38,7 +38,7 @@ def test_leeboard_renderer_no_context(brief):
 
 
 def test_leeboard_renderer_context_and_precedence():
-    brief = "# Leeboard: project squad\n\n## Rules\n- [rule] Keep {braces}"
+    brief = "# Leeboard: project demo\n\n## Rules\n- [rule] Keep {braces}"
     text = implement(
         leeboard_brief=BriefResult(brief, None),
         project_notes="Use local tests.",

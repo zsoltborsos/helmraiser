@@ -384,7 +384,7 @@ def run_preflight(
     tail: int = 40,
     progress: Callable[[str], None] = lambda _message: None,
 ) -> dict[str, Any]:
-    """Compatibility wrapper for command strings used by ``helmraiser preflight``."""
+    """Run ``helmraiser preflight``'s command strings as numbered verify steps."""
     require_primary_checkout(repo)
     steps = [VerifyStep(f"command-{n}", command, timeout) for n, command in enumerate(commands, 1)]
     payload = run_preflight_steps(

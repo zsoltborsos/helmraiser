@@ -332,16 +332,16 @@ def test_only_evidence_written_by_review_n_is_copied(fixture, tmp_path):
     assert replay_prompt(replay, replay.diff_text, tmp_path / "wt", run_dir) == stored
 
 
-def test_legacy_run_dir_and_worktree_paths_are_relocated(fixture, tmp_path):
-    """Squadron-era prompts name ~/.squadron/runs/<id> and other worktree roots."""
+def test_other_run_dir_and_worktree_paths_are_relocated(fixture, tmp_path):
+    """Older prompts name other data dirs (~/<dir>/runs/<id>) and worktree roots."""
     replay = reconstruct(make_case(), fixture.ledger, fixture.data_dir / "runs")
     run_dir, worktree = tmp_path / "run", tmp_path / "wt"
     text = "\n".join(
         [
-            f"- junit.xml: `~/.squadron/runs/{RUN_ID}/evidence/x.xml`",
-            f"Full output: `/home/zsolt/.squadron/runs/{RUN_ID}/logs/verify.log`",
+            f"- junit.xml: `~/.old-data/runs/{RUN_ID}/evidence/x.xml`",
+            f"Full output: `/home/user/.old-data/runs/{RUN_ID}/logs/verify.log`",
             f"- shot.png (image, attached): @/srv/old-data/runs/{RUN_ID}/evidence/shot.png",
-            f"see /mnt/data/squadron-worktrees/proj/worktree-fix-it-{RUN_ID}/src/a.py.",
+            f"see /mnt/data/old-worktrees/proj/worktree-fix-it-{RUN_ID}/src/a.py.",
             f"{LIVE_WORKTREE}/b.py and {fixture.run_dir}/diff.patch",
             f"untouched: /srv/runs/{RUN_ID}-other and runs/{RUN_ID}",
         ]
@@ -360,8 +360,8 @@ def test_dry_run_reports_paths_the_replay_cannot_resolve(context, fixture, fake_
     prompt = fixture.run_dir / "prompt-review-1.md"
     prompt.write_text(
         prompt.read_text()
-        + f"\n- out.txt: `~/.squadron/runs/{RUN_ID}/evidence/out.txt`"
-        + f"\n- x.xml: `~/.squadron/runs/{RUN_ID}/evidence/x.xml`"
+        + f"\n- out.txt: `~/.old-data/runs/{RUN_ID}/evidence/out.txt`"
+        + f"\n- x.xml: `~/.old-data/runs/{RUN_ID}/evidence/x.xml`"
         + f"\nsee {LIVE_WORKTREE}/a.py, {LIVE_WORKTREE}/gone.py."
         + f"\n  at {LIVE_WORKTREE}/a.py:1:5 and {LIVE_WORKTREE}/gone.py:12"
     )

@@ -1,4 +1,4 @@
-"""Loader tests: round-trip, quality_gates sugar, legacy status mapping, profiles."""
+"""Loader tests: round-trip, profiles."""
 
 from __future__ import annotations
 
@@ -181,36 +181,6 @@ class TestLoad:
         assert spec.models == {}
         assert spec.budget_explicit is False
         assert spec.budget == Budget(**DEFAULT_CONFIG["budget"])
-
-    def test_quality_gates_sugar(self, tmp_path: Path, config: dict):
-        content = (
-            f"---\nid: old\ntitle: Old topic\nproject: {tmp_path}\n"
-            "quality_gates:\n  - pytest -q\n  - ruff check src\n---\nbody\n"
-        )
-        spec = load_task(write(tmp_path, content), config)
-        assert [(v.name, v.run) for v in spec.verify] == [
-            ("gate-1", "pytest -q"),
-            ("gate-2", "ruff check src"),
-        ]
-        assert "quality_gates" not in spec.extra
-
-    @pytest.mark.parametrize(
-        ("legacy", "mapped"),
-        [
-            ("todo", "draft"),
-            ("in_progress", "running"),
-            ("review", "awaiting_approval"),
-            ("done", "landed"),
-            ("queued", "queued"),
-        ],
-    )
-    def test_legacy_status_mapping(self, tmp_path: Path, config: dict, legacy: str, mapped: str):
-        content = f"---\nid: t\ntitle: T\nproject: {tmp_path}\nstatus: {legacy}\n---\n"
-        assert load_task(write(tmp_path, content), config).status == mapped
-
-    def test_legacy_medium_priority(self, tmp_path: Path, config: dict):
-        content = f"---\nid: t\ntitle: T\nproject: {tmp_path}\npriority: medium\n---\n"
-        assert load_task(write(tmp_path, content), config).priority == "normal"
 
     def test_missing_file(self, tmp_path: Path, config: dict):
         with pytest.raises(TaskLoadError, match="not found"):

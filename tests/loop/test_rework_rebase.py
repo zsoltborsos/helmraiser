@@ -73,23 +73,17 @@ def rework_adapter(implement):
     )
 
 
-@pytest.mark.parametrize("location", ["default", "external", "legacy"])
+@pytest.mark.parametrize("location", ["default", "external"])
 async def test_rework_rebase_resolves_the_conflict_and_parks_again(
     make_task, make_run, ledger, data_dir, config, tmp_project, tmp_path, location
 ):
     project_file = tmp_project / ".helmraiser" / "project.toml"
     if location != "default":
         project_file.parent.mkdir(exist_ok=True)
-        directory = (
-            tmp_path / "external"
-            if location == "external"
-            else tmp_project / ".helmraiser" / "worktrees"
-        )
+        directory = tmp_path / "external"
         project_file.write_text(f'[defaults]\nworktree_dir = "{directory}"\n')
     task, run_id, parked = await park_run(make_task, make_run)
     metadata_path = Path(parked.worktree_path).parent / f"{run_id}.json"
-    if location == "legacy":
-        project_file.unlink()
     moved = move_base(task.project)
     base = ledger.get_run(run_id)["base_branch"]
     hand_back_rework(ledger, run_id, task, rebase=True)

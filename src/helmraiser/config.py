@@ -200,7 +200,7 @@ def load_config() -> dict[str, Any]:
         save_config(DEFAULT_CONFIG)
         return copy.deepcopy(DEFAULT_CONFIG)
 
-    # Ensure all keys exist (migration safety)
+    # Fill in default values for missing keys
     for key, value in DEFAULT_CONFIG.items():
         if key not in data:
             data[key] = copy.deepcopy(value)

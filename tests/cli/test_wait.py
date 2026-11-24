@@ -559,6 +559,6 @@ def test_outdated_ledger_is_not_migrated(ledger, data_dir, clock):
     result = invoke("some-ref", data_dir)
     assert result.exit_code == 2
     assert "some-ref" in json.loads(result.stdout)["error"]
-    assert "migration" in result.stdout
+    assert "schema version 8" in result.stdout
     assert list(conn.iterdump()) == before
     assert conn.execute("PRAGMA user_version").fetchone()[0] == 8

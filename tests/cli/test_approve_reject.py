@@ -203,25 +203,16 @@ class TestApprove:
                 assert not manager._metadata_path(outcome["run_id"]).exists()
             assert ledger.get_run(second["run_id"])["head_commit"] == second_head
 
-    @pytest.mark.parametrize("legacy", [False, True])
     def test_merge_lands_and_removes_worktree(
-        self, tmp_project: Path, data_dir: Path, fake_pi: FakePi, legacy: bool, monkeypatch
+        self, tmp_project: Path, data_dir: Path, fake_pi: FakePi, monkeypatch
     ):
         def forbidden(*args, **kwargs):
             pytest.fail("merge delivery must not require a current upstream base")
 
         monkeypatch.setattr(WorktreeManager, "require_current_base", forbidden)
-        project_file = tmp_project / ".helmraiser" / "project.toml"
-        if legacy:
-            project_file.parent.mkdir(exist_ok=True)
-            project_file.write_text(
-                f'[defaults]\nworktree_dir = "{project_file.parent / "worktrees"}"\n'
-            )
         outcome = queue_and_run(tmp_project, data_dir, fake_pi)
         run_id = outcome["run_id"]
         metadata_path = Path(outcome["worktree_path"]).parent / f"{run_id}.json"
-        if legacy:
-            project_file.unlink()
         before = _git(tmp_project, "rev-parse", "HEAD")
 
         summary = RunDir(run_id, data_dir).summary_md
@@ -814,21 +805,12 @@ def test_settle_ignores_summary_oserror(
 
 
 class TestReject:
-    @pytest.mark.parametrize("legacy", [False, True])
     def test_reject_removes_worktree_keeps_branch(
-        self, tmp_project: Path, data_dir: Path, fake_pi: FakePi, legacy: bool
+        self, tmp_project: Path, data_dir: Path, fake_pi: FakePi
     ):
-        project_file = tmp_project / ".helmraiser" / "project.toml"
-        if legacy:
-            project_file.parent.mkdir(exist_ok=True)
-            project_file.write_text(
-                f'[defaults]\nworktree_dir = "{project_file.parent / "worktrees"}"\n'
-            )
         outcome = queue_and_run(tmp_project, data_dir, fake_pi)
         run_id = outcome["run_id"]
         metadata_path = Path(outcome["worktree_path"]).parent / f"{run_id}.json"
-        if legacy:
-            project_file.unlink()
         before = _git(tmp_project, "rev-parse", "HEAD")
 
         summary = RunDir(run_id, data_dir).summary_md

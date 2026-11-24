@@ -234,8 +234,7 @@ Please report security vulnerabilities privately as described in the security po
 
 ## History
 
-Development started on 25 February 2026 under the working name Squadron. This repository's
-history begins at the rename to Helmraiser on 14 November 2026.
+Development started on 25 February 2026.
 
 ## License
 

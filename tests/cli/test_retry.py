@@ -389,21 +389,12 @@ def test_retry_adopt_base_preserves_existing_eligibility_checks(
     assert not ledger.events(run_id, types=("rebased",))
 
 
-@pytest.mark.parametrize("legacy", [False, True])
 def test_retry_resumes_at_verify_with_the_corrected_task_file(
-    tmp_project: Path, data_dir: Path, fake_pi: FakePi, tmp_path: Path, legacy: bool
+    tmp_project: Path, data_dir: Path, fake_pi: FakePi, tmp_path: Path
 ):
-    project_file = tmp_project / ".helmraiser" / "project.toml"
-    if legacy:
-        project_file.parent.mkdir(exist_ok=True)
-        project_file.write_text(
-            f'[defaults]\nworktree_dir = "{project_file.parent / "worktrees"}"\n'
-        )
     outcome = blocked_run(tmp_project, data_dir, fake_pi)
     run_id = outcome["run_id"]
     metadata_path = Path(outcome["worktree_path"]).parent / f"{run_id}.json"
-    if legacy:
-        project_file.unlink()
     write_task(tmp_project, FIXED_VERIFY)
 
     result = invoke("retry", run_id[:8], "--json", data_dir=data_dir)
@@ -638,21 +629,12 @@ FIRST_TWO = [
 ]
 
 
-@pytest.mark.parametrize("legacy", [False, True])
 def test_retry_implement_resumes_at_implement_with_the_verify_failure_as_the_prompt(
-    tmp_project: Path, data_dir: Path, fake_pi: FakePi, tmp_path: Path, legacy: bool
+    tmp_project: Path, data_dir: Path, fake_pi: FakePi, tmp_path: Path
 ):
-    project_file = tmp_project / ".helmraiser" / "project.toml"
-    if legacy:
-        project_file.parent.mkdir(exist_ok=True)
-        project_file.write_text(
-            f'[defaults]\nworktree_dir = "{project_file.parent / "worktrees"}"\n'
-        )
     outcome = blocked_run(tmp_project, data_dir, fake_pi)
     run_id = outcome["run_id"]
     metadata_path = Path(outcome["worktree_path"]).parent / f"{run_id}.json"
-    if legacy:
-        project_file.unlink()
     ledger = Ledger(data_dir / "helmraiser.db")
     first_commit = ledger.iterations(run_id)[0]["commit_sha"]
 

@@ -117,45 +117,6 @@ class TestStateManagerProcessLeases:
         assert not mgr.clear_process("run", "old")
         assert mgr.request_abort("run").lease.attempt_id == "new"
 
-    def test_legacy_statuses_migrate_to_canonical_values(self, tmp_path):
-        db = tmp_path / "state.db"
-        mgr = StateManager(db)
-        mgr.create_run("run", "topic")
-        mgr._get_conn().execute("UPDATE runs SET status = 'cancelled' WHERE run_id = 'run'")
-        mgr._get_conn().commit()
-        mgr._local.conn = None
-
-        migrated = StateManager(db)
-        assert migrated.get_run("run")["status"] == "aborted"
-
-    def test_legacy_schema_without_hub_url_is_left_unchanged(self, tmp_path):
-        db = tmp_path / "state.db"
-        conn = sqlite3.connect(db)
-        conn.execute(
-            "CREATE TABLE runs ("
-            "run_id TEXT PRIMARY KEY, topic_id TEXT NOT NULL, status TEXT NOT NULL, "
-            "phase INTEGER NOT NULL DEFAULT 0, started_at REAL NOT NULL)"
-        )
-        conn.execute(
-            "INSERT INTO runs (run_id, topic_id, status, started_at) VALUES ('run', 'topic', 'starting', 0)"
-        )
-        conn.commit()
-        before = {row[1] for row in conn.execute("PRAGMA table_info(runs)")}
-        conn.close()
-
-        with StateManager(db) as mgr:
-            assert mgr.get_run("run")["topic_id"] == "topic"
-            mgr.create_run("new-run", "new-topic")
-            assert mgr.get_run("new-run")["status"] == "starting"
-
-        conn = sqlite3.connect(db)
-        try:
-            columns = {row[1] for row in conn.execute("PRAGMA table_info(runs)")}
-        finally:
-            conn.close()
-        assert columns == before
-        assert "hub_url" not in columns
-
     def test_old_schema_database_keeps_legacy_schema_and_supports_current_operations(
         self, tmp_path
     ):
@@ -283,33 +244,6 @@ class TestStateManagerProcessLeases:
             writer.close()
             thread.join()
 
-    def test_duplicate_topic_locks_without_the_index_are_migrated(self, tmp_path):
-        db = tmp_path / "state.db"
-        StateManager(db).close()
-        conn = sqlite3.connect(db)
-        conn.execute("DROP INDEX locks_topic_id")
-        conn.execute("CREATE TABLE locks_old AS SELECT * FROM locks")
-        conn.execute("DROP TABLE locks")
-        conn.execute(
-            "CREATE TABLE locks (id INTEGER PRIMARY KEY AUTOINCREMENT, run_id TEXT NOT NULL, "
-            "topic_id TEXT NOT NULL, pid INTEGER NOT NULL, acquired_at REAL NOT NULL, "
-            "heartbeat_at REAL NOT NULL)"
-        )
-        conn.executemany(
-            "INSERT INTO locks (run_id, topic_id, pid, acquired_at, heartbeat_at) "
-            "VALUES (?, 'topic', 1, 0, 0)",
-            [("first",), ("second",)],
-        )
-        conn.commit()
-        conn.close()
-
-        with StateManager(db) as mgr:
-            assert mgr.get_locked_run_id("topic") == "first"
-        conn = sqlite3.connect(db)
-        indexes = {r[1] for r in conn.execute("PRAGMA index_list(locks)")}
-        conn.close()
-        assert "locks_topic_id" in indexes
-
 
 class TestStateManagerLocks:
     """StateManager handles locks atomically."""
@@ -412,7 +346,7 @@ class TestStateManagerDisasterPath:
         with StateManager(db) as mgr:
             mgr.create_run("run", "topic")
         conn = sqlite3.connect(db)
-        conn.execute("UPDATE runs SET status = 'cancelled'")  # a legacy status: open migrates
+        conn.execute("DROP TABLE active_processes")  # an incomplete schema: open writes
         conn.commit()
         conn.close()
         monkeypatch.setattr(state_module, "BUSY_TIMEOUT_S", 0.2)
@@ -429,7 +363,7 @@ class TestStateManagerDisasterPath:
         conn = sqlite3.connect(db)
         rows = conn.execute("SELECT run_id, status FROM runs").fetchall()
         conn.close()
-        assert rows == [("run", "cancelled")]
+        assert rows == [("run", "starting")]
 
     def test_recovery_keeps_a_readable_db_and_its_backup(self, tmp_path):
         db = tmp_path / "state.db"

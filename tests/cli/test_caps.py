@@ -173,7 +173,6 @@ def test_caps_on_off_reset_with_json(data_dir: Path, config: dict):
     assert off["enforced"] is False and off["source"] == "switch"
     on = json.loads(invoke(data_dir, "on", "--json").output)
     assert on["enforced"] is True and on["source"] == "switch"
-    config["budget"]["caps_enforced"] = False  # retired key: ignored
     reset = json.loads(invoke(data_dir, "reset", "--json").output)
     assert reset["enforced"] is True and reset["source"] == "config"
 

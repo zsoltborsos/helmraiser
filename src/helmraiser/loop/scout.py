@@ -731,7 +731,7 @@ def scout_due_at(
         for row in (scouts if scouts is not None else ledger.list_scouts(str(repo)))
         if (scouts is None or row["project"] == str(repo))
         and row["outcome"] == "succeeded"
-        and row.get("lens", "state") == lens
+        and row["lens"] == lens
     ]
     if not successful:
         return float("-inf")

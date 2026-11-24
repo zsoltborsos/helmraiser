@@ -40,8 +40,10 @@ and what comes next.
 3. **Exercise the widget actions on real runs.** Reject, plan approval, Drop and the
    report terminal have not been used from the Omarchy panel on real runs.
 4. **Evaluation pack.** A fixed set of replayed tasks with hidden checks, rerun against
-   one variant at a time and stored for comparison. First pass: `pi_rpc_implement` on
-   against off, which informs item 1.
+   one variant at a time and stored for comparison. The review replay exists
+   (`helmraiser eval review|report`): it reruns past reviews under reviewer variants.
+   Remaining: the implement-stage pass, first `pi_rpc_implement` on against off, which
+   informs item 1.
 
 ## Waiting
 

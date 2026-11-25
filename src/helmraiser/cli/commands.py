@@ -71,6 +71,7 @@ from helmraiser.code_snapshot import (
 from helmraiser.config import load_config, missing_models
 from helmraiser.isolation import Isolation, ProcessIsolation, for_level
 from helmraiser.ledger.db import (
+    NEW_RUN_STAGE,
     TERMINAL_RUN_STATUSES,
     Ledger,
     ProjectScope,
@@ -85,6 +86,7 @@ from helmraiser.loop import landing
 from helmraiser.loop.budget import completed_active_minutes
 from helmraiser.loop.cleanup import discard_landed_worktree
 from helmraiser.loop.delivery import open_pull_request, pr_body
+from helmraiser.loop.experiments import Fork, fork_decision
 from helmraiser.loop.intake import (
     IntakeOutcome,
     _intake_model_overrides,
@@ -1105,27 +1107,35 @@ def _task_skip(
     no_caps: bool,
     *,
     holds: HoldGate | None = None,
+    fork: Fork | None = None,
 ) -> tuple[dict[str, Any], str] | None:
     """Why ``work`` skips a task (invalid, quota, caps or Leeboard hold).
+
+    ``fork``: the task's fork under the active experiment (``fork_decision``). The
+    models and provider holds are then checked for the task as each of its runs would
+    get it: both arms of a pair, or the control arm of an unpaired run.
 
     Return (JSON fields, human text), or None when it may run; write nothing.
     """
     errors = validate_task(task)
     if errors:
         return {"errors": errors}, f"invalid: {'; '.join(errors)}"
-    missing = missing_models(config, WORK_MODEL_ROLES, task)
-    if missing:
-        return {
-            "reason": "models_not_configured",
-            "missing": missing,
-        }, models_not_configured_message(missing)
+    armed = fork.tasks(task, config) if fork is not None else [task]
+    for candidate in armed:
+        missing = missing_models(config, WORK_MODEL_ROLES, candidate)
+        if missing:
+            return {
+                "reason": "models_not_configured",
+                "missing": missing,
+            }, models_not_configured_message(missing)
     held_providers = ledger.provider_holds(datetime.now(UTC).timestamp())
     held = next(
         (
             (name, held_providers[name])
+            for candidate in armed
             for name in (
-                provider(task.models["implement"].render()),
-                provider(task.models["review"].render()),
+                provider(candidate.models["implement"].render()),
+                provider(candidate.models["review"].render()),
             )
             if name in held_providers
         ),
@@ -1385,7 +1395,9 @@ def work(
                 continue
             if not as_json:
                 console.print(
-                    f"[bold]resuming[/bold] {governed.task.task_id} run {resumed_id} "
+                    f"[bold]running[/bold] {governed.task.task_id} as run {resumed_id}"
+                    if resumable["stage"] == NEW_RUN_STAGE
+                    else f"[bold]resuming[/bold] {governed.task.task_id} run {resumed_id} "
                     f"at {resumable['stage']}"
                 )
             try:
@@ -1400,7 +1412,12 @@ def work(
         selected_task = _task_from_row(row, config)
         require_models(config, WORK_MODEL_ROLES, task=selected_task, as_json=as_json)
         task, routing_decisions = _dispatch_task(selected_task, ledger, config)
-        skip = _task_skip(task, ledger, config, no_caps, holds=holds)
+        # The fork is decided here, when the task is about to be claimed. A dry run
+        # shows the task as it is queued, with no arm.
+        fork = (
+            None if dry_run else fork_decision(task, ledger, config, datetime.now(UTC).timestamp())
+        )
+        skip = _task_skip(task, ledger, config, no_caps, holds=holds, fork=fork)
         if skip is not None:
             excluded_task_ids.add(task.task_id)
             payload, text = skip
@@ -1434,6 +1451,9 @@ def work(
                 typer.echo("--- prompt ---")
                 typer.echo(plan["prompt"])
             break
+        # A pair: this run is X and its claim records Y, which a later pass (or another
+        # worker child) starts as a resumable run.
+        arm, pair = fork.runs() if fork is not None else (None, None)
         governed = GovernedRun(
             task,
             config=config,
@@ -1443,6 +1463,8 @@ def work(
             data_dir=base,
             snapshot=str(row["snapshot"]),
             routing_decisions=routing_decisions,
+            arm=arm,
+            pair=pair,
             isolation=isolation,
         )
         if not as_json:
@@ -1539,7 +1561,8 @@ def _supervise(
 
     def skip(row: dict[str, Any]) -> tuple[dict[str, Any], str] | None:
         task, _decisions = _dispatch_task(_task_from_row(row, config), ledger, config)
-        return _task_skip(task, ledger, config, no_caps, holds=holds)
+        fork = fork_decision(task, ledger, config, datetime.now(UTC).timestamp())
+        return _task_skip(task, ledger, config, no_caps, holds=holds, fork=fork)
 
     def spawn(project: str, output: Path) -> subprocess.Popen[bytes]:
         argv = _child_argv(project, data_dir=base, no_caps=no_caps)
@@ -1838,7 +1861,7 @@ def _settle_run(
     summary_note: str | None = None,
 ) -> None:
     ledger.finish_run(run_id, status, failure_reason, ended_at=ended_at)
-    ledger.set_task_status(task.task_id, status)
+    ledger.set_task_status(task.task_id, status, run_id=run_id)
     state = StateManager(task.project / ".helmraiser" / "state.db")
     if state.get_run(run_id) is not None:
         state.update_run_status(run_id, STATE_STATUS.get(status, "failed"))

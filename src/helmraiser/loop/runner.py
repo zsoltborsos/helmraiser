@@ -39,7 +39,7 @@ from helmraiser.isolation.environment import command_environment
 from helmraiser.isolation.placeholders import PlaceholderCleanupError, remove_placeholders
 from helmraiser.isolation.process import tracked_denial_warnings, tracked_denials
 from helmraiser.isolation.setup import prepare_setup
-from helmraiser.ledger.db import Ledger
+from helmraiser.ledger.db import LIVE_RUN_STATUSES, NEW_RUN_STAGE, Ledger
 from helmraiser.ledger.event_logger import EventLogger
 from helmraiser.ledger.rundir import RunDir
 from helmraiser.leeboard import BriefResult, fetch_brief
@@ -53,7 +53,7 @@ from helmraiser.loop.budget import (
 from helmraiser.loop.delivery import open_pull_request, pr_body
 from helmraiser.loop.evidence import EvidenceResult, run_evidence
 from helmraiser.loop.excerpt import DEFAULT_EXCERPT_CHARS, DEFAULT_EXCERPT_LINES, FailureReport
-from helmraiser.loop.experiments import RunArm
+from helmraiser.loop.experiments import RunArm, RunPair, apply_arm
 from helmraiser.loop.hints import SETUP_READONLY_HINT, setup_readonly_line
 from helmraiser.loop.merge import MergeDecision, decide
 from helmraiser.loop.prompts import (
@@ -114,6 +114,9 @@ from helmraiser.task.project import (
 )
 
 RETRY_DELAY_SECONDS = 30.0
+# A pair's second run waits this long for its first run to record a base commit.
+PIN_POLL_SECONDS = 1.0
+PIN_WAIT_POLLS = 600
 _CONVENTIONAL_SUBJECT = re.compile(r"^[a-z]+(\([^)]+\))?!?: \S")
 DEFAULT_SETUP_TIMEOUT = 600
 BLOCKED_REASON_CHARS = 500
@@ -355,6 +358,36 @@ class _RoundAbandoned(Exception):
         self.reason = reason
 
 
+def pair_lock_topic(task_id: str, run_id: str) -> str:
+    """The state lock topic of a paired run of the task with frontmatter id ``task_id``."""
+    return f"{task_id}/{run_id}"
+
+
+def run_record(
+    task: TaskSpec, run_id: str, *, pi_version: str, started_at: float
+) -> dict[str, Any]:
+    """A new run's ledger row; ``task`` carries the run's arm, if it has one."""
+    return {
+        "run_id": run_id,
+        "task_id": task.task_id,
+        "project": str(task.project),
+        "status": "starting",
+        "policy": task.policy or "review",
+        "isolation": task.isolation,
+        "delivery": task.delivery,
+        "model_implement": task.models["implement"].render(),
+        "model_fallback": task.models["fallback"].render() if "fallback" in task.models else None,
+        "model_review": task.models["review"].render(),
+        "pi_version": pi_version,
+        "started_at": started_at,
+    }
+
+
+def arm_event(arm: RunArm, replaced: dict[str, Any]) -> dict[str, Any]:
+    """The payload of a run's ``experiment_arm`` event."""
+    return {"name": arm.name, "overrides": arm.overrides(), "replaced": replaced}
+
+
 class GovernedRun:
     def __init__(
         self,
@@ -368,6 +401,7 @@ class GovernedRun:
         snapshot: str | None = None,
         routing_decisions: list[dict[str, Any]] | None = None,
         arm: RunArm | None = None,
+        pair: RunPair | None = None,
         run_id: str | None = None,
         auth_check: AuthCheck | None = None,
         isolation: Isolation | None = None,
@@ -375,20 +409,17 @@ class GovernedRun:
         sleep: Sleep = asyncio.sleep,
         clock: Callable[[], float] = time.time,
     ) -> None:
+        if pair is not None and arm is None:
+            raise ValueError("a pair needs the arm of the run that claims it")
         self.snapshot = snapshot if snapshot is not None else render_task(task)
         self.arm = arm
+        # ``pair``: this run claims its task as a pair. It is run X, with ``arm``; its
+        # claim records run Y, with ``pair.arm`` applied to the same task.
+        self.pair = pair
+        self._unarmed_task = task
         self._arm_replaced: dict[str, Any] = {}
         if arm is not None:
-            if arm.models:
-                self._arm_replaced["models"] = {
-                    stage: task.models[stage].render() if stage in task.models else None
-                    for stage in arm.models
-                }
-            if arm.skills is not None:
-                self._arm_replaced["skills"] = "default"
-            if arm.pi_rpc_implement is not None:
-                self._arm_replaced["pi_rpc_implement"] = bool(config.get("pi_rpc_implement", False))
-            task = replace(task, models={**task.models, **arm.models})
+            task, self._arm_replaced = apply_arm(task, arm, config)
         self.task = task
         self.config = config
         self.ledger = ledger
@@ -399,6 +430,11 @@ class GovernedRun:
         self.project_notes = project_notes_for_body(task.project, task.body)
         self._leeboard_brief: BriefResult | None = None
         self.run_id = resolve_run_id(run_id)
+        # The state lock is unique per topic. An unpaired run locks its task id; a
+        # pair's two runs share a task, so each locks a topic of its own.
+        self.lock_topic = pair_lock_topic(task.id, self.run_id) if pair is not None else task.id
+        # The pair's other run, whose base commit this run starts from (a pair's run Y).
+        self._pin_to: str | None = None
         pi_bin = str(config.get("pi_bin", "pi"))
         self.auth_check: AuthCheck = auth_check or (lambda model: check_auth(model, pi_bin))
         defaults = load_project_defaults(task.project)
@@ -545,6 +581,11 @@ class GovernedRun:
             run_id=run_id,
             **overrides,
         )
+        paired = ledger.pair_for_run(run_id)
+        if paired is not None:
+            run.lock_topic = pair_lock_topic(task.id, run_id)
+            if row["stage"] == NEW_RUN_STAGE:
+                run._pin_to = str(paired["run_x"] if paired["run_y"] == run_id else paired["run_y"])
         run.resume_row = row
         run.resume_stage = str(row["stage"] or "implement")
         run.retried_from = str(row["failure_reason"]) if row["failure_reason"] else None
@@ -582,55 +623,103 @@ class GovernedRun:
         task = self.task
         self.started_at = self.clock()
         self.guard = BudgetGuard(task.budget, self.started_at, self.clock)
-        if not self.state.acquire_lock(self.run_id, task.id, os.getpid()):
-            raise TaskLocked(self.state.get_locked_run_id(task.id))
+        if not self.state.acquire_lock(self.run_id, self.lock_topic, os.getpid()):
+            raise TaskLocked(self.state.get_locked_run_id(self.lock_topic))
         self.locked = True
         try:
             self.ledger.claim_queued_run(
-                {
-                    "run_id": self.run_id,
-                    "task_id": task.task_id,
-                    "project": str(task.project),
-                    "status": "starting",
-                    "policy": task.policy or "review",
-                    "isolation": task.isolation,
-                    "delivery": task.delivery,
-                    "model_implement": task.models["implement"].render(),
-                    "model_fallback": (
-                        task.models["fallback"].render() if "fallback" in task.models else None
-                    ),
-                    "model_review": task.models["review"].render(),
-                    "pi_version": self.pi_version,
-                    "started_at": self.started_at,
-                },
+                run_record(
+                    task, self.run_id, pi_version=self.pi_version, started_at=self.started_at
+                ),
                 snapshot=self.snapshot,
                 config=self.config,
+                pair=self._pair_claim(),
             )
-            self.state.create_run(self.run_id, task.id)
+            self.state.create_run(self.run_id, self.lock_topic)
             self._event("run_start", {"task_id": task.task_id, "pi_version": self.pi_version})
             if self.arm is not None:
-                self._event(
-                    "experiment_arm",
-                    {
-                        "name": self.arm.name,
-                        "overrides": self.arm.overrides(),
-                        "replaced": self._arm_replaced,
-                    },
-                )
+                self._event("experiment_arm", arm_event(self.arm, self._arm_replaced))
             for decision in self.routing_decisions:
                 self._event("routing", decision)
             write_status(self.ledger, self.data_dir)
         except Exception:  # recording failed: do not leave the task claimed
-            self.state.release_lock(self.run_id, task.id)
+            self.state.release_lock(self.run_id, self.lock_topic)
             self.locked = False
             raise
+        return await self._run_fresh()
 
+    def _pair_claim(self) -> dict[str, Any] | None:
+        """What this run's claim records for its pair's other run (``claim_queued_run``):
+        that run's row and ``experiment_arm`` event, with its own arm applied to the
+        task as dispatched, and copies of this run's routing decisions."""
+        if self.pair is None or self.arm is None:
+            return None
+        arm = self.pair.arm
+        task, replaced = apply_arm(self._unarmed_task, arm, self.config)
+        return {
+            "experiment_id": self.pair.experiment_id,
+            "arm_x": self.arm.name,
+            "arm_y": arm.name,
+            "run": run_record(
+                task, resolve_run_id(), pi_version=self.pi_version, started_at=self.started_at
+            ),
+            "events": [
+                ("experiment_arm", arm_event(arm, replaced)),
+                *(("routing", decision) for decision in self.routing_decisions),
+            ],
+        }
+
+    async def _run_new(self) -> RunOutcome:
+        """Start a pair's second run, which its first run's claim recorded as
+        ``resuming`` at stage ``new``: a fresh pipeline run, not a resume."""
+        task = self.task
+        self.started_at = self.clock()
+        self.guard = BudgetGuard(task.budget, self.started_at, self.clock)
+        try:
+            self.ledger.update_run(
+                self.run_id,
+                status="starting",
+                stage=None,
+                started_at=self.started_at,
+                pi_version=self.pi_version,
+            )
+            self.ledger.set_task_status(task.task_id, "running", run_id=self.run_id)
+            self.state.create_run(self.run_id, self.lock_topic)
+            self._event("run_start", {"task_id": task.task_id, "pi_version": self.pi_version})
+            write_status(self.ledger, self.data_dir)
+        except Exception:  # as for a claimed run: reconcile closes it
+            self.state.release_lock(self.run_id, self.lock_topic)
+            self.locked = False
+            raise
+        return await self._run_fresh()
+
+    async def _pinned_base(self) -> tuple[str, str] | None:
+        """The base branch and commit a pair's second run starts from: those of the
+        first run, so that both arms start from identical code. Waits while that run
+        is live without a worktree. None for any other run, and when the first run
+        ended without a worktree: there is nothing to pin to."""
+        if self._pin_to is None:
+            return None
+        for _ in range(PIN_WAIT_POLLS):
+            row = self.ledger.get_run(self._pin_to)
+            if row is None:
+                return None
+            if row["base_commit"]:
+                return str(row["base_branch"]), str(row["base_commit"])
+            if row["status"] not in LIVE_RUN_STATUSES:
+                return None
+            await self.sleep(PIN_POLL_SECONDS)
+        raise _RunFailed("failed", "pair: the other run recorded no base commit to start from")
+
+    async def _run_fresh(self) -> RunOutcome:
+        """The pipeline of a run that has just been recorded as started."""
+        task = self.task
         status = "failed"
         reason: str | None = None
         try:
             self._preflight()
             self._check_tracked_denials()
-            self._create_worktree()
+            self._create_worktree(await self._pinned_base())
             self._materialise()
             self._run_setup()
             if task.policy == "approve-plan-first":
@@ -651,26 +740,28 @@ class GovernedRun:
         return self._close(status, reason)
 
     def claim_resume(self) -> bool:
-        if not self.state.acquire_lock(self.run_id, self.task.id, os.getpid()):
+        if not self.state.acquire_lock(self.run_id, self.lock_topic, os.getpid()):
             return False
         self.locked = True
         try:
             if self.ledger.claim_resumable(self.run_id, checked=True, config=self.config):
                 return True
         except BaseException:
-            self.state.release_lock(self.run_id, self.task.id)
+            self.state.release_lock(self.run_id, self.lock_topic)
             self.locked = False
             raise
-        self.state.release_lock(self.run_id, self.task.id)
+        self.state.release_lock(self.run_id, self.lock_topic)
         self.locked = False
         return False
 
     async def _run_resumed(self, row: dict[str, Any]) -> RunOutcome:
         task = self.task
         if not self.locked:
-            if not self.state.acquire_lock(self.run_id, task.id, os.getpid()):
-                raise TaskLocked(self.state.get_locked_run_id(task.id))
+            if not self.state.acquire_lock(self.run_id, self.lock_topic, os.getpid()):
+                raise TaskLocked(self.state.get_locked_run_id(self.lock_topic))
             self.locked = True
+        if self.resume_stage == NEW_RUN_STAGE:
+            return await self._run_new()
         self.started_at = self.clock()  # the time budget counts active time only
         prior_minutes = (
             completed_active_minutes(
@@ -713,7 +804,7 @@ class GovernedRun:
         self.ledger.update_run(
             self.run_id, status="running", stage=stage, ended_at=None, failure_reason=None
         )
-        self.ledger.set_task_status(task.task_id, "running")
+        self.ledger.set_task_status(task.task_id, "running", run_id=self.run_id)
         self.state.update_run_status(self.run_id, "running")
         self._event(
             "run_resume",
@@ -1100,7 +1191,9 @@ class GovernedRun:
             {"entries": {entry: files[:20] for entry, files in found.items()}},
         )
 
-    def _create_worktree(self) -> None:
+    def _create_worktree(self, pinned: tuple[str, str] | None = None) -> None:
+        """``pinned``: the base branch and commit to start from (``_pinned_base``),
+        instead of the tip of the task's base."""
         try:
             maintenance = self.worktrees.disable_auto_maintenance()
         except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
@@ -1111,11 +1204,18 @@ class GovernedRun:
                     "git_maintenance",
                     {"set": "maintenance.auto=false", "previous": maintenance["previous"]},
                 )
-        if self.task.delivery == "pr":
+        if self.task.delivery == "pr" and pinned is None:
             payload = self.worktrees.sync_base(base=self.task.base)
             self._event("base_sync", payload)
         try:
-            self.worktree = self.worktrees.create(self.task.id, self.run_id, base=self.task.base)
+            if pinned is None:
+                self.worktree = self.worktrees.create(
+                    self.task.id, self.run_id, base=self.task.base
+                )
+            else:
+                self.worktree = self.worktrees.create(
+                    self.task.id, self.run_id, base=pinned[0], base_commit=pinned[1]
+                )
         except RuntimeError as exc:
             raise _RunFailed("failed", f"worktree: {exc}") from exc
         meta = self.worktrees.metadata(self.run_id)
@@ -2403,7 +2503,7 @@ class GovernedRun:
         minutes = (self.clock() - self.started_at) / 60.0
         self.ledger.update_run(self.run_id, head_commit=self.head_commit, stage=None)
         self.ledger.finish_run(self.run_id, status, reason)
-        self.ledger.set_task_status(self.task.task_id, status)
+        self.ledger.set_task_status(self.task.task_id, status, run_id=self.run_id)
         if (
             status == "awaiting_approval"
             and self.pending_approval in ("plan", "merge", "scope")
@@ -2414,7 +2514,7 @@ class GovernedRun:
             self.state.update_run_status(self.run_id, STATE_STATUS.get(status, "failed"))
         finally:
             if self.locked:
-                self.state.release_lock(self.run_id, self.task.id)
+                self.state.release_lock(self.run_id, self.lock_topic)
         self._event(
             "run_end",
             {"status": status, "failure_reason": reason, "active_minutes": minutes},

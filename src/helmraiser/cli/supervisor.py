@@ -60,6 +60,7 @@ from helmraiser.code_snapshot import PACKAGE_PATH, source_repo
 from helmraiser.config import load_config
 from helmraiser.ledger.db import (
     IDLE_RUN_STATUSES,
+    RESUMING_RUN_STATUS,
     TERMINAL_RUN_STATUSES,
     Ledger,
     ProjectScope,
@@ -544,11 +545,8 @@ class Supervisor:
         try:
             state = StateManager(path)
             for run in self.ledger.list_runs(project=child.project):
-                task = self.ledger.get_task(str(run["task_id"]))
-                if task is None:
-                    continue
-                lock = state.get_lock(str(task["id"]))
-                if lock and lock["run_id"] == run["run_id"] and lock["pid"] == child.process.pid:
+                lock = state.get_run_lock(str(run["run_id"]))
+                if lock and lock["pid"] == child.process.pid:
                     return str(run["run_id"])
         except Exception:
             pass  # Optional metadata must not prevent an otherwise valid restart.
@@ -577,12 +575,36 @@ class Supervisor:
                 blocked.add(project)
                 continue
             try:
-                if len(children) >= effective_run_limit(Path(project), self.run_config):
+                pairs = [
+                    self.ledger.pair_for_run(c.run_id) if c.run_id is not None else None
+                    for c in children
+                ]
+                # Both runs of a pair take one slot.
+                slots = {
+                    ("pair", pair["id"]) if pair is not None else ("pid", child.process.pid)
+                    for child, pair in zip(children, pairs, strict=True)
+                }
+                if len(slots) >= effective_run_limit(
+                    Path(project), self.run_config
+                ) and not self._arm_waiting([pair for pair in pairs if pair is not None]):
                     blocked.add(project)
             except Exception as exc:
                 self._project_error(project, "task", exc)
                 blocked.add(project)
         return self.scope.without(blocked)
+
+    def _arm_waiting(self, pairs: list[dict[str, Any]]) -> bool:
+        """One of ``pairs`` (those of a project's children) has a run that waits for a
+        child: the second run before its start, or either run handed back. It shares
+        the slot of the pair's running run, so the project stays open at its run limit;
+        the ledger's own admission still holds the project's other tasks."""
+        running = {child.run_id for child in self.children}
+        for pair in pairs:
+            for run_id in (pair["run_x"], pair["run_y"]):
+                row = self.ledger.get_run(run_id) if run_id not in running else None
+                if row is not None and row["status"] == RESUMING_RUN_STATUS:
+                    return True
+        return False
 
     # ── starting children ─────────────────────────────────────────────
 

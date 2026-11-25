@@ -1,6 +1,6 @@
 # Helmraiser — Current State
 
-`helmraiser experiment start|stop|status` validates and freezes A/B definitions and reports pair counts; internal per-run arm application overrides models/thinking, skills and implement RPC, rejects merged implement/review model ID conflicts before sessions, records one `experiment_arm` event and survives continuation, without automatic arm assignment, forking, picking, automatic ending or quota-brake enforcement.
+`helmraiser experiment start|stop|status` validates and freezes A/B definitions and reports pair counts; internal per-run arm application overrides models/thinking, skills and implement RPC, rejects merged implement/review model ID conflicts before sessions, records one `experiment_arm` event and survives continuation. While an experiment is active, a queued task forks into a pair when a worker claims it (`loop/experiments.py` `fork_decision`): the claiming run X records run Y (`resuming` at stage `new`), the pair and Y's arm in one ledger transaction, Y runs the whole pipeline from X's base commit, both runs share one `max_runs_per_project` slot, and the task's status follows both runs. Tasks with `experiment: false`, plan-approval-first tasks, excluded projects and tasks that already have a pair do not fork; at or above the quota brake (or without a codex weekly reading) a task runs unpaired on arm A. Picking, blind display, automatic ending and `approve` refusing paired runs are not built: no experiment should be started yet.
 
 The ledger is at schema version 12, with `experiments` and `pairs` tables for live experiments (tables and ledger lifecycle methods); a version 11 ledger is backed up beside itself (`helmraiser.db.v11-<UTC time>.bak`) and upgraded on the first open with no live run (`starting`, `running`, `verifying`, `reviewing`, `aborting`), and until then opens at 11 with `Ledger.upgrade_pending` saying why.
 
@@ -92,6 +92,13 @@ enabled for the route in `SECURITY.md`. The remaining release item is in `TASKS.
 
 ## Known gaps
 
+- **Experiment pairs (forking is built, the pair lifecycle is not).**
+  - The spend projection counts one budget for a pair, although each arm has the task's full budget.
+  - The second run of a pair starts through the resumable-run path, which does not run the skip checks (`_task_skip`: models, provider quota holds, caps, Leeboard holds) again. Before the first run's claim, the models and provider holds were checked for both arms, caps and Leeboard holds once for the task.
+  - `work --max N` counts each arm as a run.
+  - `work --dry-run` shows a queued task without an arm.
+  - A claim refused with `experiment_changed` (the experiment ended between the fork decision and the claim) skips the task for that `work` invocation; under the supervisor its project then waits out the no-run backoff.
+  - A dependent task (`depends_on`) looks at the latest run of its dependency, which for a pair is one of two.
 - **The 11→12 ledger upgrade counts runs, not processes.** A running scout, a `work --once` child that has not yet recorded its run, or a worker that has not yet restarted onto the new code can still be on version 11 code when the upgrade happens; such a process fails the next time it opens the ledger.
 - **Failed reopened PR runs.** A reopened run that fails (including setup failure) cannot be retried, reworked or landed while its PR stays open; recovery is a hand commit on the PR branch or closing the PR.
 - **Git maintenance needs idle time.** A project that always has a live run never

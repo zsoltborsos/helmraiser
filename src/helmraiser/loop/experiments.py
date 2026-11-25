@@ -1,18 +1,29 @@
-"""Validation of frozen live experiment definitions and per-run arm values."""
+"""Live experiments: validation of frozen definitions, per-run arm values, and the
+decision whether a queued task forks into a pair."""
 
 from __future__ import annotations
 
 import math
+import random
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
+from helmraiser.ledger.db import Ledger
+from helmraiser.loop.spend import live_for, usage
 from helmraiser.pi import skills
 from helmraiser.task.loader import resolve_models
-from helmraiser.task.model import PROFILE_NAMES, ModelSpec
+from helmraiser.task.model import PROFILE_NAMES, ModelSpec, TaskSpec
+
+# Arm A is the control: today's setup.
+ARM_NAMES = ("A", "B")
+CONTROL_ARM = "A"
+# The quota brake reads the codex subscription's weekly window of ``spend.usage``.
+BRAKE_PROVIDER = "openai-codex"
+BRAKE_WINDOW = "week"
 
 
 class ExperimentError(ValueError):
@@ -69,6 +80,98 @@ class RunArm:
         if self.pi_rpc_implement is not None:
             result["pi_rpc_implement"] = self.pi_rpc_implement
         return result
+
+
+def apply_arm(
+    task: TaskSpec, arm: RunArm, config: dict[str, Any]
+) -> tuple[TaskSpec, dict[str, Any]]:
+    """``task`` with the arm's models, and the values the arm replaces (the
+    ``replaced`` field of the run's ``experiment_arm`` event)."""
+    replaced: dict[str, Any] = {}
+    if arm.models:
+        replaced["models"] = {
+            stage: task.models[stage].render() if stage in task.models else None
+            for stage in arm.models
+        }
+    if arm.skills is not None:
+        replaced["skills"] = "default"
+    if arm.pi_rpc_implement is not None:
+        replaced["pi_rpc_implement"] = bool(config.get("pi_rpc_implement", False))
+    return replace(task, models={**task.models, **arm.models}), replaced
+
+
+@dataclass(frozen=True)
+class RunPair:
+    """Given to the run that claims a task as a pair (run X): the experiment and the
+    arm of the pair's other run (run Y), which that claim records."""
+
+    experiment_id: int
+    arm: RunArm
+
+
+def draw_labels() -> tuple[str, str]:
+    """The arms behind the blind labels X and Y: a random draw per task."""
+    arm_x, arm_y = random.sample(ARM_NAMES, 2)
+    return arm_x, arm_y
+
+
+@dataclass(frozen=True)
+class Fork:
+    """How a queued task starts under the active experiment: as a pair, one run per
+    arm, or (``paired`` false, at or above the quota brake) as one unpaired run on
+    the control arm."""
+
+    experiment_id: int
+    arms: Mapping[str, RunArm]
+    paired: bool
+
+    def tasks(self, task: TaskSpec, config: dict[str, Any]) -> list[TaskSpec]:
+        """``task`` as each of its runs would get it, for the checks before a start."""
+        names = ARM_NAMES if self.paired else (CONTROL_ARM,)
+        return [apply_arm(task, self.arms[name], config)[0] for name in names]
+
+    def runs(self, labels: tuple[str, str] | None = None) -> tuple[RunArm, RunPair | None]:
+        """The claiming run's arm and, for a pair, what it records for the other run.
+        ``labels`` are the arms behind X and Y (default: ``draw_labels``)."""
+        if not self.paired:
+            return self.arms[CONTROL_ARM], None
+        arm_x, arm_y = labels or draw_labels()
+        return self.arms[arm_x], RunPair(self.experiment_id, self.arms[arm_y])
+
+
+def codex_weekly_fraction(ledger: Ledger, config: dict[str, Any], now: float) -> float | None:
+    """The codex weekly usage fraction the quota brake compares; None without a reading."""
+    readings = usage(ledger, config, now, live=live_for(ledger, config, now))
+    fraction = ((readings.get(BRAKE_PROVIDER) or {}).get(BRAKE_WINDOW) or {}).get("fraction")
+    return None if fraction is None else float(fraction)
+
+
+def fork_decision(
+    task: TaskSpec, ledger: Ledger, config: dict[str, Any], now: float
+) -> Fork | None:
+    """Decide, when a worker is about to claim queued ``task``, whether it forks.
+
+    None: the task runs as without experiments, with no arm. That is so when the
+    ledger has no experiment tables yet or no experiment is active, the task sets
+    ``experiment: false`` or is plan-approval-first, its project is excluded, or the
+    experiment already has a pair for it (a re-queued task). Otherwise the task forks
+    into a pair, unless codex weekly usage is at or above the experiment's quota brake
+    or has no reading: then it runs unpaired on the control arm.
+    """
+    if not ledger.experiments_available:
+        return None
+    experiment = ledger.active_experiment()
+    if experiment is None or task.experiment is False or task.policy == "approve-plan-first":
+        return None
+    # Exclusions are stored resolved.
+    if str(task.project.expanduser().resolve()) in experiment["exclude_projects"]:
+        return None
+    if ledger.get_pair(int(experiment["id"]), task.task_id) is not None:
+        return None
+    arms = {name: RunArm.from_overrides(name, experiment["arms"][name]) for name in ARM_NAMES}
+    fraction = codex_weekly_fraction(ledger, config, now)
+    paired = fraction is not None and fraction < float(experiment["quota_brake"])
+    return Fork(int(experiment["id"]), arms, paired)
 
 
 def _mapping(value: Any, key: str, allowed: set[str]) -> Mapping[str, Any]:

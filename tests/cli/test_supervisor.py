@@ -14,6 +14,7 @@ import signal
 import sqlite3
 import subprocess
 import sys
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -419,6 +420,135 @@ class TestSlots:
         result, _ = supervise(ledger, data_dir, harness, watch=True, max_runs=1)
 
         assert len(harness.spawned) == 1 and len(result.outcomes) == 1
+
+
+def pair_spawn(harness: Harness, experiment_id: int) -> Callable[[str, Path], FakeChild]:
+    """Children of an active experiment: one claims a queued task as a pair and runs X;
+    another starts Y as a resumable run. Each run locks a topic of its own."""
+    ledger = harness.ledger
+
+    def spawn(project: str, output: Path) -> FakeChild:
+        config = harness.run_config
+        pid = 1000 + len(harness.children)
+        state = StateManager(Path(project) / ".helmraiser/state.db")
+        entry: dict[str, Any] = {"project": project, "at": harness.now}
+        resumable = ledger.next_resumable(project=project, config=config)
+        if resumable is not None:
+            run_id, task_id = str(resumable["run_id"]), str(resumable["task_id"])
+            topic = f"{task_id}/{run_id}"
+            assert state.acquire_lock(run_id, topic, pid)
+            assert ledger.claim_resumable(run_id, checked=True, config=config)
+            entry["resumed"] = run_id
+        else:
+            row = ledger.next_queued(project=project, config=config)
+            assert row is not None, f"nothing to run in {project}"
+            task_id, name = str(row["task_id"]), str(row["id"])
+            run_id, topic = f"x-{name}", f"{task_id}/x-{name}"
+            assert state.acquire_lock(run_id, topic, pid)
+            ledger.claim_queued_run(
+                run_row(run_id, task_id, project, "starting"),
+                snapshot=str(row["snapshot"]),
+                config=config,
+                pair={
+                    "experiment_id": experiment_id,
+                    "arm_x": "A",
+                    "arm_y": "B",
+                    "run": run_row(f"y-{name}", task_id, project),
+                    "events": [],
+                },
+            )
+            entry["task_id"] = task_id
+
+        def finish() -> int:
+            state.release_lock(run_id, topic)
+            ledger.finish_run(run_id, "landed")
+            ledger.set_task_status(task_id, "landed", run_id=run_id)
+            outcome = {
+                "run_id": run_id,
+                "task_id": task_id,
+                "status": "landed",
+                "iterations": 1,
+                "cost_usd": 0.25,
+                "minutes": 1.0,
+            }
+            output.write_text(json.dumps(outcome) + "\n")
+            return 0
+
+        child = FakeChild(harness, pid, finish, project)
+        harness.spawned.append(entry)
+        harness.children.append(child)
+        harness.max_alive = max(harness.max_alive, len(harness.alive()))
+        return child
+
+    return spawn
+
+
+class TestPairSlots:
+    """Both runs of a pair take one ``max_runs_per_project`` slot and one
+    ``max_parallel_runs`` slot each."""
+
+    @pytest.fixture
+    def experiment(self, ledger: Ledger) -> int:
+        return ledger.start_experiment("e", {"A": {}, "B": {}}, quota_brake=0.85)
+
+    def test_second_run_starts_beside_the_first_at_limit_one(
+        self, ledger: Ledger, data_dir: Path, harness: Harness, tmp_path: Path, experiment: int
+    ):
+        first = queue(ledger, tmp_path, "first", "critical")
+        queue(ledger, tmp_path, "second")
+
+        result, _ = supervise(
+            ledger, data_dir, harness, max_parallel=4, spawn=pair_spawn(harness, experiment)
+        )
+
+        project = str(tmp_path)
+        assert harness.spawned == [
+            {"project": project, "at": 0.0, "task_id": first},
+            {"project": project, "at": 0.0, "resumed": "y-first"},
+            # The project's other task waits for both runs of the pair.
+            {"project": project, "at": 5.0, "task_id": harness.spawned[2]["task_id"]},
+            {"project": project, "at": 5.0, "resumed": "y-second"},
+        ]
+        assert harness.max_alive == 2
+        assert sorted(o["run_id"] for o in result.outcomes) == [
+            "x-first",
+            "x-second",
+            "y-first",
+            "y-second",
+        ]
+        assert {t["status"] for t in ledger.list_tasks()} == {"landed"}
+
+    def test_each_run_takes_a_parallel_slot(
+        self, ledger: Ledger, data_dir: Path, harness: Harness, tmp_path: Path, experiment: int
+    ):
+        queue(ledger, tmp_path, "only")
+
+        supervise(ledger, data_dir, harness, max_parallel=1, spawn=pair_spawn(harness, experiment))
+
+        assert [(e["at"], e.get("resumed")) for e in harness.spawned] == [
+            (0.0, None),
+            (5.0, "y-only"),
+        ]
+        assert harness.max_alive == 1
+
+    def test_two_pairs_fill_two_project_slots(
+        self, ledger: Ledger, data_dir: Path, harness: Harness, tmp_path: Path, experiment: int
+    ):
+        for id in ("a", "b", "c"):
+            spec = make_spec(tmp_path, id, paths=(f"{id}/**",))
+            ledger.upsert_task(spec, render_task(spec))
+
+        supervise(
+            ledger,
+            data_dir,
+            harness,
+            max_parallel=8,
+            run_config={"max_runs_per_project": 2},
+            spawn=pair_spawn(harness, experiment),
+        )
+
+        assert [entry["at"] for entry in harness.spawned] == [0, 0, 0, 0, 5, 5]
+        assert harness.max_alive == 4
 
 
 class TestIdle:
@@ -2013,6 +2143,79 @@ def test_real_disjoint_siblings_overlap_at_plan(
     with Ledger(data_dir / "helmraiser.db") as ledger:
         assert len(ledger.list_runs(status="awaiting_approval")) == 2
         assert ledger.list_tasks(status="queued")[0]["id"] == "three"
+
+
+def test_real_children_run_both_arms_of_a_pair_at_once(
+    tmp_project, data_dir, config, fake_pi, tmp_path, monkeypatch
+):
+    """Under an active experiment one child claims the queued task as a pair, and a second
+    child starts the other arm beside it at the default limit of one run per project."""
+    monkeypatch.setattr(commands, "get_intake_adapter", lambda config: None)
+    subscriptions = {"opencode-go": {"live": None}, "openai-codex": {"live": "omarchy-codex"}}
+    child_config = tmp_path / "pair-config"
+    child_config.mkdir()
+    settings = {
+        "profiles": configured_test_config()["profiles"],
+        "notify": False,
+        "subscriptions": subscriptions,
+    }
+    (child_config / "config.json").write_text(json.dumps(settings))
+    monkeypatch.setenv("HELMRAISER_CONFIG_DIR", str(child_config))
+    monkeypatch.setenv("PYTHONPATH", str(Path(helmraiser.__file__).resolve().parents[1]))
+    config["subscriptions"] = subscriptions
+    config["worker_poll_seconds"] = 1
+    # The brake's reading, below it: a cached live figure that outlasts the test, so
+    # neither the supervisor nor a child fetches one.
+    now = time.time()
+    live = {"week": {"fraction": 0.2, "resets_at": now + 86400}}
+    (data_dir / "live-usage.json").write_text(
+        json.dumps({"fetched_at": now + 3600, "openai-codex": live})
+    )
+    # Each implement session waits for the other arm's: they overlap or the test fails.
+    barrier = {"pattern": "*-implement", "count": 2, "timeout": 30}
+    fake_pi.write_script(
+        {
+            "default": {"cost": 0.01},
+            "sessions": {
+                "*-implement": {
+                    "cost": 0.01,
+                    "files": [["done.txt", "ok\n"]],
+                    "wait_for_sessions": barrier,
+                }
+            },
+        }
+    )
+    path = tmp_path / "tasks" / "pair.md"
+    path.parent.mkdir()
+    path.write_text(TASK.format(task_id="pair", project=tmp_project), encoding="utf-8")
+    queued = runner.invoke(
+        app, ["intake", str(path), "--yes", "--json", "--data-dir", str(data_dir)]
+    )
+    assert queued.exit_code == 0, queued.output
+    task_id = json.loads(queued.output)["task_id"]
+    with Ledger(data_dir / "helmraiser.db") as ledger:
+        arms = {"A": {}, "B": {"skills": "none"}}
+        experiment_id = ledger.start_experiment("e", arms, quota_brake=0.85)
+
+    result = work("--max-parallel", "2", "--json", data_dir=data_dir)
+
+    assert result.exit_code == 0, result.output
+    lines = events(result.output)
+    kinds = [next(iter(e)) for e in lines if "started" in e or "finished" in e]
+    assert kinds == ["started", "started", "finished", "finished"]
+    with Ledger(data_dir / "helmraiser.db") as ledger:
+        pair = ledger.get_pair(experiment_id, task_id)
+        runs = {run["run_id"]: run for run in ledger.list_runs()}
+        assert set(runs) == {pair["run_x"], pair["run_y"]}
+        assert {run["status"] for run in runs.values()} == {"awaiting_approval"}
+        assert runs[pair["run_x"]]["base_commit"] == runs[pair["run_y"]]["base_commit"]
+        assert "run_resume" not in [e["type"] for e in ledger.events(pair["run_y"])]
+        assert ledger.get_task(task_id)["status"] == "awaiting_approval"
+    # The second child was started for the pair's waiting run.
+    started = [e["started"]["run_id"] for e in lines if "started" in e]
+    assert started == [None, pair["run_y"]]
+    assert sorted(run["run_id"] for run in lines[-1]["runs"]) == sorted(runs)
+    assert not list((data_dir / "worker-children").iterdir())
 
 
 def test_depends_on_supervisor_skips_held(

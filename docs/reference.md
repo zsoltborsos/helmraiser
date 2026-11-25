@@ -82,7 +82,8 @@ All sessions in that run follow the arm's skill mode:
 
 Explicit `pi_rpc_implement` overrides (including `false`) apply only to implement
 sessions, including feedback and fallback sessions; plan and review never use RPC.
-One `experiment_arm` event at run start records the arm name, normalized overrides
+One `experiment_arm` event at run start (for a pair's second run, at the claim that
+records it) records the arm name, normalized overrides
 and the original values replaced, even if preflight then fails. Continuation via
 `GovernedRun.resume()` retains the recorded arm without emitting another arm event.
 
@@ -93,9 +94,61 @@ An unset end date is shown explicitly. `quota_brake` defaults to 0.85 and must b
 finite, greater than zero and at most one. `exclude_projects` defaults to an empty
 list; nonblank paths are expanded and resolved before storage.
 
-Arm application is available internally, but `experiment start` does not create or
-assign paired runs. Forking, picking, automatic end conditions and quota-brake
-enforcement are not built yet.
+### Forking a task into a pair
+
+While an experiment is active, a queued task **forks** when a worker starts it: it runs
+as a **pair**, two runs of the one task, one per arm. `intake` and the queue do not
+change. The fork is decided when `work` (or a worker child) is about to claim the task,
+so `experiment stop`, the quota brake and the exclusions also apply to tasks that were
+queued earlier.
+
+A task does not fork, and runs as it does without experiments (one run, no arm), when:
+
+- no experiment is active, or the ledger's upgrade to version 12 is still pending;
+- its project is in `exclude_projects` (resolved paths are compared);
+- its task file sets `experiment: false`;
+- its policy is `approve-plan-first`;
+- the experiment already has a pair for it: a task that is queued again runs once.
+
+**Quota brake.** The brake reads the `openai-codex` subscription's weekly usage
+fraction (the `week` window of `status`). At or above `quota_brake`, or without a
+reading, the task runs **unpaired**: one run on arm A, with its `experiment_arm` event
+and no pair.
+
+**The pair.** The run that claims the task is run X. In the same ledger transaction its
+claim records run Y (status `resuming`, stage `new`), the pair (`run_x`, `run_y`,
+`arm_x`, `arm_y`), Y's `experiment_arm` event and copies of X's `routing` events. Which
+arm is X is a random draw per task. The worker starts Y as it starts a run handed back
+to it: in the next pass of `work`, or in another worker child beside X. Y is not a
+resume: it runs the whole pipeline from the start (`run_start`, no `run_resume`) with
+its own arm, worktree, branch and budget. Worktree and branch names carry the task id
+and the run ID, as for every run, and no arm.
+
+Y's worktree starts from X's base branch and base commit, not from the current tip of
+the base, so both arms start from the same code, and Y skips the PR base
+synchronization that X already did. If X is still starting, Y waits for it to record
+its base, for at most 10 minutes; then Y fails with `pair: …`. If X ended without a
+worktree (for example a failed preflight), Y starts from the base's current tip.
+
+If the experiment ended, or got a pair for the task, between the decision and the
+claim, the claim is refused (`experiment_changed`); the task stays queued and the next
+pass decides again.
+
+**Slots and holds.** The two runs take one `max_runs_per_project` slot together and one
+`max_parallel_runs` slot each. They do not hold each other on declared paths or
+dependencies. The project's other tasks are held as by any nonterminal run, until both
+runs are over. Before it starts a task that would fork, `work` checks the configured
+models and the provider quota holds for the task under each arm that would run: both,
+or only arm A above the brake.
+
+**Task status.** While both runs of a pair are nonterminal, the task shows the
+strongest of `running`, `resuming` and `awaiting_approval` among them. With one run
+left nonterminal it shows that run's status, and with none the status of the run that
+ended last.
+
+`work --dry-run` shows a queued task as it is queued, without an arm. Picking a pair,
+blind display, automatic end conditions and `approve` refusing paired runs are not built
+yet.
 
 ## Requirements
 
@@ -542,6 +595,7 @@ punctuation-only input prints an empty line. Leave `test_slug.py` unchanged.
 | `policy` | to queue | `auto`, `review` or `approve-plan-first` |
 | `origin` | no | Review origin as `{kind: claude-code | fo, session: <id>}`; `session` is a non-empty string of at most 1024 characters with no control characters |
 | `plan` | no | `true` runs the `plan` profile before implementation without waiting for plan approval; default `false` |
+| `experiment` | no | `false` keeps the task out of the active [experiment](#experiments): it runs once, with no arm; must be a boolean, default `true` |
 | `delivery` | no | `merge` (default) or `pr`; new PR runs safely synchronize the base from its configured upstream (see [Policies](#policies)) |
 | `base` | no | Local branch from which to create the run worktree and target delivery; defaults to the primary checkout's current branch; PR synchronization never resets an ahead/diverged base |
 | `isolation` | no | `process` (default), `none` or `vm`; intake keeps the file's isolation unless the proposal is stronger |
@@ -892,7 +946,8 @@ whole nested dictionaries.
   it is not an enforced model-selection filter.
 
 - **Worker settings.** `max_runs_per_project` (default 1) limits nonterminal runs per
-  project; a top-level setting of the same name in `project.toml` overrides it. Both
+  project (the two runs of an experiment's pair count as one); a top-level setting of
+  the same name in `project.toml` overrides it. Both
   values must be positive integers. `max_parallel_runs` is how many child processes the long-running worker
   (`work --watch`, `worker start`) runs at once; `--max-parallel N` overrides it for one
   invocation. `worker_poll_seconds` is how often it re-checks the queue while nothing is
@@ -1913,7 +1968,7 @@ The `status.json` object has these fields:
 | `held` | list | Every held queued task: `task_id`, `id`, `title`, `project`, plus the same hold payload as `queue_next[].held_by`; dependency-only holds have no holder run fields |
 | `never_startable` | list | With caps enforced, every queued task whose projected usage alone reaches `stop_at`, so `work` never starts it: `task_id`, `id`, `title`, `project`, `reason` (`never_startable:<provider>:<window>`), `model` (whose monthly limit is used), `projected` (fraction of the window), `projection_usd`, `stop_at`, and `text` (what to change). Empty with caps off |
 | `running` | list | One object per run that is neither terminal, awaiting approval nor resuming: `run_id`, `task`, `project`, `id`, `title`, `stage`, `iteration` (count so far), `cost_usd`, `minutes` since start. `id` and `title` are the task's short id and title from the ledger, or `null` when the task row is missing |
-| `resuming` | list | One object per run handed back to the worker (see [Resuming runs](#resuming-runs)): `run_id`, `task`, `project`, `id`, `title`, and `stage`, where the worker resumes it (`start`, `implement` or `verify`). `held_by` is `null` when no project-admission hold prevents resuming, otherwise the hold preventing this run from resuming now, using the same shape as `queue_next[].held_by` |
+| `resuming` | list | One object per run handed back to the worker (see [Resuming runs](#resuming-runs)): `run_id`, `task`, `project`, `id`, `title`, and `stage`, where the worker resumes it (`start`, `implement` or `verify`; `new` for a pair's second run that has not started, see [Forking a task into a pair](#forking-a-task-into-a-pair)). `held_by` is `null` when no project-admission hold prevents resuming, otherwise the hold preventing this run from resuming now, using the same shape as `queue_next[].held_by` |
 | `reworks` | list | Reworked active/awaiting runs and terminal runs from the last 24h: `run_id`, `task`, `status`, `rework_rounds`, and ordered `reworks` requests with full notes. Reworked `running`/`resuming` rows also include `rework_rounds` and `reworks`; unrelated rows keep their shape |
 | `awaiting_count` | integer | Count of runs waiting for `helmraiser approve`, `reject`, or merge `rework`; rows are in the CLI's `awaiting` list |
 | `failed_24h_count` | integer | Count of runs that ended as `failed` in the last 24 hours; rows are in the CLI's `failed` list |
@@ -2392,7 +2447,8 @@ each run in its own child process (`python -m helmraiser work --once --json --pr
 <repo>` with the same data directory and caps flag), up to
 `max_parallel_runs` children at once globally. Independently, `max_runs_per_project`
 limits each project's nonterminal runs (default 1); higher limits permit only opted-in,
-disjoint, dependency-independent tasks. A fresh child temporarily blocks further
+disjoint, dependency-independent tasks. The two runs of an experiment's pair take one of
+those project slots together and a child each. A fresh child temporarily blocks further
 starts of its project until its run is registered through its task lock and PID. Each time a slot is
 free it starts projects with a run handed back to the worker first (a plan approval,
 `rework`, or `retry`), then queued tasks. Only after runnable work is exhausted, it fills spare slots

@@ -104,7 +104,9 @@ def abort_run(
                 and not is_process_alive(worker_pid)
             ):
                 ledger.finish_run(canonical_run_id, "aborted", "aborted: no worker alive")
-                ledger.set_task_status(str(ledger_run["task_id"]), "aborted")
+                ledger.set_task_status(
+                    str(ledger_run["task_id"]), "aborted", run_id=canonical_run_id
+                )
                 try:
                     restamp_summary(RunDir(canonical_run_id, ledger_path.parent), "aborted")
                 except OSError:

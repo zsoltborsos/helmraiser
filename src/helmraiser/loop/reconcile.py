@@ -28,6 +28,8 @@ class PhantomRun:
     worker_pid: int | None
     lease: ProcessLease | None = None
     worktree_path: str | None = None
+    # The topic of the state lock the run holds, when it holds one.
+    lock_topic: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         lease = self.lease
@@ -80,13 +82,16 @@ def find_phantom_runs(
         topic_id = str(task["id"]) if task is not None else task_id
         state_path = _state_path(project)
         worker_pid: int | None = None
+        lock_topic: str | None = None
         lease: ProcessLease | None = None
         if state_path.is_file():
             state = StateManager(state_path)
-            lock = state.get_lock(topic_id)
-            # A lock held by another run of the same task is not this run's worker.
-            if lock is not None and str(lock["run_id"]) == str(run["run_id"]):
+            # The run's own lock: one held by another run of the task is not its worker,
+            # and a paired run's lock topic is not its task id.
+            lock = state.get_run_lock(str(run["run_id"]))
+            if lock is not None:
                 worker_pid = int(lock["pid"])
+                lock_topic = str(lock["topic_id"])
             lease = state.get_process_lease(str(run["run_id"]))
         if (
             worker_pid is not None
@@ -106,6 +111,7 @@ def find_phantom_runs(
                 worktree_path=(
                     str(run["worktree_path"]) if run.get("worktree_path") is not None else None
                 ),
+                lock_topic=lock_topic,
             )
         )
     return phantoms
@@ -144,14 +150,14 @@ def reconcile(
         worker = str(phantom.worker_pid) if phantom.worker_pid is not None else "unknown"
         reason = f"orphaned: worker {worker} is gone"
         ledger.finish_run(phantom.run_id, "failed", reason)
-        ledger.set_task_status(phantom.task_id, "failed")
+        ledger.set_task_status(phantom.task_id, "failed", run_id=phantom.run_id)
         if state.get_run(phantom.run_id) is not None:
             state.update_run_status(phantom.run_id, "failed")
         try:
             restamp_summary(RunDir(phantom.run_id, ledger.db_path.parent), "failed")
         except OSError:
             pass
-        state.release_lock(phantom.run_id, phantom.topic_id)
+        state.release_lock(phantom.run_id, phantom.lock_topic or phantom.topic_id)
         ledger.append_event(
             phantom.run_id,
             "helmraiser",

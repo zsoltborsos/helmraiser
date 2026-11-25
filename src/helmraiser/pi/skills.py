@@ -2,7 +2,9 @@
 
 A stage whose folder ``~/.local/share/helmraiser/skills/<stage>/`` exists runs with
 ``--no-skills``, one ``--skill`` per skill directory in the folder, then the project's
-own skills. Without the folder pi discovers skills itself. Process isolation opens the
+own skills. Without the folder pi discovers skills itself. Arms may instead select
+project-only (``none``), pi discovery (``discover``), or a named worker skill set.
+Missing named stages are project-only, never discovery. Process isolation opens the
 passed skill directories for reading (``skill_read_paths``).
 """
 
@@ -76,16 +78,25 @@ def argv_skill_dirs(argv: list[str]) -> list[Path]:
     return dirs
 
 
-def stage_skill_args(stage: str, cwd: Path, *, checkout: Path | None = None) -> tuple[str, ...]:
-    """The pi skill flags for a ``stage`` session in ``cwd``; empty without the stage
-    folder. Skills are the folder's children holding ``SKILL.md`` (sorted, symlinks
-    followed), then the project's own from ``cwd``. With ``checkout`` (a dry run, before
-    the worktree ``cwd`` exists) the project's skills are found there and passed at the
-    same place under ``cwd``."""
-    folder = SKILLS_ROOT / stage
-    if not folder.is_dir():
+def stage_skill_args(
+    stage: str, cwd: Path, *, checkout: Path | None = None, skills: str = "default"
+) -> tuple[str, ...]:
+    """Worker skills (sorted children holding ``SKILL.md``), then project skills.
+
+    Only ``default`` falls back to discovery for a missing stage; ``discover`` always
+    delegates to pi, and ``none`` selects project skills only. With ``checkout`` (before
+    worktree creation), project paths are remapped to the same place under ``cwd``.
+    """
+    if skills == "discover":
         return ()
-    own = sorted(child for child in folder.iterdir() if (child / "SKILL.md").is_file())
+    folder = SKILLS_ROOT / stage if skills == "default" else SKILL_SETS_ROOT / skills / stage
+    if skills == "default" and not folder.is_dir():
+        return ()
+    own = (
+        sorted(child for child in folder.iterdir() if (child / "SKILL.md").is_file())
+        if skills != "none" and folder.is_dir()
+        else []
+    )
     if checkout is None:
         project = project_skill_dirs(cwd)
     else:

@@ -20,6 +20,12 @@ and what comes next.
 
 ## Next
 
+- **A worker restart that cannot leave no worker.** `worker stop` only writes the stop
+  file and returns; a `worker start` right after it fails "already running" while the old
+  worker still lives, and that worker then exits on the stop file. On 2026-11-25 this left
+  no worker for 46 minutes (11:37–12:23 UTC). Add `worker restart` (or `stop --wait`)
+  that waits for the exit, then starts; note in the docs that a code change on main
+  already restarts the worker.
 0. **Make the suite independent of the working directory.** Run from the primary
    checkout, 16 doctor and no-Leeboard tests fail: doctor reads the untracked
    `.helmraiser/project.toml` there (`delivery = "pr"`), adds the `gh` check, and the

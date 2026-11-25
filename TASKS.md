@@ -74,12 +74,12 @@ Slices, in order (1, 3 and 4 interactive; 2, 5 and 6 may run as Helmraiser tasks
 3. Done (163454b): a task forks into a pair when a worker claims it (one task row, two
    runs; Y from X's base commit), pair slot, sibling exemption, brake, exclusions,
    `experiment: false`. Known gaps are in CURRENT_STATE.md.
-4. Pair lifecycle: blind `wait`/`show`/`diff`, auto-pick, retry/abort/drop, `pick-packet`,
+4. Building (4a lifecycle and picking, then 4b blind views). Pair lifecycle: blind `wait`/`show`/`diff`, auto-pick, retry/abort/drop, `pick-packet`,
    `pick`, `approve` refused.
    Traps found in review: `ledger/dependencies.py` judges a task by its latest run, so a
    rejected loser can block dependents; `pick` must reject the loser before approving the
    winner, or the status precedence leaves the task `failed`.
-5. `experiment report` with the sign test.
+5. `experiment report` with the sign test: queued as Helmraiser task `experiment-report`.
 6. Docs: reference, GLOSSARY (experiment, arm, control, pair, pick, decided pair, unpaired
    run), the helmraiser-tasks "Picking a pair" section with the judge prompt, the widget's
    "pair awaiting pick" label.

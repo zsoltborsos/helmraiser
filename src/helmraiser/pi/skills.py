@@ -15,6 +15,7 @@ PROJECT_SKILL_ROOTS: tuple[str, ...] = (".pi/skills", ".agents/skills")
 
 # One folder per stage: intake, scout, plan, implement (the fallback too) and review.
 SKILLS_ROOT = Path.home() / ".local" / "share" / "helmraiser" / "skills"
+SKILL_SETS_ROOT = Path.home() / ".local" / "share" / "helmraiser" / "skill-sets"
 
 
 def project_skill_dirs(start: Path) -> list[Path]:

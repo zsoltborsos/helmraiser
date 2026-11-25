@@ -69,6 +69,7 @@ def isolate_default_paths(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "CONFIG_FILE", config_dir / "config.json")
     # No stage skill folders unless a test makes them (the real ones change pi's argv).
     monkeypatch.setattr(skills, "SKILLS_ROOT", tmp_path / "stage-skills")
+    monkeypatch.setattr(skills, "SKILL_SETS_ROOT", tmp_path / "skill-sets")
     try:
         yield
     finally:

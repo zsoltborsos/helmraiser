@@ -50,6 +50,7 @@ def land(
         if pending is None or pending["kind"] != "merge":
             kind = pending["kind"] if pending else "none"
             fail(f"run {run_id} is awaiting_approval with pending approval {kind}, not merge")
+        commands._refuse_pair_arm(ledger, run_id, as_json=as_json, failure=fail)
     elif row["status"] != "landed" or not row.get("pr_url"):
         fail(
             f"run {run_id} has status {row['status']}; requires awaiting_approval with merge approval or landed with pr_url"

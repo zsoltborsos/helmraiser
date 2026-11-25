@@ -108,7 +108,12 @@ A task does not fork, and runs as it does without experiments (one run, no arm),
 - its project is in `exclude_projects` (resolved paths are compared);
 - its task file sets `experiment: false`;
 - its policy is `approve-plan-first`;
-- the experiment already has a pair for it: a task that is queued again runs once.
+- the experiment already has a pair for it that is picked, or that has a run which did
+  not end as failed or aborted: a task that is queued again runs once. (An unpicked
+  pair whose two runs both failed is claimed again, see
+  [Retrying a pair](#retrying-a-pair).)
+- the experiment's `end_at` has passed: this claim ends the experiment (see
+  [End conditions](#end-conditions)).
 
 **Quota brake.** The brake reads the `openai-codex` subscription's weekly usage
 fraction (the `week` window of `status`). At or above `quota_brake`, or without a
@@ -130,9 +135,9 @@ synchronization that X already did. If X is still starting, Y waits for it to re
 its base, for at most 10 minutes; then Y fails with `pair: …`. If X ended without a
 worktree (for example a failed preflight), Y starts from the base's current tip.
 
-If the experiment ended, or got a pair for the task, between the decision and the
-claim, the claim is refused (`experiment_changed`); the task stays queued and the next
-pass decides again.
+If the experiment ended, or its pair for the task changed (a new pair, a pick, or a run
+that is not over), between the decision and the claim, the claim is refused
+(`experiment_changed`); the task stays queued and the next pass decides again.
 
 **Slots and holds.** The two runs take one `max_runs_per_project` slot together and one
 `max_parallel_runs` slot each. They do not hold each other on declared paths or
@@ -146,9 +151,151 @@ strongest of `running`, `resuming` and `awaiting_approval` among them. With one 
 left nonterminal it shows that run's status, and with none the status of the run that
 ended last.
 
-`work --dry-run` shows a queued task as it is queued, without an arm. Picking a pair,
-blind display, automatic end conditions and `approve` refusing paired runs are not built
-yet.
+**Merge approval.** One run of a pair never lands by itself: under `policy: auto` it
+also parks for its merge approval, and waits for the pick.
+
+`work --dry-run` shows a queued task as it is queued, without an arm.
+
+### Picking a pair
+
+A pair is decided by a **pick**: `X`, `Y` or `tie`. X and Y are the pair's blind labels.
+Until the pick, the commands and the status output name a paired run by its label, never
+by its arm.
+
+```bash
+helmraiser pick <task> X|Y|tie --reason "<why>" --judge "<harness/agent (model, effort)>" [--json]
+```
+
+`<task>` is a task id (the short id or `<project-key>:<id>`) or a run of the pair,
+resolved as `show` resolves it. `--reason` and `--judge` are required and recorded with
+the pick; `--reason -` reads the reason from stdin.
+
+A pick needs both arms decided enough to judge: each is either `awaiting_approval` with
+a pending merge approval, or over. `pick` refuses, with exit code 1 and nothing changed,
+when:
+
+- the task or run has no pair, or its pair has a pick already;
+- an arm is still under way (`starting`, `running`, `resuming`, …) or waits on a scope
+  approval;
+- the arm to deliver does not await its merge approval (it failed, was aborted or was
+  rejected);
+- `tie` is asked while only one arm awaits its merge approval.
+
+A choice other than `X`, `Y` or `tie` (any case), or a blank `--reason` or `--judge`,
+exits 2. Otherwise `pick`, in this order:
+
+1. records the pick on the pair: `pick`, `decided_by` (`judged`, or `tie`), the reason,
+   the judge and the time. A pair is picked once. Each run gets a `pair_pick` event with
+   its label.
+2. rejects the other arm as `reject` does (worktree removed, branch kept, run `failed`
+   with `rejected`), with the note `pair pick: <label> lost`. An arm that is already
+   over is left as it is.
+3. approves the picked arm as `approve` does, with the reason as the approval note: a
+   fast-forward merge, or a pull request for `delivery: pr`, then `landed`.
+4. prints the reveal: which arm each label was, with that arm's overrides.
+
+`tie` delivers the cheaper arm (lower `cost_usd`), then the one with fewer iterations,
+then X. The pair's `pick` stays `tie`.
+
+`--json` prints one object: `picked`, `task_id`, `decided_by`, `reason`, `judge`,
+`delivered` (the delivered label), `winner` (`label`, `run_id`, `status`, `branch_name`
+and `head` or `pr_url`), `loser` (`label`, `run_id`, `status`, `branch_name`, and
+`worktree_removed` / `worktree_error` when `pick` rejected it), `reveal`
+(`{"X": {"arm", "overrides"}, "Y": {…}}`), `experiment` (`name`, `status`,
+`end_reason`) and, when the project has tasks that may start now, `eligible`.
+
+If the delivery is refused (a dirty primary checkout, a rebase conflict, …), the pick
+and the other arm's rejection stand: the output adds `error`, `delivered` is `null`,
+`winner.status` is `awaiting_approval` and the exit code is 1. The picked run is then
+an ordinary run awaiting merge approval: fix the cause and run `helmraiser approve
+<run>`, or `helmraiser rework <run> --rebase`.
+
+After the pick the picked run is an ordinary run: `approve`, `rework`, `retry` and
+`land` work on it, and rework rounds are counted against it.
+
+#### `approve` and `land` on a pair
+
+`helmraiser approve <run>` and `helmraiser land <run>` refuse a run that awaits its
+merge approval as one arm of an unpicked pair, with exit code 2:
+
+```text
+this run is one arm of a pair; use `helmraiser pick <task>`
+```
+
+A scope request of an arm is approved or declined as for any run (`approve`,
+`approve --paths`, `approve --decline`). The approved paths go into the task file and
+the task's snapshot, which both arms share: the other arm reads them when it next
+resumes. `reject` works on an arm as on any run.
+
+#### Win by failure
+
+When one arm ends as `failed` or `aborted` without ever reaching its merge decision (it
+has no `merge_decision` event), and the other arm awaits its merge approval, Helmraiser
+picks the other arm itself: `decided_by` is `failure`, the reason is
+`other arm failed: <failure reason>` and the judge is `helmraiser`. It is **not**
+delivered: the run stays `awaiting_approval` for the coordinator's review, and `approve`
+works on it because its pair has a pick.
+
+The check runs where a run's end is recorded: at the end of a run in `work`, when
+`work` reconciles a run whose worker died, when `abort` closes a run, and when `reject`
+ends one (an arm that waited on a scope approval, or for the worker). When both arms
+fail, there is no pick and the pair stays undecided. An arm that was rejected at its
+merge approval, or that failed after one (a rework), does not make the other win: that
+is a judgement, and `pick` records it.
+
+#### Retrying a pair
+
+`helmraiser retry <task>` on a task whose pair is unpicked, with both arms `failed` or
+`aborted`, queues the task again (`{"retried": "pair", "task_id", "status": "queued",
+"previous_runs": {"X", "Y"}}` with `--json`). The task file is re-read and validated
+as for any retry. When a worker claims the task, it runs as the same pair: the pair row
+keeps its labels and arms and gets two new runs, each from a new worktree with the
+task's full budget. The earlier runs keep their branches and are no longer the pair's
+runs.
+
+- `retry <run>` on one arm of an unpicked pair is refused, and names `retry <task>`.
+- `--implement` and `--adopt-base` apply to a run, not to a pair.
+- If the experiment has ended, or the quota brake is on, when the task is claimed
+  again, it runs as [the fork decides](#forking-a-task-into-a-pair): once, without a
+  pair. The pair then stays undecided.
+
+#### Aborting a pair
+
+`helmraiser abort <run-id> --project-dir <repo>` on one run of an unpicked pair aborts
+both runs, and so does `helmraiser abort <task> --project-dir <repo>` with the id of the
+pair's task. It prints one `run_id=<id> status=aborted` line per run. The arm without a
+process is closed first, so the end of the other cannot make it win; a second run that
+has not started yet is closed as `aborted: before it started`. A pair with both arms
+aborted stays undecided, and `retry <task>` can run it again.
+
+#### End conditions
+
+- **Decided pairs.** After each pick, a win by failure included, the experiment ends
+  with reason `end_pairs` when its decided pairs (judged, ties and wins by failure)
+  have reached `end_pairs`.
+- **End date.** When a worker is about to claim a queued task at or after `end_at`, the
+  experiment ends with reason `end_at`, and the task runs without an arm.
+- `experiment stop` ends it with the given reason.
+
+Pairs that are running when the experiment ends finish, and stay pickable.
+
+#### Pairs in the status output
+
+A paired run's row in `status --json` and `status.json` (`running`, `resuming`,
+`reworks`, and the CLI's `awaiting`, `failed` and `landed`) has a `pair` object:
+
+```json
+{"task_id": "<project-key>:<id>", "label": "X", "picked": false, "awaiting_pick": true}
+```
+
+`awaiting_pick` is true while the pair has no pick, both arms are decided enough to
+judge and at least one awaits its merge approval. The top-level `awaiting_pick_count`
+counts such pairs. An unpaired run's row has no `pair` key. Human `status` marks a
+paired row in the approvals table (`merge (pair X)`) and prints the `pick` command for
+each pair awaiting its pick.
+
+Not built yet: the blind views (`wait`, `show` and `diff` by task, `pick-packet`), and
+hiding the models and arm names of an unpicked pair in `show`, `log` and `report`.
 
 ## Requirements
 
@@ -1594,7 +1741,7 @@ per command.
 | `helmraiser worker start [--project P]… [--max N] [--max-parallel N] [--no-caps] [--no-notify]` | Starts `work --watch --json` with those options in the background, detached from the terminal; stdout and stderr go to `<data-dir>/worker.log`. The pid, start time, argv, log path, project scope (`projects`: the `--project` values or `null` for all; `exclude_projects`: from config when no `--project` is given) and `max_parallel_runs` are recorded in `<data-dir>/worker.json`. Refuses a second start while a worker is running |
 | `helmraiser worker status` | `running`, `exited` or `none` for the background worker, with pid, start time, argv, log path, its runs against its limit (`runs: 1 of 2` and one line per run's project) and the last 5 log lines |
 | `helmraiser worker stop` | Writes the stop request the worker honours; it starts no new run, lets its running runs finish, then prints the batch summary and exits. A no-op (exit 0) without a running worker |
-| `helmraiser abort <run-id> --project-dir <repo>` | Stops one exact run through its process lease (SIGTERM, then SIGKILL after a grace period); if no worker is alive, it also closes the ledger run as aborted |
+| `helmraiser abort <run-id> --project-dir <repo>` | Stops one exact run through its process lease (SIGTERM, then SIGKILL after a grace period); if no worker is alive, it also closes the ledger run as aborted. On one run of an unpicked pair, or with the pair's task id, it aborts both runs (see [Aborting a pair](#aborting-a-pair)) |
 
 `<run>` accepts a full run ID or a unique prefix. `abort` needs the full UUID4.
 
@@ -1971,6 +2118,8 @@ The `status.json` object has these fields:
 | `resuming` | list | One object per run handed back to the worker (see [Resuming runs](#resuming-runs)): `run_id`, `task`, `project`, `id`, `title`, and `stage`, where the worker resumes it (`start`, `implement` or `verify`; `new` for a pair's second run that has not started, see [Forking a task into a pair](#forking-a-task-into-a-pair)). `held_by` is `null` when no project-admission hold prevents resuming, otherwise the hold preventing this run from resuming now, using the same shape as `queue_next[].held_by` |
 | `reworks` | list | Reworked active/awaiting runs and terminal runs from the last 24h: `run_id`, `task`, `status`, `rework_rounds`, and ordered `reworks` requests with full notes. Reworked `running`/`resuming` rows also include `rework_rounds` and `reworks`; unrelated rows keep their shape |
 | `awaiting_count` | integer | Count of runs waiting for `helmraiser approve`, `reject`, or merge `rework`; rows are in the CLI's `awaiting` list |
+| `awaiting_pick_count` | integer | Count of pairs that wait for `helmraiser pick`: no pick yet, both arms awaiting merge approval or over, and at least one awaiting merge approval. Both arms of such a pair are also counted in `awaiting_count` while they await approval |
+| `running[].pair`, `resuming[].pair`, `reworks[].pair` | object | Only on a paired run's row: `{task_id, label, picked, awaiting_pick}`. `label` is the run's blind label (`X` or `Y`), never its arm; `picked` says whether the pair has a pick; `awaiting_pick` is as counted by `awaiting_pick_count`. See [Pairs in the status output](#pairs-in-the-status-output) |
 | `failed_24h_count` | integer | Count of runs that ended as `failed` in the last 24 hours; rows are in the CLI's `failed` list |
 | `spend` | object | Provider → rolling `5h`, `7d` and `30d` ledger spend in USD |
 | `usage` | object | Per subscription and window: `fraction`, `spend_usd`, `resets_at`, `warn_at`, `stop_at` |
@@ -2018,7 +2167,8 @@ helmraiser status --json | jq '{queued_count, awaiting_count, running: (.running
 
 Each row carries the same identity keys — `run_id`, `task`, `project`, `id` and `title` —
 plus its own fields. An `awaiting` row also names where to review the run: `worktree`,
-`branch` and `base_commit`.
+`branch` and `base_commit`. A paired run's row in any of the three lists has the same
+`pair` object as in `running`.
 
 The Omarchy widget reads the count keys `queued_count`, `awaiting_count` and
 `failed_24h_count`.
@@ -2091,6 +2241,8 @@ and merge-delivery tasks do not trigger synchronization.
 Unknown same-project IDs, dependencies without landed runs, and latest runs that
 failed or aborted hold the task with explanations. A latest failed/aborted run
 overrides an earlier landed run (latest means `(started_at, run_id)` descending).
+A dependency with a picked pair is judged without the run its pick did not choose: the
+rejected arm, though it may have started last, does not hold the dependents.
 When the work of such a run reached the base outside Helmraiser, [`helmraiser record-landed`](#recording-work-merged-outside-helmraiser) ends the hold; editing the task files does not, since dependencies come from snapshots.
 Cycles hold their members and tasks whose dependency path reaches the cycle;
 the reason includes the cycle path. Missing heads, unavailable bases, malformed
@@ -2194,7 +2346,9 @@ Fix the task file first; `retry` then:
 
 - refuses a run that is not `failed`, one that failed for another reason, one whose task
   has been queued or run again since (only the task's latest run, while the task is
-  `failed`), or one whose worktree, branch or worktree metadata is gone;
+  `failed`; the run that a pair's pick did not choose never counts as the latest), one
+  arm of an unpicked pair (see [Retrying a pair](#retrying-a-pair)), or one whose
+  worktree, branch or worktree metadata is gone;
 - re-reads the task from the file it was registered from, validates it with the same
   loader and rules as a queued task (`policy: auto` is refused when the project sets
   `require_approval`), and replaces the ledger's task snapshot and the run's `task.md`

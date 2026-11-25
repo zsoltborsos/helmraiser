@@ -79,6 +79,7 @@ from helmraiser.ledger.db import (
     TaskActive,
     default_data_dir,
     default_db_path,
+    pair_loser,
 )
 from helmraiser.ledger.rundir import RunDir, restamp_summary
 from helmraiser.leeboard import HoldGate
@@ -94,6 +95,7 @@ from helmraiser.loop.intake import (
     get_intake_adapter,
     run_intake,
 )
+from helmraiser.loop.pairs import FAILED_RUN_STATUSES, arms, auto_pick, task_pair
 from helmraiser.loop.prompts import REBASE_NOTE, initial_prompt
 from helmraiser.loop.reconcile import find_phantom_runs, reconcile, remove_orphaned_services
 from helmraiser.loop.report import pending_scope_request
@@ -1982,6 +1984,23 @@ class MergeApprovalRefused(RuntimeError):
     """Finalization was refused; the run remains awaiting approval."""
 
 
+def _refuse_pair_arm(
+    ledger: Ledger,
+    run_id: str,
+    *,
+    as_json: bool,
+    failure: Callable[..., NoReturn] | None = None,
+) -> None:
+    """Refuse a merge approval of one arm of an unpicked pair: ``pick`` decides it."""
+    pair = ledger.pair_for_run(run_id)
+    if pair is not None and pair["pick"] is None:
+        (failure or _fail)(
+            f"this run is one arm of a pair; use `helmraiser pick {pair['task_id']}`",
+            as_json=as_json,
+            code=EXIT_VALIDATION,
+        )
+
+
 def _approve_merge(
     ledger: Ledger,
     row: dict[str, Any],
@@ -2173,6 +2192,7 @@ def approve(
             _print_handed_back(payload)
         return
 
+    _refuse_pair_arm(ledger, run_id, as_json=as_json)
     try:
         pr_url, head = _approve_merge(ledger, row, task, pending, note, base)
     except MergeApprovalRefused as exc:
@@ -2330,6 +2350,29 @@ def reject(
     run_id = str(row["run_id"])
     if row["status"] == "resuming" and not ledger.claim_resumable(run_id):
         _fail(f"run {run_id} was just resumed by the worker", as_json=as_json, code=EXIT_ERROR)
+    payload = _reject_run(ledger, row, task, note, base)
+    # An arm rejected before it reached its merge approval leaves the other to win.
+    if auto_pick(ledger, run_id) is not None:
+        write_status(ledger, base)
+    hint = _eligible_hint(ledger, task.project, data_dir, config)
+    if hint:
+        payload["eligible"] = hint
+    if as_json:
+        typer.echo(json.dumps(payload))
+    else:
+        console.print(f"[red]rejected[/red] {task.task_id} run {run_id} ({payload['rejected']})")
+        console.print(f"  branch kept: {row['branch_name']}")
+        if not payload["worktree_removed"]:
+            console.print(f"  worktree not removed: {payload['worktree_error']}", markup=False)
+        _print_eligible(hint)
+
+
+def _reject_run(
+    ledger: Ledger, row: dict[str, Any], task: TaskSpec, note: str | None, base: Path
+) -> dict[str, Any]:
+    """Reject and settle a run without rendering command output: worktree and metadata
+    removed, branch kept, run failed as ``rejected``."""
+    run_id = str(row["run_id"])
     pending = ledger.pending_approval(run_id)
     kind = str(pending["kind"]) if pending else "merge"
 
@@ -2344,7 +2387,7 @@ def reject(
     else:
         ledger.record_approval(run_id, kind, "rejected", note)
     _settle_run(ledger, task, run_id, "failed", base, "rejected")
-    payload = {
+    return {
         "rejected": kind,
         "run_id": run_id,
         "task_id": task.task_id,
@@ -2353,17 +2396,6 @@ def reject(
         "worktree_removed": removed,
         "worktree_error": remove_error,
     }
-    hint = _eligible_hint(ledger, task.project, data_dir, config)
-    if hint:
-        payload["eligible"] = hint
-    if as_json:
-        typer.echo(json.dumps(payload))
-    else:
-        console.print(f"[red]rejected[/red] {task.task_id} run {run_id} ({kind})")
-        console.print(f"  branch kept: {row['branch_name']}")
-        if not removed:
-            console.print(f"  worktree not removed: {remove_error}", markup=False)
-        _print_eligible(hint)
 
 
 # A failed run whose work may be complete: the implementer gave up (``blocked: …``), verify
@@ -2582,7 +2614,7 @@ def _rework_run(
 
 def _reread_task(
     ledger: Ledger,
-    run_id: str,
+    run_id: str | None,
     task_row: dict[str, Any],
     config: dict[str, Any],
     data_dir: Path | None,
@@ -2592,7 +2624,9 @@ def _reread_task(
     check: Callable[[TaskSpec, Path], None] | None = None,
 ) -> tuple[TaskSpec, Path]:
     """Validate the task file and make it the run's snapshot (``retry`` and ``rework``).
-    ``check`` may refuse the validated file before anything is written."""
+    ``check`` may refuse the validated file before anything is written. Without a
+    ``run_id`` (a retried pair, whose new runs do not exist yet) only the task's
+    snapshot changes."""
     source = Path(str(task_row["source_path"]))
     spec = _load(source, config, as_json=as_json)
     if spec.task_id != task_row["task_id"]:
@@ -2618,7 +2652,8 @@ def _reread_task(
         ledger.set_task_snapshot(spec.task_id, snapshot, parked_run=run_id if parked else None)
     except TaskActive as exc:
         _fail(str(exc), as_json=as_json, code=EXIT_VALIDATION)
-    RunDir(run_id, _data_dir(data_dir)).task_md.write_text(snapshot, encoding="utf-8")
+    if run_id is not None:
+        RunDir(run_id, _data_dir(data_dir)).task_md.write_text(snapshot, encoding="utf-8")
     return spec, source
 
 
@@ -2651,8 +2686,68 @@ def _exhausted_budgets(ledger: Ledger, row: dict[str, Any], budget: Budget) -> l
     return exhausted
 
 
+def _retry_pair(
+    ledger: Ledger,
+    pair: dict[str, Any],
+    config: dict[str, Any],
+    data_dir: Path | None,
+    *,
+    as_json: bool,
+) -> None:
+    """Queue the task of an unpicked pair again once both its arms have failed. The
+    worker claims it as the same pair: two new runs, the same arm behind each label."""
+    task_id = str(pair["task_id"])
+    states = arms(ledger, pair)
+    if states is None:
+        _fail(f"the pair of task {task_id} has no runs", as_json=as_json, code=EXIT_ERROR)
+    unfinished = [arm for arm in states.values() if not arm.failed]
+    if unfinished:
+        _fail(
+            f"the pair of task {task_id} cannot be retried: "
+            + "; ".join(f"arm {arm.label} is {arm.describe()}" for arm in unfinished)
+            + "; both arms must have failed or been aborted",
+            as_json=as_json,
+            code=EXIT_VALIDATION,
+        )
+    task_row = ledger.get_task(task_id)
+    if task_row is None:
+        _fail(f"task {task_id} has no task row", as_json=as_json, code=EXIT_ERROR)
+    previous = {label: arm.run_id for label, arm in states.items()}
+    latest = max(
+        ledger.list_runs(task_id=task_id),
+        key=lambda r: (float(r["started_at"]), str(r["run_id"])),
+    )
+    if task_row["status"] not in FAILED_RUN_STATUSES or latest["run_id"] not in previous.values():
+        _fail(
+            f"task {task_id} has moved on since its pair failed (now {task_row['status']})",
+            as_json=as_json,
+            code=EXIT_VALIDATION,
+        )
+    spec, source = _reread_task(ledger, None, task_row, config, data_dir, as_json=as_json)
+    ledger.set_task_status(task_id, "queued")
+    write_status(ledger, _data_dir(data_dir))
+    hint = _eligible_hint(ledger, spec.project, data_dir, config)
+    if as_json:
+        payload: dict[str, Any] = {
+            "retried": "pair",
+            "task_id": task_id,
+            "status": "queued",
+            "previous_runs": previous,
+        }
+        if hint:
+            payload["eligible"] = hint
+        typer.echo(json.dumps(payload))
+        return
+    typer.echo(f"retrying both arms of {task_id}: queued again")
+    typer.echo(f"  task re-read from {source}")
+    typer.echo("  the worker starts two new runs; each label keeps its arm")
+    _print_eligible(hint)
+
+
 def retry(
-    run: str = typer.Argument(..., help="Run id (or unique prefix)"),
+    run: str = typer.Argument(
+        ..., help="Run id (or unique prefix); or the id of a task whose pair failed"
+    ),
     implement: bool = typer.Option(
         False,
         "--implement",
@@ -2675,11 +2770,33 @@ def retry(
     implementation. Setup failures are retryable only without commits; the worktree must
     still exist. A ``budget:*`` failure needs a task file with room on every cap: budgets
     stay cumulative, so ``max_iterations: 12`` means 12 in all, not 12 more; with it,
-    ``--implement`` continues the work even without a failed verify result."""
+    ``--implement`` continues the work even without a failed verify result.
+
+    For the id of a task whose pair is unpicked and has both arms failed or aborted,
+    queue the task again: the worker runs both arms anew, as the same pair. One arm
+    of an unpicked pair cannot be retried alone."""
     config = load_config()
     ledger = _ledger(data_dir)
+    pair = task_pair(ledger, run)
+    if pair is not None and pair["pick"] is None:
+        if implement or adopt_base:
+            _fail(
+                "--implement and --adopt-base apply to a run, not to a pair",
+                as_json=as_json,
+                code=EXIT_VALIDATION,
+            )
+        _retry_pair(ledger, pair, config, data_dir, as_json=as_json)
+        return
     row = _find_run(ledger, run, as_json=as_json)
     run_id = str(row["run_id"])
+    pair = ledger.pair_for_run(run_id)
+    if pair is not None and pair["pick"] is None:
+        _fail(
+            f"run {run_id} is one arm of a pair; retry both arms with "
+            f"`helmraiser retry {pair['task_id']}`",
+            as_json=as_json,
+            code=EXIT_VALIDATION,
+        )
     reason = str(row["failure_reason"] or "")
     if row["status"] != "failed":
         _fail(f"run {run_id} is {row['status']}, not failed", as_json=as_json, code=EXIT_VALIDATION)
@@ -2716,8 +2833,12 @@ def retry(
     task_row = ledger.get_task(str(row["task_id"]))
     if task_row is None:
         _fail(f"run {run_id} has no task row", as_json=as_json, code=EXIT_ERROR)
+    task_runs = ledger.list_runs(task_id=str(row["task_id"]))
+    # The run that a pair's pick did not choose is over for good: the chosen run is
+    # the task's latest, whichever started last.
+    lost = pair_loser(pair, {r["run_id"]: r for r in task_runs}) if pair is not None else None
     latest = max(
-        (r for r in ledger.list_runs() if r["task_id"] == row["task_id"]),
+        (r for r in task_runs if r["run_id"] != lost),
         key=lambda r: float(r["started_at"]),
     )
     if task_row["status"] != "failed" or latest["run_id"] != run_id:
@@ -3056,6 +3177,7 @@ def register_commands(app: typer.Typer) -> None:
     from helmraiser.cli.experiment_commands import experiment_app
     from helmraiser.cli.land_commands import land
     from helmraiser.cli.monitor import register_monitor_commands  # avoids an import cycle
+    from helmraiser.cli.pick_commands import pick
     from helmraiser.cli.preflight_commands import preflight
     from helmraiser.cli.scout_commands import drafts_app, scout
 
@@ -3073,7 +3195,9 @@ def register_commands(app: typer.Typer) -> None:
     app.command("land")(land)
     app.command("clean")(clean)
     app.command("reject")(reject)
-    app.command("retry")(retry)
+    # A task id starts with the project key, which starts with a dash.
+    app.command("pick", context_settings={"ignore_unknown_options": True})(pick)
+    app.command("retry", context_settings={"ignore_unknown_options": True})(retry)
     app.command("record-landed")(record_landed)
     app.command("rework")(rework)
     app.add_typer(queue_app, name="queue")

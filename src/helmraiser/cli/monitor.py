@@ -53,6 +53,7 @@ from helmraiser.loop.status import (
     build_status,
     ended_since,
     held_task_text,
+    pair_field,
     run_origin,
     status_path,
     write_status_atomic,
@@ -480,6 +481,7 @@ def _awaiting_rows(ledger: Ledger, data_dir: Path) -> list[dict[str, Any]]:
                 "branch": run["branch_name"],
                 "base_commit": run["base_commit"],
                 "origin": run_origin(str(run["run_id"]), data_dir),
+                **pair_field(ledger, str(run["run_id"])),
             }
         )
     return rows
@@ -534,6 +536,7 @@ def status(
                         else {}
                     ),
                     "ended_at": _iso(r["ended_at"]),
+                    **pair_field(ledger, str(r["run_id"])),
                 }
             )
     full = {
@@ -634,7 +637,7 @@ def status(
             table.add_row(
                 str(row["run_id"]),
                 str(row["task"]) + _origin_suffix(row["origin"]),
-                str(row["pending"]),
+                str(row["pending"]) + (f" (pair {row['pair']['label']})" if "pair" in row else ""),
                 str(row["verdict"] or "-"),
                 f"{row['cost_usd']:.4f}",
             )
@@ -649,6 +652,17 @@ def status(
                     soft_wrap=True,
                 )
         console.print("  next: helmraiser approve <run> (or reject)", markup=False)
+        for task_id in dict.fromkeys(
+            row["pair"]["task_id"]
+            for row in full["awaiting"]
+            if "pair" in row and row["pair"]["awaiting_pick"]
+        ):
+            console.print(
+                f'  pair awaiting pick: helmraiser pick {task_id} X|Y|tie --reason "<why>" '
+                '--judge "<who>"',
+                markup=False,
+                soft_wrap=True,
+            )
         if any(row["pending"] == "merge" for row in full["awaiting"]):
             console.print(
                 '  merge rework: helmraiser rework <run> --note "<feedback>"', markup=False

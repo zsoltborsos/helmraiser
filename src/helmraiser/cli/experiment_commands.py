@@ -1,4 +1,4 @@
-"""Live experiment lifecycle and ledger-backed reports."""
+"""The experiment lifecycle (start, stop, status) and its report."""
 
 from __future__ import annotations
 
@@ -65,7 +65,6 @@ def _show(ledger: Ledger, record: dict[str, Any] | None, as_json: bool) -> None:
             typer.echo(f"end_reason: {record['end_reason']}")
         for key, value in counts.items():
             typer.echo(f"{key}: {json.dumps(value, sort_keys=True)}")
-        typer.echo("Definition lifecycle only; end conditions and quota brake are not enforced.")
 
 
 @experiment_app.command("start")

@@ -529,6 +529,11 @@ class GovernedRun:
                 and payload["to"] is True
             ):
                 task = replace(task, plan=True)
+        if "arm" not in overrides:
+            arm_events = ledger.events(run_id, types=("experiment_arm",))
+            if arm_events:
+                payload = arm_events[0]["payload"]
+                overrides["arm"] = RunArm.from_overrides(payload["name"], payload["overrides"])
         run = cls(
             task,
             config=config,
@@ -1994,8 +1999,21 @@ class GovernedRun:
             env=self._session_env(),
             stage=stage,
             attempt=attempt,
-            rpc=stage == "implement" and bool(self.config.get("pi_rpc_implement", False)),
-            extra_args=stage_skill_args(stage, self.worktree),
+            rpc=stage == "implement"
+            and (
+                self.arm.pi_rpc_implement
+                if self.arm is not None and self.arm.pi_rpc_implement is not None
+                else bool(self.config.get("pi_rpc_implement", False))
+            ),
+            extra_args=stage_skill_args(
+                stage,
+                self.worktree,
+                skills=(
+                    self.arm.skills
+                    if self.arm is not None and self.arm.skills is not None
+                    else "default"
+                ),
+            ),
         )
         res = await self._run_session(req, enforce_budget)
         if res.error_kind in ("provider", "protocol") and self._budget_kind is None:

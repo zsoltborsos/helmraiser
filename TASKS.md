@@ -71,9 +71,16 @@ Slices, in order (1, 3 and 4 interactive; 2, 5 and 6 may run as Helmraiser tasks
 1. Done (b72bc5c, 98b1779): ledger schema 12; the live ledger is upgraded.
 2. Done (PR #37, #38): `experiment start|stop|status` with arm validation; an arm
    applied to a run (`GovernedRun(arm=RunArm)`, the `experiment_arm` event).
-3. Forking and scheduling: fork at queue, pair slot, sibling overlap, brake, exclusions.
+3. Forking and scheduling (building): one task row with two runs. The worker that claims
+   the task claims both runs at once; Y starts through the resume path from X's base
+   commit. Owner decisions 2026-11-25: fork when a worker starts the task, not at queue
+   time; pin Y to X's base. Non-forking tasks run with no arm; a re-queued task runs
+   normally; no codex reading means unpaired.
 4. Pair lifecycle: blind `wait`/`show`/`diff`, auto-pick, retry/abort/drop, `pick-packet`,
    `pick`, `approve` refused.
+   Traps found in review: `ledger/dependencies.py` judges a task by its latest run, so a
+   rejected loser can block dependents; `pick` must reject the loser before approving the
+   winner, or the status precedence leaves the task `failed`.
 5. `experiment report` with the sign test.
 6. Docs: reference, GLOSSARY (experiment, arm, control, pair, pick, decided pair, unpaired
    run), the helmraiser-tasks "Picking a pair" section with the judge prompt, the widget's

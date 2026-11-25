@@ -1,6 +1,6 @@
 # Helmraiser — Current State
 
-`helmraiser experiment start|stop|status` validates and freezes A/B definitions and reports pair counts; internal per-run arm application overrides models/thinking, skills and implement RPC, records one `experiment_arm` event and survives continuation, without automatic arm assignment, forking, picking, automatic ending or quota-brake enforcement.
+`helmraiser experiment start|stop|status` validates and freezes A/B definitions and reports pair counts; internal per-run arm application overrides models/thinking, skills and implement RPC, rejects merged implement/review model ID conflicts before sessions, records one `experiment_arm` event and survives continuation, without automatic arm assignment, forking, picking, automatic ending or quota-brake enforcement.
 
 The ledger is at schema version 12, with `experiments` and `pairs` tables for live experiments (tables and ledger lifecycle methods); a version 11 ledger is backed up beside itself (`helmraiser.db.v11-<UTC time>.bak`) and upgraded on the first open with no live run (`starting`, `running`, `verifying`, `reviewing`, `aborting`), and until then opens at 11 with `Ledger.upgrade_pending` saying why.
 

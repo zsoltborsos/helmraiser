@@ -101,6 +101,57 @@ async def test_arm_models_feed_requests_and_ledger_without_changing_task(
     assert run.rundir.task_md.read_text() == snapshot
 
 
+@pytest.mark.parametrize("stage", ["implement", "review"])
+@pytest.mark.parametrize("resumed", [False, True])
+async def test_valid_arm_conflicting_with_task_models_fails_before_sessions(
+    make_task, make_run, ledger, data_dir, config, stage, resumed
+):
+    # Experiment validation sees config profiles, not the task-file overrides.
+    config["profiles"]["implement"] = "test/config-implement"
+    config["profiles"]["review"] = "test/config-review"
+    task = make_task(plan=True, policy="approve-plan-first" if resumed else "review")
+    other_stage = "review" if stage == "implement" else "implement"
+    shared_id = task.models[other_stage].model
+    definition = validate_experiment(
+        {"name": "test", "arms": {"A": {}, "B": {"models": {stage: f"{shared_id}:low"}}}},
+        config,
+    )
+    arm = RunArm.from_overrides("B", definition.arms["B"])
+    adapter = passing_adapter()
+    if resumed:
+        run, _ = make_run(task, adapter)
+        outcome = await run.run()
+        assert outcome.pending_approval == "plan", outcome.failure_reason
+        approval = ledger.pending_approval(run.run_id)
+        assert ledger.decide_approval(approval["id"], "approved", "go")
+        adapter.calls.clear()
+        run = GovernedRun.resume(
+            run.run_id,
+            config=config,
+            ledger=ledger,
+            data_dir=data_dir,
+            adapter_factory=lambda state, isolation: adapter,
+            pi_version="0.87.1",
+            auth_check=lambda model: None,
+            arm=arm,
+        )
+    else:
+        run, _ = make_run(task, adapter, arm=arm)
+
+    outcome = await run.run()
+
+    assert outcome.status == "failed"
+    assert outcome.failure_reason == (
+        f"models: reviewer must differ from implementer (both {shared_id})"
+    )
+    assert adapter.calls == []
+    assert ledger.get_run(run.run_id)["failure_reason"] == outcome.failure_reason
+    assert ledger.get_task(task.task_id)["snapshot"] == task.source_path.read_text()
+    if not resumed:
+        assert len(ledger.events(run.run_id, types=("experiment_arm",))) == 1
+        assert run.worktree is None
+
+
 async def test_auth_failure_still_records_arm(make_task, make_run, ledger):
     arm = RunArm("B", {"implement": ModelSpec("test/worker", "high")})
     checked = []

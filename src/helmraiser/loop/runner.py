@@ -739,6 +739,7 @@ class GovernedRun:
         status = "failed"
         reason: str | None = None
         try:
+            self._check_arm_models()
             try:
                 self.worktree = self.worktrees.create(task.id, self.run_id, resume=True)
             except RuntimeError as exc:
@@ -1067,7 +1068,17 @@ class GovernedRun:
 
     # ── steps 0–4 ───────────────────────────────────────────────────────
 
+    def _check_arm_models(self) -> None:
+        if self.arm is not None:
+            implement = self.task.models["implement"]
+            if implement.model == self.task.models["review"].model:
+                raise _RunFailed(
+                    "failed",
+                    f"models: reviewer must differ from implementer (both {implement.model})",
+                )
+
     def _preflight(self) -> None:
+        self._check_arm_models()
         reason = self.isolation.check_available()
         if reason is not None:
             raise _RunFailed("failed", f"isolation: {reason}")

@@ -62,7 +62,9 @@ Each arm may be empty or contain only:
 Internally, a `GovernedRun` explicitly supplied a `RunArm` applies its model overrides
 on top of the task's models, including thinking levels; unnamed stages retain their
 task models. The original task and its snapshot are unchanged. Omitted arm fields
-inherit the existing run behavior.
+inherit the existing run behavior. Before any session starts (including on resume),
+an armed run fails if its merged implement and review model IDs are equal; different
+thinking levels do not avoid this check.
 
 All sessions in that run follow the arm's skill mode:
 

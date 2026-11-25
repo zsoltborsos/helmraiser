@@ -1393,6 +1393,40 @@ class Ledger:
         decoded["unblinded"] = bool(decoded["unblinded"])
         return decoded
 
+    def experiment_pair_counts(self, experiment_id: int) -> dict[str, Any]:
+        """Count picks using the actual blind-label arm assignments."""
+        self._require_experiments()
+        counts: dict[str, Any] = {
+            "total": 0,
+            "picked": 0,
+            "judged_wins": {"A": 0, "B": 0},
+            "failure_wins": {"A": 0, "B": 0},
+            "ties": 0,
+            "unpicked": 0,
+        }
+        rows = (
+            self._get_conn()
+            .execute(
+                "SELECT arm_x, arm_y, pick, decided_by, COUNT(*) AS n FROM pairs "
+                "WHERE experiment_id = ? GROUP BY arm_x, arm_y, pick, decided_by",
+                (experiment_id,),
+            )
+            .fetchall()
+        )
+        for row in rows:
+            n = row["n"]
+            counts["total"] += n
+            if row["pick"] is None:
+                counts["unpicked"] += n
+                continue
+            counts["picked"] += n
+            if row["decided_by"] == "tie":
+                counts["ties"] += n
+            elif row["decided_by"] in {"judged", "failure"}:
+                arm = row["arm_x"] if row["pick"] == "X" else row["arm_y"]
+                counts[f"{row['decided_by']}_wins"][arm] += n
+        return counts
+
     def set_pair_pick(
         self,
         pair_id: int,

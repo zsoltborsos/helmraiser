@@ -1,4 +1,4 @@
-"""Definition-only experiment lifecycle; no scheduling or arm application."""
+"""Live experiment lifecycle and ledger-backed reports."""
 
 from __future__ import annotations
 
@@ -11,9 +11,10 @@ import typer
 
 from helmraiser.config import load_config
 from helmraiser.ledger.db import Ledger, default_data_dir, default_db_path
+from helmraiser.loop.experiment_report import build_experiment_report
 from helmraiser.loop.experiments import validate_experiment
 
-experiment_app = typer.Typer(help="Manage live experiment definitions")
+experiment_app = typer.Typer(help="Manage live experiments")
 
 
 def _ledger(data_dir: Path | None) -> Ledger:
@@ -122,5 +123,63 @@ def experiment_status(
             _available(ledger)
             with ledger.read_snapshot():
                 _show(ledger, ledger.active_experiment(), as_json)
+    except ValueError as exc:
+        _error(str(exc), as_json)
+
+
+def _print_report(report: dict[str, Any]) -> None:
+    record = report["experiment"]
+    typer.echo(f"experiment: {record['name']} ({record['status']})")
+    for arm in ("A", "B"):
+        typer.echo(f"  {arm}: {json.dumps(record['arms'][arm], sort_keys=True)}")
+    typer.echo(f"started_at (UTC): {_date(record['started_at'])}")
+    typer.echo(f"ended_at (UTC): {_date(record['ended_at'])}")
+    typer.echo(f"end_reason: {record['end_reason'] or 'n/a'}")
+    typer.echo(f"end_pairs: {record['end_pairs']}; end_at (UTC): {_date(record['end_at'])}")
+    typer.echo(f"quota_brake: {record['quota_brake']}")
+    typer.echo(f"exclude_projects: {json.dumps(record['exclude_projects'])}")
+    typer.echo("pairs: " + "; ".join(f"{key}: {value}" for key, value in report["pairs"].items()))
+    for arm in ("A", "B"):
+        stats = report["arms"][arm]
+        typer.echo(
+            f"{arm}: judged_wins: {stats['judged_wins']}; "
+            f"failure_wins: {stats['failure_wins']}; ties: {stats['ties']}"
+        )
+        typer.echo(
+            "  "
+            + "; ".join(
+                f"{key}: {stats[key] if stats[key] is not None else 'n/a'}"
+                for key in ("median_cost_usd", "median_minutes", "median_iterations")
+            )
+        )
+        typer.echo(f"  review_verdicts: {json.dumps(stats['review_verdicts'], sort_keys=True)}")
+        typer.echo(f"  post_pick_rework_rounds: {stats['post_pick_rework_rounds']}")
+    sign = report["sign_test"]
+    typer.echo(
+        f"sign_test: n: {sign['n']}; A: {sign['wins']['A']}; B: {sign['wins']['B']}; "
+        f"p_value: {sign['p_value'] if sign['p_value'] is not None else 'n/a'}"
+    )
+    typer.echo("reasons:")
+    for reason in report["reasons"]:
+        typer.echo(
+            f"  {reason['task_id']}: {reason['winner']} ({reason['decided_by']}); "
+            f"reason: {reason['reason']}; judge: {reason['judge']}"
+        )
+
+
+@experiment_app.command("report")
+def experiment_report(
+    name: str | None = typer.Argument(None),
+    as_json: bool = typer.Option(False, "--json"),
+    data_dir: Path | None = typer.Option(None, "--data-dir"),
+) -> None:
+    """Report the named experiment, or the active/latest experiment by default."""
+    try:
+        with _ledger(data_dir) as ledger:
+            report = build_experiment_report(ledger, name)
+            if as_json:
+                typer.echo(json.dumps(report))
+            else:
+                _print_report(report)
     except ValueError as exc:
         _error(str(exc), as_json)

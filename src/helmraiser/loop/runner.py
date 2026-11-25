@@ -53,6 +53,7 @@ from helmraiser.loop.budget import (
 from helmraiser.loop.delivery import open_pull_request, pr_body
 from helmraiser.loop.evidence import EvidenceResult, run_evidence
 from helmraiser.loop.excerpt import DEFAULT_EXCERPT_CHARS, DEFAULT_EXCERPT_LINES, FailureReport
+from helmraiser.loop.experiments import RunArm
 from helmraiser.loop.hints import SETUP_READONLY_HINT, setup_readonly_line
 from helmraiser.loop.merge import MergeDecision, decide
 from helmraiser.loop.prompts import (
@@ -366,6 +367,7 @@ class GovernedRun:
         data_dir: Path | None = None,
         snapshot: str | None = None,
         routing_decisions: list[dict[str, Any]] | None = None,
+        arm: RunArm | None = None,
         run_id: str | None = None,
         auth_check: AuthCheck | None = None,
         isolation: Isolation | None = None,
@@ -373,13 +375,26 @@ class GovernedRun:
         sleep: Sleep = asyncio.sleep,
         clock: Callable[[], float] = time.time,
     ) -> None:
+        self.snapshot = snapshot if snapshot is not None else render_task(task)
+        self.arm = arm
+        self._arm_replaced: dict[str, Any] = {}
+        if arm is not None:
+            if arm.models:
+                self._arm_replaced["models"] = {
+                    stage: task.models[stage].render() if stage in task.models else None
+                    for stage in arm.models
+                }
+            if arm.skills is not None:
+                self._arm_replaced["skills"] = "default"
+            if arm.pi_rpc_implement is not None:
+                self._arm_replaced["pi_rpc_implement"] = bool(config.get("pi_rpc_implement", False))
+            task = replace(task, models={**task.models, **arm.models})
         self.task = task
         self.config = config
         self.ledger = ledger
         self.adapter_factory = adapter_factory
         self.pi_version = pi_version
         self.data_dir = data_dir
-        self.snapshot = snapshot if snapshot is not None else render_task(task)
         self.routing_decisions = copy.deepcopy(routing_decisions or [])
         self.project_notes = project_notes_for_body(task.project, task.body)
         self._leeboard_brief: BriefResult | None = None
@@ -588,6 +603,15 @@ class GovernedRun:
             )
             self.state.create_run(self.run_id, task.id)
             self._event("run_start", {"task_id": task.task_id, "pi_version": self.pi_version})
+            if self.arm is not None:
+                self._event(
+                    "experiment_arm",
+                    {
+                        "name": self.arm.name,
+                        "overrides": self.arm.overrides(),
+                        "replaced": self._arm_replaced,
+                    },
+                )
             for decision in self.routing_decisions:
                 self._event("routing", decision)
             write_status(self.ledger, self.data_dir)

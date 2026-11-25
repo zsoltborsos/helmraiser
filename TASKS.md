@@ -69,9 +69,8 @@ the grilling session:
 Slices, in order (1, 3 and 4 interactive; 2, 5 and 6 may run as Helmraiser tasks):
 
 1. Done (b72bc5c, 98b1779): ledger schema 12; the live ledger is upgraded.
-2. Queued as Helmraiser tasks `experiment-commands` (`experiment start|stop|status`,
-   arm validation) and `experiment-arm-overrides` (an arm applied to a run; depends on
-   the first).
+2. `experiment start|stop|status` with arm validation landed (PR #37). Queued as a
+   Helmraiser task: `experiment-arm-overrides` (an arm applied to a run).
 3. Forking and scheduling: fork at queue, pair slot, sibling overlap, brake, exclusions.
 4. Pair lifecycle: blind `wait`/`show`/`diff`, auto-pick, retry/abort/drop, `pick-packet`,
    `pick`, `approve` refused.
@@ -108,6 +107,10 @@ Slices, in order (1, 3 and 4 interactive; 2, 5 and 6 may run as Helmraiser tasks
   no worker for 46 minutes (11:37–12:23 UTC). Add `worker restart` (or `stop --wait`)
   that waits for the exit, then starts; note in the docs that a code change on main
   already restarts the worker.
+- **A flaky Leeboard timeout test.** `test_leeboard_supervisor_unavailable_warn_streak[timeout]`
+  (`tests/cli/test_leeboard_hold_skip.py`) gives a fake `lb` a 0.2 s timeout against a 1 s
+  sleep and expects one warning. In run a07bc610's 22-minute full suite it saw none; it
+  passes alone. Find what makes the timeout path skip the warning under load.
 0. **Make the suite independent of the working directory.** Run from the primary
    checkout, 16 doctor and no-Leeboard tests fail: doctor reads the untracked
    `.helmraiser/project.toml` there (`delivery = "pr"`), adds the `gh` check, and the

@@ -60,6 +60,10 @@ hand-written acceptance block needs no intake-model call. Use the supported
 origin kinds in [Workflow commands](../../docs/reference.md#quick-start): the queueing session
 owns review, and registration alone does not start work.
 
+Record each queued task in the repository's `TASKS.md` (one line under its next-work
+section) in your own commit on the base branch. Remove the line yourself once the run
+lands. Keep `TASKS.md` out of the task's `paths`, or every sibling task overlaps.
+
 Diff guards must use `$HELMRAISER_BASE_SHA`, so scope checks use the captured base
 rather than a moving branch. Keep fetch/rebase commands out of task bodies;
 leave base synchronization to Helmraiser's host workflow.

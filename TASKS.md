@@ -86,6 +86,20 @@ Slices, in order (1, 3 and 4 interactive; 2, 5 and 6 may run as Helmraiser tasks
 
 ## Next
 
+- **The reviewer passes style and consistency slips** (Leeboard retro, 2026-11-25). Runs
+  fcc907f1 and 2b29c691 passed with no findings. A coordinator spec/standards review then
+  found four real issues that needed rework: a misaligned `--help` line, help text missing
+  a new `--status lapsed` value, top-level fake-timer hooks leaking into unrelated tests,
+  and output built by regex-patching serialized text. Ideas: give the review prompt the
+  repository's conventions file (CONTRIBUTING.md, AGENTS.md), and have it check new lines
+  against their neighbours and help/usage text against new flags and values. Add these
+  diffs to the replay's held-out written-rule Standards cases (item 4) and measure there
+  before changing the directive.
+- **Intake's related-test detection over-adds** (same retro). For a change to
+  `src/commands/read.ts`, `intake --yes` added 10–15 test files that only share imports of
+  widely used modules (`src/entry.ts`, `test/helpers.ts`), so sibling tasks overlap and
+  cannot run in parallel. Count only tests that import a declared source file directly;
+  do not follow shared helpers.
 - **A worker restart that cannot leave no worker.** `worker stop` only writes the stop
   file and returns; a `worker start` right after it fails "already running" while the old
   worker still lives, and that worker then exits on the stop file. On 2026-11-25 this left

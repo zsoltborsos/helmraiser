@@ -79,7 +79,8 @@ Slices, in order (1, 3 and 4 interactive; 2, 5 and 6 may run as Helmraiser tasks
    Traps found in review: `ledger/dependencies.py` judges a task by its latest run, so a
    rejected loser can block dependents; `pick` must reject the loser before approving the
    winner, or the status precedence leaves the task `failed`.
-5. `experiment report` with the sign test: queued as Helmraiser task `experiment-report`.
+5. Done (PR #39): `experiment report [<name>] [--json]` with the sign test. Its docs go
+   in slice 6.
 6. Docs: reference, GLOSSARY (experiment, arm, control, pair, pick, decided pair, unpaired
    run), the helmraiser-tasks "Picking a pair" section with the judge prompt, the widget's
    "pair awaiting pick" label.
@@ -112,6 +113,12 @@ Slices, in order (1, 3 and 4 interactive; 2, 5 and 6 may run as Helmraiser tasks
   no worker for 46 minutes (11:37–12:23 UTC). Add `worker restart` (or `stop --wait`)
   that waits for the exit, then starts; note in the docs that a code change on main
   already restarts the worker.
+- **Decide whether an unclosed final verdict fence should parse.** Run 472d345c's
+  reviewer ended its review with a valid `json` block but no closing fence, so
+  `parse_verdict` (`loop/review.py`) recorded `uncertain` (`parsed=false`) for a pass.
+  `test_only_line_delimited_fences_complete_a_block` requires that strictness today.
+  Accepting a final unclosed block when its JSON parses would avoid such false
+  uncertains.
 - **A flaky Leeboard timeout test.** `test_leeboard_supervisor_unavailable_warn_streak[timeout]`
   (`tests/cli/test_leeboard_hold_skip.py`) gives a fake `lb` a 0.2 s timeout against a 1 s
   sleep and expects one warning. In run a07bc610's 22-minute full suite it saw none; it

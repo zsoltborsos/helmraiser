@@ -172,6 +172,14 @@ def large_budget_warnings(task: TaskSpec) -> list[str]:
     ]
 
 
+def _is_file(path: Path) -> bool:
+    """``path.is_file()``, false for words the OS refuses as names (too long, say)."""
+    try:
+        return path.is_file()
+    except OSError:
+        return False
+
+
 def outside_paths_warnings(task: TaskSpec) -> list[str]:
     """A warning for each existing repo file a verify step names outside ``paths``."""
     if task.paths is None:
@@ -190,7 +198,7 @@ def outside_paths_warnings(task: TaskSpec) -> list[str]:
                     or "$" in path
                     or ".." in path.split("/")
                     or not PurePosixPath(path).suffix
-                    or not (task.project / path).is_file()
+                    or not _is_file(task.project / path)
                     or matches_paths(path, task.paths)
                 ):
                     continue

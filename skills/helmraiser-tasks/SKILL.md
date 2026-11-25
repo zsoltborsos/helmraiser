@@ -22,7 +22,10 @@ Queue with `helmraiser intake <file> --check --yes`: it runs every `verify` and
 `evidence` command on the unchanged base and queues only when each step is `green`
 or `expected red` (fails only because a file the task creates is missing). Use
 `--check` alone to look first. For a single command, use `helmraiser preflight`.
-Expect only failures the task explicitly intends to fix; investigate any others. Intake proposals can choose an environment variable a
+Expect only failures the task explicitly intends to fix; investigate any others.
+Steps run under `bash -o pipefail`, so `cmd | grep -q x` fails whenever `cmd` exits
+non-zero, even on a match: capture the output first (`out=$(cmd || true)`), then grep it.
+Intake proposals can choose an environment variable a
 tool ignores or a type-check gate that already fails on the base. Broken
 acceptance wastes implementation runs.
 

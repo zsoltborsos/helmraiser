@@ -142,6 +142,15 @@ def test_outside_paths_warnings(tmp_path) -> None:
     assert outside_paths_warnings(replace(task, paths=None)) == []
 
 
+def test_outside_paths_warnings_skips_words_too_long_for_a_file_name(tmp_path) -> None:
+    spec = parse_task(
+        f"---\nid: t\ntitle: T\nproject: {tmp_path}\nstatus: draft\n---\n", tmp_path / "t.md", {}
+    )
+    script = "let d=0;" + "d+=1;" * 80 + "process.exit(d.toFixed())"
+    step = VerifyStep(name="node", run=f"cat x | node -e '{script}'")
+    assert outside_paths_warnings(replace(spec, verify=(step,), paths=("docs/**",))) == []
+
+
 @pytest.fixture
 def body_paths_repo(tmp_path, git_init):
     repo = tmp_path / "repo"

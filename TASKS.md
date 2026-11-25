@@ -57,6 +57,16 @@ and what comes next.
    reviewer (`loop/review.py`) verbatim. Service-provided variables such as database URLs
    reach those models only through these tails. `loop/redact.py` already redacts the
    scout's intake retry feedback and could be applied there too.
+6. **Per-stage worker skills** (owner approved 2026-11-25, started). Every pi session
+   except the eval replay loads all discovered skills (`pi/adapter.py` never passes
+   `--no-skills`). Design (Leeboard thread `request-say-whether-worker-pi-sessions-should-be-86ef`):
+   - A stage whose folder `~/.local/share/helmraiser/skills/<stage>/` exists runs with
+     `--no-skills`, one `--skill` per skill directory in it, then the project's own
+     `.pi/skills` and `.agents/skills`. An empty folder means project skills only.
+   - Stages are intake, scout, plan, implement (fallback too) and review. No folder
+     means pi's discovery, as today.
+   - Under isolation, allowRead for each folder and each resolved symlink target.
+   - Open source ships no worker skills; the docs name a suggested set.
 
 ## Waiting
 

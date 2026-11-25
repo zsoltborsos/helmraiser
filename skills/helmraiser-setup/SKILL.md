@@ -1,6 +1,7 @@
 ---
 name: helmraiser-setup
 description: Configure Helmraiser's models for its user. Use when setting up or reconfiguring Helmraiser's models, handling a models not configured error, or resolving doctor reporting a role not configured.
+disable-model-invocation: true
 ---
 
 # Helmraiser setup

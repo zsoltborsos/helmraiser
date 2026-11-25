@@ -63,7 +63,7 @@ def require_work_models(
 def models_not_configured_message(missing: Iterable[str]) -> str:
     return (
         f"models not configured: {', '.join(missing)}. Set them in ~/.helmraiser/config.json "
-        "(see examples/config.json for a tried-and-working setup, or the helmraiser-setup skill)."
+        "(see examples/config.json for a tried-and-working setup, or run the /helmraiser-setup skill)."
     )
 
 

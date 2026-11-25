@@ -60,7 +60,8 @@ Copy and adapt [examples/config.json](../examples/config.json), a tried-and-work
 November 2026 setup using an OpenAI Codex subscription and OpenCode Go—not universal
 defaults. The repository-shipped [helmraiser-setup skill](../skills/helmraiser-setup/SKILL.md)
 helps an agent discover your models, agree a configuration, preserve existing settings
-with a backup, and check readiness. Its real-model test run is opt-in and requires
+with a backup, and check readiness. You start it yourself with `/helmraiser-setup`;
+agents do not load it on their own. Its real-model test run is opt-in and requires
 consent to spend. From the Helmraiser clone root, choose your agent's install command:
 
 ```bash

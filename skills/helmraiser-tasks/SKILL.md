@@ -112,6 +112,10 @@ Use `helmraiser land <run>` for governed PR landing.
 See [Policies](../../docs/reference.md#policies) and
 [Reworking a run awaiting merge approval](../../docs/reference.md#reworking-a-run-awaiting-merge-approval).
 
+After a run that needed rework, a retry or a rejected review, suggest that the owner run
+a retrospective (such as `/retro`, if installed) in the session that reviewed it, before
+its context is cleared. You cannot start it yourself; only suggest it.
+
 ## 9. Recognize the cleanup/startup race
 
 Helmraiser keeps preflight's temporary run directories outside `<data-dir>/runs`.
@@ -149,3 +153,14 @@ See [Isolation](../../docs/reference.md#isolation),
 If a task needs a budget of $20 or more, split it into smaller tasks linked with
 `depends_on`, each with its own acceptance block. Intake’s large-budget note is
 advisory, not a queueing error.
+
+How to split:
+- Slice vertically: each task delivers one change that its own verify steps prove,
+  not one layer of several.
+- Size each task to fit one implement session.
+- Put a prefactor (the reshaping that makes the change easy) in its own task, first.
+- Use `depends_on` only where a later task truly needs the earlier one landed.
+- For a refactor across many files: expand (add the new form beside the old), migrate
+  callers in batches, then contract (remove the old form), each as its own task.
+- Show the owner the breakdown before queueing more than a few tasks.
+

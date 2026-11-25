@@ -22,6 +22,7 @@ Update them in the commit that lands a slice.
 | `cli/eval_commands.py`, `loop/eval_review.py` | `eval review\|report`: review replay of past runs under reviewer variants, blind judging and the report |
 | `cli/scout_commands.py`, `loop/scout.py` | `scout` (one read-only scout session that writes drafts) and `drafts list\|request` |
 | `cli/caps_commands.py`, `loop/spend.py`, `loop/live_usage.py`, `loop/routing.py` | `caps on\|off\|reset`; ledger-derived subscription usage, live Omarchy / OpenCode Go readings, headroom and model routing |
+| `cli/experiment_commands.py`, `cli/pick_commands.py`, `loop/{experiments,pairs,blinding,packet,experiment_report}.py` | Live experiments: `experiment start\|stop\|status\|report`, arms on runs, forking at claim, `pick` and `pick-packet`, blinding of unpicked pairs |
 | `cli/base_sync.py` | Host-side base refresh for PR tasks held by delivered-head ancestry |
 | `cli/worker_commands.py`, `cli/supervisor.py` | `worker start\|stop\|status`; the long-running `work` loop (`--watch`, `--max-parallel`): one `work --once` child process per run, up to `max_parallel_runs` globally and `max_runs_per_project` per project (default 1; siblings require disjoint declared paths) |
 | `config.py` | `~/.helmraiser/config.json`: defaults, subscription templates, load and save |

@@ -74,17 +74,13 @@ Slices, in order (1, 3 and 4 interactive; 2, 5 and 6 may run as Helmraiser tasks
 3. Done (163454b): a task forks into a pair when a worker claims it (one task row, two
    runs; Y from X's base commit), pair slot, sibling exemption, brake, exclusions,
    `experiment: false`. Known gaps are in CURRENT_STATE.md.
-4. 4a done (4abdcb3): `pick <task> X|Y|tie`, auto-pick by failure, `approve`/`land`
-   refused for an unpicked pair's merge, retry and abort on both arms, end conditions,
-   the dependency fix, `pair` and `awaiting_pick_count` in status. 4b next: blind
-   `wait`/`show`/`diff` by task, `pick-packet`, setups hidden in show/status/log/widget
-   until the pick, `--reveal`, `rework` refused on an unpicked arm, and `pick` reporting
-   a PR winner as PR opened rather than `landed`.
+4. Done (4abdcb3, a0f1299): pick, auto-pick, retry/abort on pairs, end conditions; blind
+   `show`/`log`/`wait`/`status`/`attach` with `--reveal`, `wait`/`show`/`diff` by task,
+   `pick-packet`, `rework` refused before the pick.
 5. Done (PR #39): `experiment report [<name>] [--json]` with the sign test. Its docs go
    in slice 6.
-6. Docs: reference, GLOSSARY (experiment, arm, control, pair, pick, decided pair, unpaired
-   run), the helmraiser-tasks "Picking a pair" section with the judge prompt, the widget's
-   "pair awaiting pick" label.
+6. Done (611b2ae, a0b97f1, this commit): GLOSSARY, the helmraiser-tasks "Picking a pair"
+   section with the judge prompt, the widget's "pair awaiting pick" label, AGENTS.md.
 
 ## Scout follow-ups
 

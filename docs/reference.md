@@ -48,6 +48,28 @@ judged wins and failure wins per arm, and ties. Ties count as picked, not arm wi
 JSON returns `{"experiment": <record or null>, "pairs": <counts>}`; errors return
 `{"error": "message"}` with exit code 1. Stopping with none active is an error.
 
+```bash
+helmraiser experiment report [<name>] [--json] [--data-dir ~/.helmraiser]
+```
+
+Report reads the named experiment, or else the active one, or else the most recently
+started. It shows:
+
+- the experiment and its frozen arms;
+- pair counts (total, picked, unpicked);
+- per arm:
+  - judged wins, wins by failure, and ties (a tie counts for both arms);
+  - over that arm's runs in picked pairs, the median cost, minutes and iterations, and
+    the count of each review verdict;
+  - rework rounds on its winning runs after their pick;
+- a two-sided exact sign test (binomial, p = 0.5) on judged pairs only, leaving out ties
+  and wins by failure: `n`, the wins for A and B, and `p_value`, which is null with no
+  judged pairs;
+- one `reasons` entry per picked pair: the task, the winning arm or `tie`, how it was
+  decided, the reason, the judge, and whether the pair was unblinded.
+
+Unpicked pairs name no arm. A missing experiment or a deferred ledger upgrade exits 1.
+
 The name must be nonblank, and arms must be exactly `A` (control) and `B`.
 Each arm may be empty or contain only:
 

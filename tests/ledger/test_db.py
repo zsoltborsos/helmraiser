@@ -458,6 +458,33 @@ class TestUpgradeFromVersion11:
         finally:
             conn.close()
 
+    def test_backup_runs_without_the_write_lock(self, tmp_path: Path, monkeypatch):
+        """A multi-gigabyte backup must not block other writers: they would time out."""
+        import helmraiser.ledger.db as db_module
+
+        path = tmp_path / "helmraiser.db"
+        make_v11_ledger(path)
+        real_connect = sqlite3.connect
+        probes: list[bool] = []
+
+        def connect(target, *args, **kwargs):  # type: ignore[no-untyped-def]
+            if str(target).endswith(".bak"):
+                probe = real_connect(path, timeout=0)
+                try:
+                    probe.execute("BEGIN IMMEDIATE")
+                    probe.execute("ROLLBACK")
+                    probes.append(True)
+                except sqlite3.OperationalError:
+                    probes.append(False)
+                finally:
+                    probe.close()
+            return real_connect(target, *args, **kwargs)
+
+        monkeypatch.setattr(db_module.sqlite3, "connect", connect)
+        with Ledger(path) as ledger:
+            assert ledger.experiments_available
+        assert probes == [True]
+
     def test_failed_backup_leaves_version_11(self, tmp_path: Path, distinct_stamps):
         path = tmp_path / "helmraiser.db"
         before = make_v11_ledger(path)

@@ -394,10 +394,12 @@ class Ledger:
         any ledger version but 11 whenever it opens the ledger again. So upgrade only
         when no run is in a ``LIVE_RUN_STATUSES`` status; otherwise open at 11, where
         everything but the experiment tables works, and say why in ``upgrade_pending``.
-        A later open upgrades. The upgrade backs the ledger up beside it first, then
-        adds the tables and sets the version in one ``BEGIN IMMEDIATE`` transaction,
-        checking the version and the runs again under that lock: another process may
-        be upgrading at the same moment.
+        A later open upgrades. The upgrade backs the ledger up beside it first, outside
+        any lock: a ledger can be gigabytes, and holding the write lock for the copy
+        would make every other opener time out. The backup is one read transaction, a
+        consistent snapshot. Then it adds the tables and sets the version in one
+        ``BEGIN IMMEDIATE`` transaction, checking the version and the runs again under
+        that lock; an opener that loses the race to another upgrader deletes its backup.
         """
         if self.read_only:
             self.upgrade_pending = (
@@ -406,30 +408,33 @@ class Ledger:
             return
         if self._defer_upgrade(self._get_conn()):
             return
-        with self._write() as conn:
-            if self._schema_version(conn) == SCHEMA_VERSION or self._defer_upgrade(conn):
-                return
-            stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
-            backup = self.db_path.with_name(
-                f"{self.db_path.name}.v{PREVIOUS_SCHEMA_VERSION}-{stamp}.bak"
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        backup = self.db_path.with_name(
+            f"{self.db_path.name}.v{PREVIOUS_SCHEMA_VERSION}-{stamp}.bak"
+        )
+        try:
+            with closing(sqlite3.connect(self.db_path, timeout=30)) as source:
+                with closing(sqlite3.connect(backup)) as target:
+                    source.backup(target)
+        except (OSError, sqlite3.Error) as exc:
+            if backup.is_file():
+                backup.unlink()
+            self.upgrade_pending = (
+                f"ledger upgrade to version {SCHEMA_VERSION} pending: "
+                f"backup to {backup} failed: {exc}"
             )
-            # From a second connection: a backup whose source connection is inside a
-            # write transaction never finishes. The write lock held here keeps any
-            # other process from committing, so this reader sees what ``conn`` sees.
-            try:
-                with closing(sqlite3.connect(self.db_path, timeout=30)) as source:
-                    with closing(sqlite3.connect(backup)) as target:
-                        source.backup(target)
-            except (OSError, sqlite3.Error) as exc:
-                if backup.is_file():
-                    backup.unlink()
-                self.upgrade_pending = (
-                    f"ledger upgrade to version {SCHEMA_VERSION} pending: "
-                    f"backup to {backup} failed: {exc}"
-                )
-                return
-            self._execute_schema(conn, _EXPERIMENT_SCHEMA)
-            conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            return
+        upgraded = False
+        try:
+            with self._write() as conn:
+                if self._schema_version(conn) == SCHEMA_VERSION or self._defer_upgrade(conn):
+                    return
+                self._execute_schema(conn, _EXPERIMENT_SCHEMA)
+                conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+                upgraded = True
+        finally:
+            if not upgraded and backup.is_file():
+                backup.unlink()
 
     def _defer_upgrade(self, conn: sqlite3.Connection) -> bool:
         """Set ``upgrade_pending`` and return True while runs are live."""

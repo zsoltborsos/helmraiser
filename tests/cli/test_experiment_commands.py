@@ -152,6 +152,18 @@ def test_start_refusals(tmp_path, config):
             assert ledger.active_experiment() is None
 
 
+@pytest.mark.parametrize("as_json", [False, True])
+def test_start_refuses_unrenderable_end_at_without_writing(tmp_path, config, as_json):
+    config["experiment"]["end_at"] = "9999-12-31T23:59:59.999999Z"
+    result = invoke(tmp_path, "start", *(["--json"] if as_json else []))
+    assert result.exit_code == 1
+    message = json.loads(result.output)["error"] if as_json else result.output
+    assert "end_at" in message
+    with Ledger(tmp_path / "helmraiser.db") as ledger:
+        assert ledger.active_experiment() is None
+        assert ledger.get_experiment("trial") is None
+
+
 def test_unique_name_and_active(tmp_path, config):
     assert invoke(tmp_path, "start").exit_code == 0
     assert "already active" in invoke(tmp_path, "start").output

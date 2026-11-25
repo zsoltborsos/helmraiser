@@ -51,6 +51,7 @@ def test_defaults_and_copy():
         ("end_at", "bad", "end_at"),
         ("end_at", 123, "end_at"),
         ("end_at", "0001-01-01T00:00:00+01:00", "end_at"),
+        ("end_at", "9999-12-31T23:59:59.999999Z", "end_at"),
         ("exclude_projects", "path", "exclude_projects"),
         ("exclude_projects", [""], "exclude_projects.0"),
     ],

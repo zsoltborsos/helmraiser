@@ -121,6 +121,8 @@ def validate_experiment(definition: Any, config: dict[str, Any]) -> ExperimentDe
                 if date.tzinfo is None
                 else date.astimezone(UTC).timestamp()
             )
+            # Float rounding at datetime's upper bound can produce year 10000.
+            datetime.fromtimestamp(end_at, UTC)
         except (ValueError, OverflowError) as exc:
             raise ExperimentError("end_at: expected an ISO date or datetime") from exc
     exclusions = data.get("exclude_projects", [])

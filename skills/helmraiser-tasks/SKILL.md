@@ -97,7 +97,8 @@ boundary. See [Isolation](../../docs/reference.md#isolation) for read rules and 
 ## 8. Review before final approval
 
 Inspect the diff, verify/evidence results and independent review before approving
-**delivery**. For `delivery: pr`, approve opens the PR and only then starts its PR
+**delivery**. Check the diff against the task file: does it do what the brief asked,
+within its paths? A spec-review skill (such as `/spec-review`, if installed) is one way. For `delivery: pr`, approve opens the PR and only then starts its PR
 CI. Every repository CI check applicable to touched files must already be a verify
 step: approval is not a trial CI run.
 

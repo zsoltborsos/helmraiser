@@ -69,8 +69,8 @@ the grilling session:
 Slices, in order (1, 3 and 4 interactive; 2, 5 and 6 may run as Helmraiser tasks):
 
 1. Done (b72bc5c, 98b1779): ledger schema 12; the live ledger is upgraded.
-2. `experiment start|stop|status` with arm validation landed (PR #37). Queued as a
-   Helmraiser task: `experiment-arm-overrides` (an arm applied to a run).
+2. Done (PR #37, #38): `experiment start|stop|status` with arm validation; an arm
+   applied to a run (`GovernedRun(arm=RunArm)`, the `experiment_arm` event).
 3. Forking and scheduling: fork at queue, pair slot, sibling overlap, brake, exclusions.
 4. Pair lifecycle: blind `wait`/`show`/`diff`, auto-pick, retry/abort/drop, `pick-packet`,
    `pick`, `approve` refused.

@@ -15,6 +15,7 @@ from helmraiser.config import load_config
 from helmraiser.ledger.db import Ledger
 from helmraiser.ledger.rundir import RunDir
 from helmraiser.leeboard import run_entries
+from helmraiser.loop import blinding
 from helmraiser.loop.review import parse_verdict
 from helmraiser.loop.spend import (
     WINDOWS,
@@ -179,7 +180,7 @@ def build_report(
             "escalated": bool(run["escalated"]),
             "review_rounds": sum(event["type"] == "review_feedback" for event in events),
             "verdict": run["verdict"],
-            "failure_reason": run["failure_reason"],
+            "failure_reason": blinding.failure_reason(ledger, run),
             "branch_name": run["branch_name"],
             "base": task_bases.get(run["task_id"]),
             "pr_url": run["pr_url"],
@@ -218,7 +219,10 @@ def build_report(
         if len(authored) > LEEBOARD_ENTRY_LIMIT:
             entry["leeboard_more"] = len(authored) - LEEBOARD_ENTRY_LIMIT
 
-    for _timestamp, model, cost in cost_entries(ledger, cutoff):
+    # The cost of an unpicked pair whose arms differ in a model is counted under
+    # ``hidden``: a sum per model would tell its two runs apart.
+    hidden = blinding.blinded_runs(ledger, str)
+    for _timestamp, model, cost in cost_entries(ledger, cutoff, hidden):
         by_model[model] = by_model.get(model, 0.0) + cost
 
     return {

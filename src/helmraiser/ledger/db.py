@@ -1690,6 +1690,18 @@ class Ledger:
             )
             return cursor.rowcount == 1
 
+    def set_pair_unblinded(self, pair_id: int) -> bool:
+        """Mark a pair whose setups were shown before its pick (``--reveal``). False
+        when it was marked already, or has a pick: a picked pair's setups are no
+        secret."""
+        self._require_experiments()
+        with self._write() as conn:
+            cursor = conn.execute(
+                "UPDATE pairs SET unblinded = 1 WHERE id = ? AND unblinded = 0 AND pick IS NULL",
+                (pair_id,),
+            )
+            return cursor.rowcount == 1
+
     # ── Events ────────────────────────────────────────────────────────
 
     def append_event(

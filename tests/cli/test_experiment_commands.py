@@ -143,6 +143,7 @@ def report_data(tmp_path, config):
                         "decided_by": decision,
                         "reason": reason,
                         "judge": judge,
+                        "unblinded": False,
                     }
                 )
                 if pick != "tie":

@@ -10,6 +10,7 @@ from typing import Any
 
 from helmraiser.ledger.db import Ledger
 from helmraiser.ledger.rundir import RunDir
+from helmraiser.loop.blinding import HIDDEN, blinded_runs
 from helmraiser.loop.review import parse_verdict
 from helmraiser.loop.spend import model_limit, provider
 
@@ -94,15 +95,32 @@ def build_model_report(
     _check_grouping(by)
     now = now if now is not None else time.time()
     cutoff = now - since_seconds
-    groups: dict[str | tuple[str | None, ...], list[dict[str, Any]]] = {}
+    # The runs of unpicked pairs whose arms differ in a model are one group,
+    # ``hidden``: a row per model or setup would say which arm each of them ran.
+    hidden = blinded_runs(ledger, str)
+
+    def shown_setup(run: dict[str, Any]) -> dict[str, str | None]:
+        setup = run_setup(run)
+        return dict.fromkeys(setup, HIDDEN) if run["run_id"] in hidden else setup
+
+    groups: dict[tuple[str | None, ...], list[dict[str, Any]]] = {}
     for run in ledger.list_runs(since=cutoff):
-        key = tuple(run_setup(run).values()) if by == "setup" else str(run["model_implement"])
+        setup = shown_setup(run)
+        key = tuple(setup.values()) if by == "setup" else (setup["implement"],)
         groups.setdefault(key, []).append(run)
     rows = []
     for runs in groups.values():
-        model = str(runs[0]["model_implement"])
-        setup = run_setup(runs[0]) if by == "setup" else None
-        rows.append(_model_row(ledger, data_dir, model, runs, config, setup=setup))
+        setup = shown_setup(runs[0])
+        rows.append(
+            _model_row(
+                ledger,
+                data_dir,
+                str(setup["implement"]),
+                runs,
+                config,
+                setup=setup if by == "setup" else None,
+            )
+        )
     rows.sort(
         key=lambda row: (
             -int(row["runs"]),

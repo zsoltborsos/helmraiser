@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from calendar import monthrange
 from collections import defaultdict
+from collections.abc import Collection
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from helmraiser.ledger.db import Ledger
 from helmraiser.loop import live_usage as _live_usage
+from helmraiser.loop.blinding import HIDDEN, blinded_runs
 
 WINDOWS = {"5h": 5 * 3600, "7d": 7 * 86400, "30d": 30 * 86400}
 
@@ -30,14 +32,27 @@ def provider(model: str) -> str:
     return model.split("/", 1)[0]
 
 
-def cost_entries(ledger: Ledger, since: float) -> list[tuple[float, str, float]]:
-    """Timestamp/model/cost entries, including each run's non-iteration remainder."""
+def cost_entries(
+    ledger: Ledger, since: float, hidden: Collection[str] = ()
+) -> list[tuple[float, str, float]]:
+    """Timestamp/model/cost entries, including each run's non-iteration remainder.
+    The entries of the runs in ``hidden`` (run IDs) name ``hidden`` as their model."""
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for row in ledger.spend_rows(since):
         grouped[str(row["run_id"])].append(row)
 
     entries: list[tuple[float, str, float]] = []
-    for rows in grouped.values():
+    for run_id, rows in grouped.items():
+        if run_id in hidden:
+            rows = [
+                {
+                    **row,
+                    "model": HIDDEN,
+                    "model_plan": HIDDEN if row["model_plan"] is not None else None,
+                    "model_review": HIDDEN,
+                }
+                for row in rows
+            ]
         first = rows[0]
         plan_cost = float(first["plan_cost_usd"] or 0.0)
         plan_model = first["model_plan"]
@@ -67,13 +82,19 @@ def cost_entries(ledger: Ledger, since: float) -> list[tuple[float, str, float]]
     return sorted(entries)
 
 
-def spend_entries(ledger: Ledger, since: float) -> list[tuple[float, str, float]]:
-    """Timestamp/provider/cost entries at or after ``since``."""
-    return [(ts, provider(model), usd) for ts, model, usd in cost_entries(ledger, since)]
+def spend_entries(
+    ledger: Ledger, since: float, hidden: Collection[str] = ()
+) -> list[tuple[float, str, float]]:
+    """Timestamp/provider/cost entries at or after ``since``; ``hidden`` as for
+    ``cost_entries``."""
+    return [(ts, provider(model), usd) for ts, model, usd in cost_entries(ledger, since, hidden)]
 
 
 def spend_by_provider(ledger: Ledger, now: float) -> dict[str, dict[str, float]]:
-    entries = spend_entries(ledger, now - WINDOWS["30d"])
+    """Dollars spent per provider and window, for display. The runs of an unpicked
+    pair whose arms differ in a provider are counted under ``hidden``: a provider's sum
+    would tell them apart."""
+    entries = spend_entries(ledger, now - WINDOWS["30d"], blinded_runs(ledger, provider))
     totals: dict[str, dict[str, float]] = {}
     for timestamp, name, usd in entries:
         if usd <= 0:

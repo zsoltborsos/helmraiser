@@ -100,6 +100,8 @@ def build_experiment_report(ledger: Ledger, name: str | None = None) -> dict[str
                     "decided_by": pair["decided_by"],
                     "reason": pair["reason"],
                     "judge": pair["judge"],
+                    # The setups were shown before the pick (``--reveal``).
+                    "unblinded": bool(pair["unblinded"]),
                 }
             )
         for arm in ("A", "B"):

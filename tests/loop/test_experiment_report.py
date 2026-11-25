@@ -102,6 +102,7 @@ def test_outcomes_and_reasons(ledger, experiment, pair_factory):
             "decided_by": pair["decided_by"],
             "reason": pair["reason"],
             "judge": pair["judge"],
+            "unblinded": False,
         }
         for pair, winner in [
             (first, "A"),

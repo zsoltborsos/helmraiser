@@ -12,6 +12,7 @@ from typing import Any
 from helmraiser.code_snapshot import without_snapshot
 from helmraiser.ledger.db import PARKED_RUN_STATUSES, TERMINAL_RUN_STATUSES, Ledger
 from helmraiser.ledger.scheduling import variant_of
+from helmraiser.loop.blinding import HIDDEN, blind_for
 from helmraiser.loop.model_report import run_setup, setup_label
 from helmraiser.utils.markdown import parse_frontmatter
 
@@ -124,12 +125,14 @@ def run_facts(ledger: Ledger, run: dict[str, Any]) -> dict[str, Any]:
         }
         for event in ledger.events(run["run_id"], types=("review_verdict",))
     ]
+    # A run of an unpicked pair stays blind here too: only its pick reveals it.
+    blind = blind_for(ledger, run)
     return {
         "run_id": run["run_id"],
         "task_id": run["task_id"],
         "project": run["project"],
         "status": run["status"],
-        "failure_reason": run["failure_reason"],
+        "failure_reason": blind.text(run["failure_reason"]) if blind else run["failure_reason"],
         "iterations": len(ledger.iterations(run["run_id"])),
         "escalated": bool(run["escalated"]),
         "minutes": (
@@ -138,7 +141,7 @@ def run_facts(ledger: Ledger, run: dict[str, Any]) -> dict[str, Any]:
             else None
         ),
         "cost_usd": run["cost_usd"],
-        "setup": run_setup(run),
+        "setup": dict.fromkeys(run_setup(run), HIDDEN) if blind else run_setup(run),
         "brief": brief,
         "reviews": reviews,
         "diff": _run_diff(run),

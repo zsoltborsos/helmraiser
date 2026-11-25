@@ -163,6 +163,7 @@ def _print_report(report: dict[str, Any]) -> None:
         typer.echo(
             f"  {reason['task_id']}: {reason['winner']} ({reason['decided_by']}); "
             f"reason: {reason['reason']}; judge: {reason['judge']}"
+            + ("; unblinded" if reason["unblinded"] else "")
         )
 
 

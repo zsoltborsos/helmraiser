@@ -10,7 +10,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from helmraiser.ledger.db import TERMINAL_RUN_STATUSES, Ledger
+from helmraiser.ledger.db import TERMINAL_RUN_STATUSES, Ledger, pair_loser
+from helmraiser.loop.blinding import Blind
 
 LABELS = ("X", "Y")
 # How a run ends without delivering anything.
@@ -34,6 +35,8 @@ class Arm:
     # The run has reached its merge decision (a ``merge_decision`` event), whatever
     # became of it since.
     reached_merge: bool
+    # The run's failure reason as it may be shown: without model names until the pick.
+    failure: str | None = None
 
     @property
     def run_id(self) -> str:
@@ -57,8 +60,7 @@ class Arm:
         status = str(self.run["status"])
         if status == "awaiting_approval":
             return f"awaiting {self.pending or 'an'} approval"
-        reason = self.run["failure_reason"]
-        return f"{status} ({reason})" if reason and self.failed else status
+        return f"{status} ({self.failure})" if self.failure and self.failed else status
 
 
 def other(label: str) -> str:
@@ -79,11 +81,15 @@ def arms(ledger: Ledger, pair: dict[str, Any]) -> dict[str, Arm] | None:
         if run is None:
             return None
         pending = ledger.pending_approval(str(run_id))
+        failure = run["failure_reason"]
+        if failure and pair["pick"] is None:
+            failure = Blind(ledger, pair).text(failure)
         result[label] = Arm(
             label,
             run,
             str(pending["kind"]) if pending else None,
             bool(ledger.events(str(run_id), types=("merge_decision",))),
+            failure,
         )
     return result
 
@@ -235,6 +241,32 @@ def awaiting_pick(ledger: Ledger, pair: dict[str, Any]) -> bool:
         and all(arm.settled for arm in states.values())
         and any(arm.awaiting_merge for arm in states.values())
     )
+
+
+def pair_state(pair: dict[str, Any], states: dict[str, Arm]) -> str:
+    """Where the pair stands for its coordinator: ``picked``; ``needs_approval`` (an
+    arm awaits a plan or scope approval); ``awaiting_pick`` (both arms are settled and
+    one can be delivered); ``failed`` (both arms are over, neither can be delivered);
+    else ``under_way``."""
+    if pair["pick"] is not None:
+        return "picked"
+    if any(
+        arm.run["status"] == "awaiting_approval" and not arm.awaiting_merge
+        for arm in states.values()
+    ):
+        return "needs_approval"
+    if not all(arm.settled for arm in states.values()):
+        return "under_way"
+    return "awaiting_pick" if any(arm.awaiting_merge for arm in states.values()) else "failed"
+
+
+def picked_arm(pair: dict[str, Any], states: dict[str, Arm]) -> Arm | None:
+    """The arm that a picked pair's pick chose. A tie's is the arm that ``pick`` did
+    not reject; None while a tie shows no single rejected arm, and without a pick."""
+    if pair["pick"] in LABELS:
+        return states[str(pair["pick"])]
+    loser = pair_loser(pair, {arm.run_id: arm.run for arm in states.values()})
+    return next((arm for arm in states.values() if arm.run_id != loser), None) if loser else None
 
 
 def run_pair(ledger: Ledger, run_id: str) -> dict[str, Any] | None:

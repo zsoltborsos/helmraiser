@@ -172,3 +172,39 @@ How to split:
   callers in batches, then contract (remove the old form), each as its own task.
 - Show the owner the breakdown before queueing more than a few tasks.
 
+
+## 12. Picking a pair
+
+While an experiment is active, a task can run as a **pair**: two runs labelled `X` and `Y`,
+whose setups stay hidden until the pick. `helmraiser status` counts pairs awaiting a pick
+(`awaiting_pick_count`); `helmraiser wait <task>` returns when one needs you. You queued
+the task and wrote its brief, so you are not a blind judge: do not judge it yourself.
+
+1. Handle each arm's plan or scope approvals as for any run. `approve` and `rework` are
+   refused for an unpicked pair's merge; a pair whose other arm failed is picked
+   automatically, and you then review the survivor as an ordinary run.
+2. Run `helmraiser pick-packet <task>`. It writes one Markdown file with the brief, both
+   diffs, verify and evidence results, Helmraiser's reviews, cost, time and iterations,
+   and nothing that names a setup. Do not open `show --reveal` or `log --reveal`: they
+   unblind the pair.
+3. Start a **fresh** sub-agent (in Claude Code the `oracle` agent) with no other context:
+   give it the judge prompt below and the packet's path, nothing else. Do not add your
+   view of the task, the runs, or which you prefer.
+4. Run `helmraiser pick <task> X|Y|tie --reason "<the judge's reason>" --judge
+   "<harness>/<agent> (<model>, <effort>)"`, copying its choice. Pick rejects the other
+   arm (its branch is kept), delivers the chosen one as `approve` does, and reveals the
+   setups. For PR delivery, then `helmraiser land <run>` as usual.
+5. Rework only the winner, after the pick, if it needs it: that rework counts against it.
+
+The judge prompt, given verbatim:
+
+```text
+You are judging two independent attempts, X and Y, at the same coding task. Read only
+the file at <PACKET PATH>; do not open other files or run commands. Decide which result
+you would rather merge as it is: correctness against the brief first, then whether it
+stays within what the brief asked, then test quality, then simplicity and fit with the
+code around it. Cost, time and iterations break near-ties only. If you cannot prefer one
+with reasonable confidence, answer tie. Reply with exactly two lines:
+PICK: X | Y | tie
+REASON: <one or two sentences naming the deciding difference>
+```

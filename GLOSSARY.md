@@ -246,3 +246,39 @@ _Avoid_: Sidecar, dependency
 Trying a project's setup and commands in the sandbox outside any run, to see whether they
 work there.
 _Avoid_: Dry run, sandbox test
+
+### Experiments
+
+**Experiment**:
+A comparison of two setups on live work: while one is active, each task a worker starts
+runs as a pair, one run per arm.
+_Avoid_: Evaluation mode, A/B test (for the whole thing)
+
+**Arm**:
+One of an experiment's two setups, `A` or `B`, overriding a closed list: stage models,
+skills and `pi_rpc_implement`.
+_Avoid_: Variant (a variant is a separate task, see `compare --variant-of`), setup
+
+**Control**:
+Arm `A`, the setup in use before the experiment.
+_Avoid_: Baseline, default arm
+
+**Pair**:
+The two runs of one task under an experiment, labelled `X` and `Y` at random so their arms
+stay hidden until the pick.
+_Avoid_: Fork, twin
+
+**Pick**:
+The decision for a pair: `X`, `Y` or `tie`. The picked run is delivered and the other is
+rejected, keeping its branch.
+_Avoid_: Vote, verdict (a verdict is the review's)
+
+**Decided pair**:
+A pair with a pick, judged by a coordinator's judge, a tie, or won **by failure** when only
+one arm reached merge approval. Decided pairs count toward the experiment's end.
+_Avoid_: Finished pair, completed pair
+
+**Unpaired run**:
+A run of a task started during an experiment without a pair, on the control arm, because
+codex usage was at or above the quota brake. It is outside the comparison.
+_Avoid_: Single-arm run, solo run

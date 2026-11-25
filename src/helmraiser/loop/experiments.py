@@ -1,12 +1,13 @@
-"""Validation of frozen live experiment definitions (not arm execution)."""
+"""Validation of frozen live experiment definitions and per-run arm values."""
 
 from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 from helmraiser.pi import skills
@@ -26,6 +27,48 @@ class ExperimentDefinition:
     end_at: float | None
     quota_brake: float
     exclude_projects: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class RunArm:
+    """One run's immutable overrides, converted from a validated arm."""
+
+    name: str
+    models: Mapping[str, ModelSpec] = field(default_factory=dict)
+    skills: str | None = None
+    pi_rpc_implement: bool | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "models", MappingProxyType(dict(self.models)))
+
+    @classmethod
+    def from_overrides(cls, name: str, overrides: Mapping[str, Any]) -> RunArm:
+        return cls(
+            name,
+            models={
+                stage: ModelSpec.parse(value)
+                for stage, value in overrides.get("models", {}).items()
+            },
+            skills=overrides.get("skills"),
+            pi_rpc_implement=overrides.get("pi_rpc_implement"),
+        )
+
+    def overrides(self) -> dict[str, Any]:
+        """A fresh JSON-ready payload, retaining explicitly disabled RPC."""
+        result: dict[str, Any] = {}
+        if self.models:
+            result["models"] = {
+                stage: {
+                    "model": model.model,
+                    **({"thinking": model.thinking} if model.thinking is not None else {}),
+                }
+                for stage, model in self.models.items()
+            }
+        if self.skills is not None:
+            result["skills"] = self.skills
+        if self.pi_rpc_implement is not None:
+            result["pi_rpc_implement"] = self.pi_rpc_implement
+        return result
 
 
 def _mapping(value: Any, key: str, allowed: set[str]) -> Mapping[str, Any]:

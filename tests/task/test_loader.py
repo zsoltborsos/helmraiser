@@ -253,6 +253,20 @@ class TestRoundTrip:
             spec, budget_explicit=True
         )
 
+    @pytest.mark.parametrize("value", [False, True, None])
+    def test_experiment_key_round_trips(self, tmp_path: Path, config: dict, value: bool | None):
+        fm = {"id": "t", **({"experiment": value} if value is not None else {})}
+        spec = parse_task(serialize_frontmatter(fm, "body"), tmp_path / "t.md", config)
+        assert spec.experiment is (value is not False)
+        assert "experiment" not in spec.extra
+        rendered = parse_frontmatter(render_task(spec))["frontmatter"]
+        # Only the opt-out is written.
+        assert rendered.get("experiment", True) is spec.experiment
+        assert ("experiment" in rendered) is (value is False)
+        assert parse_task(render_task(spec), spec.source_path, config).experiment is (
+            value is not False
+        )
+
     def test_implicit_budget_round_trips_as_explicit(self, tmp_path: Path, config: dict):
         spec = parse_task("---\nid: t\n---\nbody\n", tmp_path / "t.md", config)
         assert spec.budget_explicit is False

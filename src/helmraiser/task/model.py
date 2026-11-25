@@ -175,6 +175,8 @@ class TaskSpec:
     paths: tuple[str, ...] | None = None
     # Records a frontmatter budget mapping, not whether a resolved budget exists.
     budget_explicit: bool = False
+    # ``experiment: false`` keeps the task out of the active live experiment.
+    experiment: bool = True
 
     @property
     def task_id(self) -> str:

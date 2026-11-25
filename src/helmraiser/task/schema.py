@@ -56,6 +56,8 @@ def validate_task(task: TaskSpec) -> list[str]:
         errors.append(f"policy must be one of {', '.join(POLICIES)}")
     if not isinstance(task.plan, bool):
         errors.append("plan must be a boolean")
+    if not isinstance(task.experiment, bool):
+        errors.append("experiment must be a boolean")
     if task.delivery not in DELIVERIES:
         errors.append(f"delivery must be one of {', '.join(DELIVERIES)}")
     if task.base is not None:

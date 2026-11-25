@@ -48,6 +48,7 @@ SCHEMA_KEYS: frozenset[str] = frozenset(
         "origin",
         "depends_on",
         "paths",
+        "experiment",
     }
 )
 
@@ -243,6 +244,7 @@ def parse_task(content: str, source_path: Path, config: dict[str, Any]) -> TaskS
             else frozenset()
         ),
         plan_explicit="plan" in fm,
+        experiment=fm.get("experiment", True),
         depends_on=depends_on,
         paths=paths,
     )
@@ -299,6 +301,8 @@ def spec_to_frontmatter(spec: TaskSpec) -> dict[str, Any]:
         fm["origin"] = dict(spec.origin)
     if spec.plan_explicit or spec.plan is True:
         fm["plan"] = spec.plan
+    if spec.experiment is not True:
+        fm["experiment"] = spec.experiment
     fm["delivery"] = spec.delivery
     if spec.base is not None:
         fm["base"] = spec.base

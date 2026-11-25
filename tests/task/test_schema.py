@@ -103,6 +103,19 @@ class TestDraft:
         errors = validate_task(make_spec(tmp_path, plan=value))  # type: ignore[arg-type]
         assert "plan must be a boolean" in errors
 
+    @pytest.mark.parametrize("value", ["no", "false", 0, None])
+    def test_experiment_must_be_boolean(self, tmp_path: Path, value: object):
+        errors = validate_task(make_spec(tmp_path, experiment=value))  # type: ignore[arg-type]
+        assert "experiment must be a boolean" in errors
+        assert not validate_task(make_spec(tmp_path, experiment=False))
+
+    def test_experiment_string_in_a_task_file_is_invalid(self, tmp_path: Path):
+        text = (
+            f'---\nid: demo-task\ntitle: Demo\nproject: {tmp_path}\nexperiment: "no"\n---\nbody\n'
+        )
+        spec = parse_task(text, tmp_path / "demo-task.md", {})
+        assert "experiment must be a boolean" in validate_task(spec)
+
     def test_empty_verify_run_rejected_even_in_draft(self, tmp_path: Path):
         spec = make_spec(tmp_path, verify=(VerifyStep("tests", "   "),))
         assert any("empty run" in e for e in validate_task(spec))

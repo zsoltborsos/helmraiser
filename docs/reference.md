@@ -59,6 +59,31 @@ Each arm may be empty or contain only:
   `~/.local/share/helmraiser/skill-sets/`. Paths and traversal are refused.
 - `pi_rpc_implement`: a boolean.
 
+Internally, a `GovernedRun` explicitly supplied a `RunArm` applies its model overrides
+on top of the task's models, including thinking levels; unnamed stages retain their
+task models. The original task and its snapshot are unchanged. Omitted arm fields
+inherit the existing run behavior.
+
+All sessions in that run follow the arm's skill mode:
+
+- `default`: stage skills under `~/.local/share/helmraiser/skills/<stage>/`, then
+  project skills; without the stage folder, pi discovers skills itself.
+- `none`: `--no-skills`, then only the project's own skills.
+- `discover`: no skill flags; pi discovers skills itself.
+- A named set: sorted skill directories from the layout below, then project skills:
+
+  ```text
+  ~/.local/share/helmraiser/skill-sets/<name>/<stage>/<skill>/SKILL.md
+  ```
+
+  A missing named stage means project-only skills with `--no-skills`, never discovery.
+
+Explicit `pi_rpc_implement` overrides (including `false`) apply only to implement
+sessions, including feedback and fallback sessions; plan and review never use RPC.
+One `experiment_arm` event at run start records the arm name, normalized overrides
+and the original values replaced, even if preflight then fails. Continuation via
+`GovernedRun.resume()` retains the recorded arm without emitting another arm event.
+
 Only overrides are stored, not expanded model profiles. `end_pairs` defaults to 30
 and must be a positive integer. Optional `end_at` accepts an ISO date or datetime;
 date-only and naive datetimes mean UTC, and offsets are converted to UTC for storage.
@@ -66,8 +91,9 @@ An unset end date is shown explicitly. `quota_brake` defaults to 0.85 and must b
 finite, greater than zero and at most one. `exclude_projects` defaults to an empty
 list; nonblank paths are expanded and resolved before storage.
 
-**This slice is lifecycle-only:** forking, applying arms to runs, picking,
-automatic end conditions, and quota-brake enforcement are not built yet.
+Arm application is available internally, but `experiment start` does not create or
+assign paired runs. Forking, picking, automatic end conditions and quota-brake
+enforcement are not built yet.
 
 ## Requirements
 

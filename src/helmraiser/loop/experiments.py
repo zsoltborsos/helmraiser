@@ -74,9 +74,9 @@ class RunArm:
 def _mapping(value: Any, key: str, allowed: set[str]) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise ExperimentError(f"{key}: expected a mapping")
-    for field in value:
-        if field not in allowed:
-            raise ExperimentError(f"{key}.{field}: unknown key")
+    for name in value:
+        if name not in allowed:
+            raise ExperimentError(f"{key}.{name}: unknown key")
     return value
 
 

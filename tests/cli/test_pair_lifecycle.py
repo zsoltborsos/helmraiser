@@ -146,6 +146,7 @@ def test_pick_rejects_the_loser_then_delivers_the_winner(
                 "run_id": x["run_id"],
                 "status": "landed",
                 "branch_name": x["branch_name"],
+                "delivery": "merge",
                 "head": head,
             },
             "loser": {
@@ -161,6 +162,7 @@ def test_pick_rejects_the_loser_then_delivers_the_winner(
                 "X": {"arm": "B", "overrides": ARMS["B"]},
                 "Y": {"arm": "A", "overrides": {}},
             },
+            "unblinded": False,
             "experiment": {"name": "e", "status": "active", "end_reason": None},
         }
     else:
@@ -206,6 +208,7 @@ def test_pick_delivers_a_pull_request_and_the_last_pick_ends_the_experiment(
         "run_id": y["run_id"],
         "status": "landed",
         "branch_name": y["branch_name"],
+        "delivery": "pr",
         "pr_url": "https://example.test/pr/1",
     }
     assert payload["loser"]["run_id"] == x["run_id"] and payload["loser"]["status"] == "failed"

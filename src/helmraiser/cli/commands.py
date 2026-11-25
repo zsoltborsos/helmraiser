@@ -2455,6 +2455,15 @@ def _rework_run(
     cleanup: ExitStack,
 ) -> None:
     """Recheck admission and hand back while holding this run's rework lock."""
+    pair = ledger.pair_for_run(run)
+    if pair is not None and pair["pick"] is None:
+        # A rework would change what the pick judges, and count against one arm.
+        _fail(
+            "this run is one arm of a pair; pick first, then rework the winner "
+            f"(helmraiser pick {pair['task_id']})",
+            as_json=as_json,
+            code=EXIT_VALIDATION,
+        )
     row, task = _awaiting_run(
         ledger, run, config, as_json=as_json, statuses=("awaiting_approval", "landed")
     )
@@ -3177,7 +3186,7 @@ def register_commands(app: typer.Typer) -> None:
     from helmraiser.cli.experiment_commands import experiment_app
     from helmraiser.cli.land_commands import land
     from helmraiser.cli.monitor import register_monitor_commands  # avoids an import cycle
-    from helmraiser.cli.pick_commands import pick
+    from helmraiser.cli.pick_commands import pick, pick_packet
     from helmraiser.cli.preflight_commands import preflight
     from helmraiser.cli.scout_commands import drafts_app, scout
 
@@ -3197,6 +3206,7 @@ def register_commands(app: typer.Typer) -> None:
     app.command("reject")(reject)
     # A task id starts with the project key, which starts with a dash.
     app.command("pick", context_settings={"ignore_unknown_options": True})(pick)
+    app.command("pick-packet", context_settings={"ignore_unknown_options": True})(pick_packet)
     app.command("retry", context_settings={"ignore_unknown_options": True})(retry)
     app.command("record-landed")(record_landed)
     app.command("rework")(rework)

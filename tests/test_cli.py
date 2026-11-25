@@ -132,6 +132,7 @@ def test_root_app_exposes_only_the_governed_loop_commands():
         "clean",
         "reject",
         "pick",
+        "pick-packet",
         "retry",
         "record-landed",
         "rework",

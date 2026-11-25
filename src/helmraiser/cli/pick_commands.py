@@ -1,8 +1,10 @@
-"""``helmraiser pick``: decide a pair, deliver the chosen arm and reveal the setups."""
+"""``helmraiser pick``: decide a pair, deliver the chosen arm and reveal the setups.
+``helmraiser pick-packet``: write the file its judge reads."""
 
 from __future__ import annotations
 
 import json
+import sqlite3
 from pathlib import Path
 from typing import Any, NoReturn
 
@@ -11,8 +13,66 @@ import typer
 from helmraiser.cli import commands
 from helmraiser.cli.monitor import _resolve_wait_ref
 from helmraiser.loop import pairs
+from helmraiser.loop.packet import build_packet
 
 _CHOICES = {"x": "X", "y": "Y", "tie": "tie"}
+
+
+def packet_path(data_dir: Path, task_id: str) -> Path:
+    """``<data-dir>/pairs/<task id slug>/packet.md``."""
+    return data_dir / "pairs" / commands.slugify(task_id) / "packet.md"
+
+
+def pick_packet(
+    task: str = typer.Argument(
+        ..., help="Task id (short id or <project-key>:<id>), or a run of the pair"
+    ),
+    out: Path | None = typer.Option(
+        None, "--out", help="Where to write it (default <data-dir>/pairs/<task>/packet.md)"
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable output"),
+    data_dir: Path | None = typer.Option(None, "--data-dir", help="Override HELMRAISER_DATA_DIR"),
+) -> None:
+    """Write the one file a judge needs to pick between a pair's runs X and Y: the
+    task's brief and, per run, the outcome, cost, verify and evidence results, the
+    review and the diff. It names no model, skill, arm, run, branch or worktree."""
+
+    def refuse(message: str) -> NoReturn:
+        commands._fail(message, as_json=as_json, code=commands.EXIT_ERROR)
+
+    base = commands._data_dir(data_dir)
+    try:
+        ledger = commands._ledger(data_dir, read_only=True)
+    except (OSError, sqlite3.Error, ValueError) as exc:
+        refuse(f"cannot read ledger: {exc}")
+    with ledger:
+        kind, ref = _resolve_wait_ref(ledger, task, as_json=as_json, error_code=commands.EXIT_ERROR)
+        pair = ledger.pair_for_task(ref) if kind == "task" else ledger.pair_for_run(ref)
+        if pair is None:
+            refuse(f"{kind} {ref} has no pair")
+        task_id = str(pair["task_id"])
+        if pair["pick"] is not None:
+            refuse(
+                f"the pair of task {task_id} is already picked "
+                f"({pair['pick']}, decided by {pair['decided_by']})"
+            )
+        states = pairs.arms(ledger, pair)
+        if states is None:
+            refuse(f"the pair of task {task_id} has no runs")
+        if pairs.pair_state(pair, states) != "awaiting_pick":
+            refuse(
+                f"the pair of task {task_id} cannot be picked yet: "
+                + "; ".join(f"arm {arm.label} is {arm.describe()}" for arm in states.values())
+                + "; a packet needs both arms awaiting merge approval or over, and one to deliver"
+            )
+        text = build_packet(ledger, pair, states, base)
+    path = out.expanduser() if out is not None else packet_path(base, task_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    if as_json:
+        typer.echo(json.dumps({"task_id": task_id, "path": str(path), "bytes": len(text.encode())}))
+    else:
+        typer.echo(str(path))
 
 
 def pick(
@@ -102,8 +162,8 @@ def pick(
     won: dict[str, Any] = {
         "label": winner,
         "run_id": states[winner].run_id,
-        "status": "landed",
         "branch_name": winner_row["branch_name"],
+        "delivery": winner_row["delivery"],
     }
     error: str | None = None
     try:
@@ -118,7 +178,10 @@ def pick(
         won.update({"pr_url": pr_url} if pr_url else {"head": head})
     except commands.MergeApprovalRefused as exc:
         error = str(exc)
-        won["status"] = "awaiting_approval"
+    # The run says what became of it: ``landed`` once its merge or its pull request
+    # is made, ``awaiting_approval`` after a refused delivery.
+    delivered = ledger.get_run(states[winner].run_id)
+    won["status"] = delivered["status"] if delivered is not None else None
     experiment = ledger.experiment_by_id(int(pair["experiment_id"]))
     payload: dict[str, Any] = {
         "picked": picked,
@@ -130,6 +193,7 @@ def pick(
         "winner": won,
         "loser": lost,
         "reveal": pairs.reveal(ledger, pair),
+        "unblinded": pair["unblinded"],
         "experiment": (
             {key: experiment[key] for key in ("name", "status", "end_reason")}
             if experiment is not None
@@ -168,13 +232,16 @@ def _print_pick(payload: dict[str, Any]) -> None:
             f"helmraiser approve {won['run_id']}"
         )
     elif "pr_url" in won:
-        typer.echo(f"  {won['label']} delivered: run {won['run_id']} → {won['pr_url']}")
+        typer.echo(f"  {won['label']} PR opened: run {won['run_id']} → {won['pr_url']}")
+        typer.echo(f"  it is not merged yet: helmraiser land {won['run_id']}")
     else:
         typer.echo(f"  {won['label']} landed: run {won['run_id']} → {won['head'][:12]}")
     for label, arm in payload["reveal"].items():
         typer.echo(
             f"  {label} was arm {arm['arm']}: {json.dumps(arm['overrides'], sort_keys=True)}"
         )
+    if payload["unblinded"]:
+        typer.echo("  the pair was unblinded before this pick (--reveal)")
     experiment = payload["experiment"]
     if experiment is not None and experiment["status"] != "active":
         typer.echo(f"  experiment {experiment['name']} ended: {experiment['end_reason']}")

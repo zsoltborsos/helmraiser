@@ -4,6 +4,8 @@
 
 `helmraiser eval review|report` (`loop/eval_review.py`) replays past review stages from their stored prompts at the verified reviewed commit (withholding evidence files written after that review) under seven reviewer variants (baseline, no skills, curated skills, Spec plus Standards, both, and a review procedure on the single or Spec reviewer), optionally repeated (`--repeat`) or on another review model (`--review-model`), judges findings blind against labelled cases and reports recall (mean and spread across reps), severity, clean-case findings, reading effort and cost; nothing in the live loop changes.
 
+Worker pi sessions (intake, scout, plan, implement including the fallback, and review) whose stage folder `~/.local/share/helmraiser/skills/<stage>/` exists run with `--no-skills`, the folder's skills and then the project's own (`pi/skills.py`); process isolation opens each passed skill directory and its symlink targets for reading. Without the folder pi's own skill discovery is unchanged. Helmraiser ships no worker skills.
+
 Reports fetch run-authored Leeboard entries with one bulk CLI listing per nonempty report and parse task bases once per reported task.
 
 Related-test detection requires the same language, restricts name matching to the nearest tracked package root, and matches full Python module paths or resolved JS/TS imports (including dotted stems, directory indexes, and ESM TypeScript extension substitution).

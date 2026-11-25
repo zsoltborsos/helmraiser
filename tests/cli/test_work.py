@@ -13,6 +13,7 @@ from typer.testing import CliRunner
 from helmraiser.cli import app, commands, resources
 from helmraiser.isolation import process as process_module
 from helmraiser.ledger.db import Ledger
+from helmraiser.pi import skills
 from helmraiser.storage.state import StateManager
 from helmraiser.task.project import worktree_manager
 from tests.cli.test_held_base_sync import seed_pr_dependency_chain
@@ -315,6 +316,28 @@ class TestDryRun:
         assert Ledger(data_dir / "helmraiser.db").get_task(task_id)["status"] == "queued"
         assert not (tmp_project / ".helmraiser" / "worktrees").exists()
         assert not (data_dir / "runs").exists()
+
+    def test_shows_the_implement_stage_skills(
+        self, tmp_project: Path, data_dir: Path, fake_pi: FakePi
+    ):
+        tdd = skills.SKILLS_ROOT / "implement" / "tdd"
+        own = tmp_project / ".agents" / "skills" / "own"
+        for folder in (tdd, own):
+            folder.mkdir(parents=True)
+            (folder / "SKILL.md").write_text("---\nname: x\ndescription: test\n---\n")
+        queue_task(tmp_project, data_dir)
+        result = work("--dry-run", "--json", data_dir=data_dir)
+        assert result.exit_code == 0, result.output
+        plan = json.loads(result.output)
+        argv = plan["argv"]
+        start = argv.index("--no-skills")
+        # The run's worktree will carry the project's skills at the same place.
+        assert argv[start : argv.index("--", start)] == [
+            "--no-skills",
+            *("--skill", str(tdd)),
+            *("--skill", str(Path(plan["worktree"]) / ".agents" / "skills" / "own")),
+        ]
+        assert fake_pi.calls() == []
 
     def test_prints_argv_and_prompts_and_spawns_nothing(
         self, tmp_project: Path, data_dir: Path, fake_pi: FakePi

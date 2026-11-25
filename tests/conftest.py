@@ -55,6 +55,7 @@ def isolate_default_paths(tmp_path, monkeypatch):
     """Keep runtime defaults and import-time config paths inside this test."""
     import helmraiser.config as config
     from helmraiser.isolation import process
+    from helmraiser.pi import skills
 
     process.reset_srt_cache()
     # Like the real default (/tmp/claude), the default sandbox tmpdir sits under /tmp,
@@ -66,6 +67,8 @@ def isolate_default_paths(tmp_path, monkeypatch):
     monkeypatch.setenv("HELMRAISER_CONFIG_DIR", str(config_dir))
     monkeypatch.setattr(config, "CONFIG_DIR", config_dir)
     monkeypatch.setattr(config, "CONFIG_FILE", config_dir / "config.json")
+    # No stage skill folders unless a test makes them (the real ones change pi's argv).
+    monkeypatch.setattr(skills, "SKILLS_ROOT", tmp_path / "stage-skills")
     try:
         yield
     finally:

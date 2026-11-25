@@ -10,7 +10,7 @@ See also the [execution model](architecture/execution-model.md).
 
 - [Requirements](#requirements), [model setup](#models-setup), [workflow commands](#quick-start)
 - [Scout drafts](#scout-drafts), [task files](#task-files), [project notes](#project-notes)
-- [Project configuration](#projecttoml), [models and budgets](#model-profiles-and-budgets)
+- [Project configuration](#projecttoml), [models and budgets](#model-profiles-and-budgets), [stage skills](#stage-skill-folders)
 - [Policies and delivery](#policies), [isolation](#isolation), [services](#services-for-verify)
 - [Sandbox preflight](#trying-commands-in-the-sandbox), [monitoring](#monitoring), [status contract](#status-contract)
 - [Unattended operation](#running-unattended), [retries](#retrying-a-failed-run), [rework](#reworking-a-run-awaiting-merge-approval)
@@ -956,6 +956,39 @@ matters when a subscription sets `stop_at`. All forms support `--json`.
   surveys. The implementer directives are in `src/helmraiser/pi/directives.py` and include
   the optional [Leeboard brief](#leeboard-optional).
 
+### Stage skill folders
+
+By default every worker pi session loads the skills pi discovers itself. A stage folder
+`~/.local/share/helmraiser/skills/<stage>/` replaces that discovery for one stage. The
+stages are `intake`, `scout`, `plan`, `implement` (the fallback model's sessions too) and
+`review`; `work --dry-run` shows the implement flags. The review replay's own sessions
+and the blind comparison judge do not read the folders.
+
+- **No folder:** no change; pi discovers skills as usual.
+- **Folder present:** the session runs with `--no-skills`, then one `--skill <dir>` for
+  each child directory that holds a `SKILL.md`, sorted by name. Symlinked directories
+  count; other entries are ignored. The project's own skills follow: the `.pi/skills` and
+  `.agents/skills` skills from the session's directory up to its repository root,
+  nearest first.
+- **Empty folder:** `--no-skills` and the project's own skills only.
+
+```text
+~/.local/share/helmraiser/skills/
+  plan/tdd -> ~/projects/skills-hub/tdd
+  implement/tdd -> ~/projects/skills-hub/tdd
+  review/            (empty: project skills only)
+```
+
+Under process isolation each passed skill directory, and every symlink target inside it,
+is opened for reading (`allowRead`), so a skill linked from a project that
+`isolation.projects_root` denies still loads. Credential denials, configured `deny_read`
+and Helmraiser's own data stay closed.
+
+Helmraiser ships no worker skills. A suggested starting set, not yet evaluated: `tdd`,
+`diagnosing-bugs`, `codebase-design`, `domain-modeling` and `writing-for-agents` for
+`plan` and `implement`; `codebase-design` for `scout`; an empty folder for `intake` and
+`review`.
+
 ## Policies
 
 The run sequence is setup → optional plan → implement → path scope check → verify → evidence → review →
@@ -1190,7 +1223,8 @@ beneath a read-only carve-out). What pi loads from other projects stays readable
 local paths in `~/.pi/agent/settings.json` (`packages` and the resource lists) and the
 targets of symlinks in `~/.pi/agent` and its `skills`, `prompts`, `themes` and
 `extensions` directories, such as the global `AGENTS.md` and linked skills, unless they
-lie inside a credential or configured denial. See also [Leeboard access](#leeboard-optional).
+lie inside a credential or configured denial. So do the skills of a
+[stage skill folder](#stage-skill-folders). See also [Leeboard access](#leeboard-optional).
 
 ```json
 {
@@ -1629,7 +1663,7 @@ Other variants ignore `--skill`.
 
 | Variant | Reviewer sessions |
 | --- | --- |
-| `v0-baseline` | The live review argv: review tools, `--no-context-files`, pi's skill discovery on |
+| `v0-baseline` | The live review argv without a `review` [stage skill folder](#stage-skill-folders): review tools, `--no-context-files`, pi's skill discovery on |
 | `v1-noskills` | v0 with `--no-skills` |
 | `v2-skills` | `--no-skills` and `--skill` for the `--skill` directories and the project's `.pi/skills` and `.agents/skills` skills |
 | `v3-twoaxis` | A Spec session (the live directives plus three spec questions), then a Standards session (a draft directive in `loop/eval_review.py`: cited breaches of the project's documented standards, plus a code-smell baseline that is always `minor`), both `--no-skills` |

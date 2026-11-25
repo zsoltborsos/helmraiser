@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from helmraiser.code_snapshot import without_snapshot
-from helmraiser.isolation.process import ProcessIsolation, _abs, _within
+from helmraiser.isolation.process import ProcessIsolation
 from helmraiser.ledger.db import Ledger
 from helmraiser.loop.compare import _json_candidates
 from helmraiser.loop.preflight import remove_throwaway_worktree
@@ -39,6 +39,7 @@ from helmraiser.loop.review import diff_block, parse_verdict
 from helmraiser.loop.runner import REVIEW_TOOLS
 from helmraiser.pi.adapter import PiJsonAdapter
 from helmraiser.pi.protocol import PiAdapter, PiEvent, PiRequest
+from helmraiser.pi.skills import project_skill_dirs, skill_args, skill_read_paths
 from helmraiser.task.model import ModelSpec
 from helmraiser.task.project import worktree_manager
 
@@ -52,8 +53,6 @@ PROMPT_FILE = re.compile(r"^prompt-review-1(?:-(\d+))?\.md$")
 NOTES_HEADING = "## Project notes (Helmraiser)"
 REVIEW_TIMEOUT_S = 1800
 JUDGE_TIMEOUT_S = 1800
-
-PROJECT_SKILL_ROOTS: tuple[str, ...] = (".pi/skills", ".agents/skills")
 
 
 class EvalError(ValueError):
@@ -636,32 +635,6 @@ def prepare_run_dir(replay: Replay, run_dir: Path, diff_text: str) -> tuple[list
 # ── variants ─────────────────────────────────────────────────────────
 
 
-def project_skill_dirs(start: Path) -> list[Path]:
-    """Skill directories (holding ``SKILL.md``) in ``.pi/skills`` and ``.agents/skills``
-    from ``start`` up to its repository root, nearest first."""
-    found: list[Path] = []
-    current = start
-    while True:
-        for rel in PROJECT_SKILL_ROOTS:
-            root = current / rel
-            if not root.is_dir():
-                continue
-            seen: set[str] = set()
-            for folder, dirs, files in os.walk(root, followlinks=True):
-                real = os.path.realpath(folder)
-                if real in seen:
-                    dirs[:] = []
-                    continue
-                seen.add(real)
-                if "SKILL.md" in files:
-                    found.append(Path(folder))
-                    dirs[:] = []
-                dirs.sort()
-        if (current / ".git").exists() or current.parent == current:
-            return found
-        current = current.parent
-
-
 def check_skills(variants: list[Variant], skills: tuple[Path, ...]) -> None:
     """Refuse up front a skill variant that has no usable ``--skill`` directories."""
     needing = next((variant for variant in variants if variant.skills), None)
@@ -682,19 +655,6 @@ def skill_dirs(worktree: Path, skills: tuple[Path, ...]) -> list[Path]:
     return [*skills, *project_skill_dirs(worktree)]
 
 
-def skill_read_paths(dirs: list[Path]) -> tuple[Path, ...]:
-    """What reading ``dirs`` needs: each directory and every symlink target inside it."""
-    paths: list[Path] = []
-    for directory in dirs:
-        paths.append(directory.resolve())
-        for folder, subdirs, files in os.walk(directory):
-            for name in [*subdirs, *files]:
-                entry = Path(folder) / name
-                if entry.is_symlink() and entry.exists():
-                    paths.append(entry.resolve())
-    return tuple(dict.fromkeys(paths))
-
-
 def variant_args(
     variant: Variant, worktree: Path, skills: tuple[Path, ...]
 ) -> tuple[tuple[str, ...], tuple[Path, ...]]:
@@ -704,10 +664,7 @@ def variant_args(
     if not variant.skills:
         return ("--no-skills",), ()
     dirs = skill_dirs(worktree, skills)
-    args: list[str] = ["--no-skills"]
-    for directory in dirs:
-        args += ["--skill", str(directory)]
-    return tuple(args), skill_read_paths(dirs)
+    return skill_args(dirs), skill_read_paths(dirs)
 
 
 @dataclass(frozen=True)
@@ -780,16 +737,15 @@ class ReplayIsolation(ProcessIsolation):
         *,
         command: bool = False,
         service_ports: tuple[int, ...] = (),
+        extra_read: tuple[Path, ...] = (),
     ) -> dict[str, Any]:
-        settings = super().settings(worktree, run_dir, command=command, service_ports=service_ports)
-        if command or not self.extra_read:
-            return settings
-        _, fixed, _ = self._read_denials(Path(_abs(worktree)), Path(_abs(run_dir)))
-        allow = settings["filesystem"]["allowRead"]
-        for path in self.extra_read:
-            if str(path) not in allow and not any(_within(path, f.resolve()) for f in fixed):
-                allow.append(str(path))
-        return settings
+        return super().settings(
+            worktree,
+            run_dir,
+            command=command,
+            service_ports=service_ports,
+            extra_read=(*self.extra_read, *extra_read),
+        )
 
 
 # ── sessions ─────────────────────────────────────────────────────────

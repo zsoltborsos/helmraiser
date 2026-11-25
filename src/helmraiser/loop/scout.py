@@ -33,6 +33,7 @@ from helmraiser.loop.routing import calculate_headroom
 from helmraiser.pi.adapter import session_id_for
 from helmraiser.pi.directives import render_scout_directives
 from helmraiser.pi.protocol import PiAdapter, PiEvent, PiRequest
+from helmraiser.pi.skills import stage_skill_args
 from helmraiser.pipeline.run_identity import resolve_run_id
 from helmraiser.project_notes import (
     append_project_notes,
@@ -968,6 +969,7 @@ def execute_scout(
             context_files=False,
             timeout_s=int((config.get("budget") or {}).get("max_minutes", 90)) * 60,
             stage="scout",
+            extra_args=stage_skill_args("scout", worktree),
         )
         result = asyncio.run(adapter.run(request, _ignore_event, scout_id))
         usage = _usage_dict(result.usage.tokens_in, result.usage.tokens_out, result.usage.cost_usd)

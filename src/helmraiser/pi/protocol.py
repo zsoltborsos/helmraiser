@@ -46,7 +46,8 @@ class PiRequest:
     stage: str = "implement"
     attempt: int = 1
     rpc: bool = False
-    # Extra pi flags before the prompt (the review replay's skill flags; empty in the loop).
+    # Extra pi flags before the prompt: skill flags (``pi/skills.py``) for a stage with a
+    # skill folder, and the review replay's variant flags.
     extra_args: tuple[str, ...] = ()
 
     @property

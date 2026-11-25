@@ -90,6 +90,7 @@ from helmraiser.pi.directives import (
 )
 from helmraiser.pi.events import is_assistant_message_end, ledger_payload, usage_of
 from helmraiser.pi.protocol import PiAdapter, PiEvent, PiRequest, PiSessionResult, Usage
+from helmraiser.pi.skills import stage_skill_args
 from helmraiser.pipeline.diff import changed_paths
 from helmraiser.pipeline.run_identity import resolve_run_id
 from helmraiser.project_notes import project_notes_for_body
@@ -1970,6 +1971,7 @@ class GovernedRun:
             stage=stage,
             attempt=attempt,
             rpc=stage == "implement" and bool(self.config.get("pi_rpc_implement", False)),
+            extra_args=stage_skill_args(stage, self.worktree),
         )
         res = await self._run_session(req, enforce_budget)
         if res.error_kind in ("provider", "protocol") and self._budget_kind is None:

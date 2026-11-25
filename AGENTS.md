@@ -40,7 +40,7 @@ Update them in the commit that lands a slice.
 | `loop/abort.py` | `AbortCoordinator`, `AbortResult`, and `abort_run`: exact-run abort through the project's lease |
 | `loop/hints.py` | Hints for known sandbox and environment failure signatures, for preflight and for failed verify / evidence steps |
 | `loop/services.py` | Project services (`[[services]]`): `docker run` on the host, readiness, cleanup by the `helmraiser.run` label |
-| `pi/` | `pi --mode json` adapter, event parsing, stage directives |
+| `pi/` | `pi --mode json` adapter, event parsing, stage directives, stage skill flags |
 | `pipeline/worktree.py` | Run worktrees, `orphaned_metadata`, `finalize_local` (ff-only merge), and `fast_forward_base` (safe primary base checkout update) |
 | `pipeline/run_identity.py` | Canonical UUID4 run IDs |
 | `runner/` | `ExecutionEngine` (subprocess plus leases), process control |

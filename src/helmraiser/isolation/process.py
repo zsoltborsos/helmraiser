@@ -98,6 +98,7 @@ import helmraiser.config as helmraiser_config
 from helmraiser.isolation.relay import relay_argv
 from helmraiser.isolation.retry import RetryObserver, SandboxLaunch
 from helmraiser.leeboard import lb_install_root, leeboard_home
+from helmraiser.pi.skills import argv_skill_dirs, skill_read_paths
 
 DEFAULT_ALLOWED_DOMAINS: tuple[str, ...] = (
     "api.openai.com",
@@ -527,9 +528,12 @@ class ProcessIsolation:
         *,
         command: bool = False,
         service_ports: tuple[int, ...] = (),
+        extra_read: tuple[Path, ...] = (),
     ) -> dict[str, Any]:
         """Settings: deny credentials, the ledger and other projects; write the worktree,
-        sessions, /tmp, configured temporary storage and what pi needs. ``command``:
+        sessions, /tmp, configured temporary storage and what pi needs. ``extra_read``:
+        session paths to open for reading (skill directories and their symlink targets),
+        except inside a fixed denial such as credentials or the ledger. ``command``:
         the verify / evidence settings, which writes only the worktree, the run's
         ``evidence/``, /tmp and configured temporary storage, and may also
         reach ``127.0.0.1:<port>`` for each of ``service_ports``."""
@@ -565,6 +569,9 @@ class ProcessIsolation:
             if any(_within(need, other.resolve()) for other in others)
             and not any(_within(need, path.resolve()) for path in fixed)
         ]
+        for path in extra_read:
+            if str(path) not in allow_read and not any(_within(path, f.resolve()) for f in fixed):
+                allow_read.append(str(path))
         allow_write = [str(run_dir / "sessions")]
         if not self.readonly:
             allow_write.insert(0, str(worktree))
@@ -690,6 +697,7 @@ class ProcessIsolation:
         *,
         command_kind: str | None = None,
         service_ports: tuple[int, ...] = (),
+        extra_read: tuple[Path, ...] = (),
     ) -> Path:
         """``<run_dir>/srt-settings.json``, or with ``command_kind`` the command sandbox settings in
         ``<run_dir>/srt-settings-<kind>.json``."""
@@ -698,15 +706,23 @@ class ProcessIsolation:
         else:
             path = run_dir / COMMAND_SETTINGS_FILENAME.format(kind=command_kind)
         settings = self.settings(
-            worktree, run_dir, command=command_kind is not None, service_ports=service_ports
+            worktree,
+            run_dir,
+            command=command_kind is not None,
+            service_ports=service_ports,
+            extra_read=extra_read,
         )
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(settings, indent=2) + "\n")
         return path
 
     def wrap(self, argv: list[str], cwd: Path, run_dir: Path) -> list[str]:
+        """``argv``, a pi session, under the session settings; every ``--skill``
+        directory it passes is readable."""
         (run_dir / "sessions").mkdir(parents=True, exist_ok=True)
-        settings = self.write_settings(cwd, run_dir)
+        settings = self.write_settings(
+            cwd, run_dir, extra_read=skill_read_paths(argv_skill_dirs(argv))
+        )
         return _srt_argv(
             self.srt_path(), argv, settings, self.tmpdir, "session", self.retry_observer
         )

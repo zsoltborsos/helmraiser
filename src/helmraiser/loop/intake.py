@@ -26,6 +26,7 @@ from helmraiser.loop.preflight import (
 )
 from helmraiser.pi.adapter import PiJsonAdapter
 from helmraiser.pi.protocol import PiAdapter, PiEvent, PiRequest
+from helmraiser.pi.skills import stage_skill_args
 from helmraiser.project_notes import project_notes_for_body, project_notes_section
 from helmraiser.task.loader import TaskLoadError, parse_task, profile_models, spec_to_frontmatter
 from helmraiser.task.model import ISOLATIONS, ModelSpec, TaskSpec, VerifyStep
@@ -367,6 +368,7 @@ def propose_acceptance(
             tools=INTAKE_TOOLS,
             context_files=True,
             stage="intake",
+            extra_args=stage_skill_args("intake", spec.project),
         )
         result = asyncio.run(adapter.run(request, _noop_event, run_id))
         if request.session_dir.is_dir():

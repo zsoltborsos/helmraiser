@@ -113,6 +113,7 @@ from helmraiser.loop.verify import last_verify_results
 from helmraiser.pi.adapter import PiJsonAdapter, PiVersionError, pi_version
 from helmraiser.pi.directives import render_implement_directives
 from helmraiser.pi.protocol import PiAdapter, PiRequest
+from helmraiser.pi.skills import stage_skill_args
 from helmraiser.pipeline.worktree import WorktreeManager
 from helmraiser.project_notes import project_notes_for_body
 from helmraiser.runner.engine import ExecutionEngine
@@ -852,6 +853,7 @@ def dry_run_plan(
         session_dir=rundir.sessions,
         system_prompt_path=rundir.directives_md,
         timeout_s=task.budget.max_minutes * 60,
+        extra_args=stage_skill_args("implement", worktree, checkout=task.project),
     )
     # Process isolation writes its settings file into the run dir when wrapping;
     # a dry run must not leave a run dir behind, so wrap against a throwaway one.

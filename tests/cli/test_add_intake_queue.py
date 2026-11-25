@@ -24,6 +24,7 @@ from helmraiser.loop import intake as intake_logic
 from helmraiser.loop import preflight as preflight_logic
 from helmraiser.loop.intake import _intake_model_overrides, build_intake_prompt
 from helmraiser.loop.preflight import PreflightError
+from helmraiser.pi import skills
 from helmraiser.task.loader import parse_task, render_task, resolve_models
 from helmraiser.task.model import Budget, TaskSpec
 from helmraiser.utils.markdown import parse_frontmatter, serialize_frontmatter
@@ -163,6 +164,27 @@ def test_explicit_intake_model_without_profiles(
     assert result.exit_code == 0, result.output
     assert len(adapter.calls) == 1
     assert adapter.calls[0].model.render() == "p/intake:high"
+
+
+@pytest.mark.parametrize("folder", [True, False])
+def test_intake_session_gets_intake_skills(
+    tmp_project, data_dir, isolated_config, monkeypatch, folder
+):
+    own = tmp_project / ".pi" / "skills" / "own"
+    own.mkdir(parents=True)
+    (own / "SKILL.md").write_text("---\nname: own\ndescription: test\n---\n")
+    if folder:
+        (skills.SKILLS_ROOT / "intake").mkdir(parents=True)
+    path = write_task(tmp_project, DRAFT)
+    adapter = ScriptedPiAdapter(
+        {"intake": PiScript(final_text=PROPOSAL.format(policy="review", isolation="process"))}
+    )
+    use_adapter(monkeypatch, adapter)
+    result = invoke("intake", str(path), "--yes", "--json", data_dir=data_dir)
+    assert result.exit_code == 0, result.output
+    (call,) = adapter.calls
+    assert call.stage == "intake"
+    assert call.extra_args == (("--no-skills", "--skill", str(own)) if folder else ())
 
 
 def test_complete_intake_needs_no_models(tmp_project, data_dir, isolated_config, monkeypatch):

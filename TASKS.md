@@ -63,8 +63,10 @@ the grilling session:
 - **Report.** `experiment report [<name>] [--json]`: judged win/tie/loss, wins by
   failure, median cost/time/iterations, review verdicts and post-pick rework per arm, a
   sign-test p-value on judged pairs, the reasons.
-- **First experiment.** A `default` (hub skills) against B `none`, all projects, 30
-  decided pairs or 14 days, brake 95%, starting as soon as the slices land.
+- **First experiment: running.** `hub-skills-vs-none`, started 2026-11-25 22:26 UTC: A
+  `default` (hub skills) against B `none`, all projects, 30 decided pairs or 2026-12-09,
+  brake 95%. Check it with `helmraiser experiment status|report`. Leeboard rule `a21b` tells
+  coordinators to pick pairs through a blind judge.
 
 Slices, in order (1, 3 and 4 interactive; 2, 5 and 6 may run as Helmraiser tasks):
 

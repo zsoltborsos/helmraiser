@@ -15,18 +15,22 @@ import threading
 import time
 import weakref
 from collections.abc import Collection, Iterable, Iterator
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
 from helmraiser.config import load_config
 from helmraiser.task.model import PRIORITY_RANK, TaskSpec
 
-# Bump on schema changes: a new ledger is created at this ``user_version`` and a ledger
-# at any other version is refused.
-SCHEMA_VERSION = 11
+# Bump on schema changes: a new ledger is created at this ``user_version``, a ledger at
+# ``PREVIOUS_SCHEMA_VERSION`` is upgraded when it is opened (``Ledger._open_previous``),
+# and a ledger at any other version is refused.
+SCHEMA_VERSION = 12
+PREVIOUS_SCHEMA_VERSION = 11
 
+# The tables of version 11.
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS tasks (
   task_id TEXT PRIMARY KEY,
@@ -127,6 +131,35 @@ CREATE TABLE IF NOT EXISTS scout_drafts (
   preflight TEXT
 );
 """
+# Added in version 12: live experiments. ``arms`` (the definition, frozen at start) and
+# ``exclude_projects`` are JSON. A pair's ``arm_x`` / ``arm_y`` are arm names; its
+# ``run_x`` / ``run_y`` are set when each arm's run is recorded.
+_EXPERIMENT_SCHEMA = """
+CREATE TABLE IF NOT EXISTS experiments (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL UNIQUE,
+  arms TEXT NOT NULL,
+  end_pairs INTEGER, end_at REAL,
+  quota_brake REAL NOT NULL,
+  exclude_projects TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT 'active',
+  started_at REAL NOT NULL, ended_at REAL, end_reason TEXT
+);
+CREATE UNIQUE INDEX IF NOT EXISTS experiments_one_active ON experiments(status) WHERE status = 'active';
+CREATE TABLE IF NOT EXISTS pairs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  experiment_id INTEGER NOT NULL REFERENCES experiments(id),
+  task_id TEXT NOT NULL REFERENCES tasks(task_id),
+  arm_x TEXT NOT NULL, arm_y TEXT NOT NULL,
+  run_x TEXT REFERENCES runs(run_id), run_y TEXT REFERENCES runs(run_id),
+  created_at REAL NOT NULL,
+  pick TEXT, decided_by TEXT, reason TEXT, judge TEXT, picked_at REAL,
+  unblinded INTEGER NOT NULL DEFAULT 0,
+  UNIQUE (experiment_id, task_id)
+);
+"""
+PAIR_PICKS = frozenset({"X", "Y", "tie"})
+PAIR_DECISIONS = frozenset({"judged", "failure", "tie"})
 TERMINAL_RUN_STATUSES = frozenset({"landed", "failed", "aborted"})
 PARKED_RUN_STATUSES = frozenset({"awaiting_approval"})
 # A run handed back to the worker (plan approved, or ``helmraiser retry``). It has no
@@ -149,6 +182,8 @@ RUN_STATUSES = frozenset(
         "aborted",
     }
 )
+# Runs that a live ``work --once`` process is driving.
+LIVE_RUN_STATUSES = RUN_STATUSES - TERMINAL_RUN_STATUSES - IDLE_RUN_STATUSES
 _SCOUT_COLUMNS = frozenset(
     {
         "lens",
@@ -289,6 +324,8 @@ class Ledger:
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._local = threading.local()
         self._write_lock = threading.Lock()
+        # Why a version 11 ledger was left un-upgraded; the experiment tables need 12.
+        self.upgrade_pending: str | None = None
         try:
             self._init_db()
         except Exception:
@@ -328,42 +365,121 @@ class Ledger:
         self.close()
 
     def _init_db(self) -> None:
-        """Create the schema in a new ledger; refuse a ledger at another version.
+        """Create the schema in a new ledger, upgrade one at ``PREVIOUS_SCHEMA_VERSION``
+        (see ``_open_previous``), and refuse a ledger at another version.
 
         A ledger at ``SCHEMA_VERSION`` is only read, so opening it takes no write lock
         and never queues behind other writers. Creation runs under ``BEGIN IMMEDIATE``
         and checks the file again under that lock: another process may have created
         the schema meanwhile.
         """
-        if self._schema_is_current(self._get_conn()):
-            return
+        version = self._schema_version(self._get_conn())
+        if version is None:
+            if self.read_only:
+                raise ValueError("ledger has no schema; cannot create it read-only")
+            with self._write() as conn:
+                version = self._schema_version(conn)
+                if version is None:
+                    self._execute_schema(conn, _SCHEMA + _EXPERIMENT_SCHEMA)
+                    conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+                    return
+        if version == PREVIOUS_SCHEMA_VERSION:
+            self._open_previous()
+
+    def _open_previous(self) -> None:
+        """Upgrade a version 11 ledger to 12, or leave it at 11 while runs are live.
+
+        The background worker restarts onto new code when main moves, but its running
+        ``work --once`` children stay on their old code snapshot, and old code refuses
+        any ledger version but 11 whenever it opens the ledger again. So upgrade only
+        when no run is in a ``LIVE_RUN_STATUSES`` status; otherwise open at 11, where
+        everything but the experiment tables works, and say why in ``upgrade_pending``.
+        A later open upgrades. The upgrade backs the ledger up beside it first, then
+        adds the tables and sets the version in one ``BEGIN IMMEDIATE`` transaction,
+        checking the version and the runs again under that lock: another process may
+        be upgrading at the same moment.
+        """
         if self.read_only:
-            raise ValueError("ledger has no schema; cannot create it read-only")
+            self.upgrade_pending = (
+                f"ledger upgrade to version {SCHEMA_VERSION} pending: opened read-only"
+            )
+            return
+        if self._defer_upgrade(self._get_conn()):
+            return
         with self._write() as conn:
-            if self._schema_is_current(conn):
+            if self._schema_version(conn) == SCHEMA_VERSION or self._defer_upgrade(conn):
                 return
-            # Not ``executescript``: it would commit the open transaction first.
-            for statement in _SCHEMA.split(";"):
-                if statement.strip():
-                    conn.execute(statement)
+            stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+            backup = self.db_path.with_name(
+                f"{self.db_path.name}.v{PREVIOUS_SCHEMA_VERSION}-{stamp}.bak"
+            )
+            # From a second connection: a backup whose source connection is inside a
+            # write transaction never finishes. The write lock held here keeps any
+            # other process from committing, so this reader sees what ``conn`` sees.
+            try:
+                with closing(sqlite3.connect(self.db_path, timeout=30)) as source:
+                    with closing(sqlite3.connect(backup)) as target:
+                        source.backup(target)
+            except (OSError, sqlite3.Error) as exc:
+                if backup.is_file():
+                    backup.unlink()
+                self.upgrade_pending = (
+                    f"ledger upgrade to version {SCHEMA_VERSION} pending: "
+                    f"backup to {backup} failed: {exc}"
+                )
+                return
+            self._execute_schema(conn, _EXPERIMENT_SCHEMA)
             conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
-    def _schema_is_current(self, conn: sqlite3.Connection) -> bool:
-        """True at ``SCHEMA_VERSION``, False for an empty file; any other version raises.
+    def _defer_upgrade(self, conn: sqlite3.Connection) -> bool:
+        """Set ``upgrade_pending`` and return True while runs are live."""
+        statuses = sorted(LIVE_RUN_STATUSES)
+        (live,) = conn.execute(
+            f"SELECT COUNT(*) FROM runs WHERE status IN ({', '.join('?' for _ in statuses)})",
+            statuses,
+        ).fetchone()
+        if not live:
+            self.upgrade_pending = None
+            return False
+        self.upgrade_pending = (
+            f"ledger upgrade to version {SCHEMA_VERSION} pending: "
+            f"{live} run{'' if live == 1 else 's'} still running"
+        )
+        return True
+
+    @staticmethod
+    def _execute_schema(conn: sqlite3.Connection, schema: str) -> None:
+        # Not ``executescript``: it would commit the open transaction first.
+        for statement in schema.split(";"):
+            if statement.strip():
+                conn.execute(statement)
+
+    def _schema_version(self, conn: sqlite3.Connection) -> int | None:
+        """``SCHEMA_VERSION`` or ``PREVIOUS_SCHEMA_VERSION``, None for an empty file;
+        any other version raises.
 
         One statement reads both, so another process creating the schema in between
         cannot make a new file look like a ledger at version 0."""
         version, has_schema = conn.execute(
             "SELECT user_version, EXISTS (SELECT 1 FROM sqlite_master) FROM pragma_user_version"
         ).fetchone()
-        if version == SCHEMA_VERSION:
-            return True
+        if version in (SCHEMA_VERSION, PREVIOUS_SCHEMA_VERSION):
+            return int(version)
         if version == 0 and not has_schema:
-            return False
+            return None
         raise ValueError(
             f"ledger {self.db_path} has schema version {version}; "
             f"this Helmraiser expects version {SCHEMA_VERSION}"
         )
+
+    @property
+    def experiments_available(self) -> bool:
+        """The ledger is at version 12; ``upgrade_pending`` says why when it is not."""
+        return self.upgrade_pending is None
+
+    def _require_experiments(self) -> None:
+        if self.upgrade_pending is not None:
+            raise ValueError(self.upgrade_pending)
 
     @contextmanager
     def read_snapshot(self) -> Iterator[None]:
@@ -1173,6 +1289,128 @@ class Ledger:
             cursor = conn.execute(
                 "UPDATE runs SET status = ?, failure_reason = ?, ended_at = ? WHERE run_id = ?",
                 (status, failure_reason, time.time() if ended_at is None else ended_at, run_id),
+            )
+            return cursor.rowcount == 1
+
+    # ── Experiments ───────────────────────────────────────────────────
+    # Each method raises ``ValueError(upgrade_pending)`` on a ledger left at version 11.
+
+    def start_experiment(
+        self,
+        name: str,
+        arms: dict[str, Any],
+        *,
+        quota_brake: float,
+        end_pairs: int | None = None,
+        end_at: float | None = None,
+        exclude_projects: Iterable[str] = (),
+    ) -> int:
+        """Record an active experiment with a frozen copy of its arms. Refused while
+        another experiment is active or when the name is taken."""
+        self._require_experiments()
+        with self._write() as conn:
+            active = conn.execute("SELECT name FROM experiments WHERE status = 'active'").fetchone()
+            if active is not None:
+                raise ValueError(f"experiment {active['name']} is already active")
+            if conn.execute("SELECT 1 FROM experiments WHERE name = ?", (name,)).fetchone():
+                raise ValueError(f"experiment {name} already exists")
+            cursor = conn.execute(
+                "INSERT INTO experiments (name, arms, end_pairs, end_at, quota_brake, "
+                "exclude_projects, started_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    name,
+                    json.dumps(arms),
+                    end_pairs,
+                    end_at,
+                    quota_brake,
+                    json.dumps(list(exclude_projects)),
+                    time.time(),
+                ),
+            )
+            return int(cursor.lastrowid or 0)
+
+    def end_experiment(self, experiment_id: int, reason: str) -> bool:
+        """End an active experiment; False when it is not active."""
+        self._require_experiments()
+        with self._write() as conn:
+            cursor = conn.execute(
+                "UPDATE experiments SET status = 'ended', ended_at = ?, end_reason = ? "
+                "WHERE id = ? AND status = 'active'",
+                (time.time(), reason, experiment_id),
+            )
+            return cursor.rowcount == 1
+
+    def get_experiment(self, name: str) -> dict[str, Any] | None:
+        self._require_experiments()
+        row = (
+            self._get_conn().execute("SELECT * FROM experiments WHERE name = ?", (name,)).fetchone()
+        )
+        return self._decode_experiment(row) if row else None
+
+    def active_experiment(self) -> dict[str, Any] | None:
+        self._require_experiments()
+        row = (
+            self._get_conn().execute("SELECT * FROM experiments WHERE status = 'active'").fetchone()
+        )
+        return self._decode_experiment(row) if row else None
+
+    @staticmethod
+    def _decode_experiment(row: sqlite3.Row) -> dict[str, Any]:
+        decoded = dict(row)
+        decoded["arms"] = json.loads(decoded["arms"])
+        decoded["exclude_projects"] = json.loads(decoded["exclude_projects"])
+        return decoded
+
+    def create_pair(self, experiment_id: int, task_id: str, arm_x: str, arm_y: str) -> int:
+        """Record a task's pair: ``arm_x`` and ``arm_y`` are the arm names behind X and Y."""
+        self._require_experiments()
+        with self._write() as conn:
+            cursor = conn.execute(
+                "INSERT INTO pairs (experiment_id, task_id, arm_x, arm_y, created_at) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (experiment_id, task_id, arm_x, arm_y, time.time()),
+            )
+            return int(cursor.lastrowid or 0)
+
+    def get_pair(self, experiment_id: int, task_id: str) -> dict[str, Any] | None:
+        self._require_experiments()
+        row = (
+            self._get_conn()
+            .execute(
+                "SELECT * FROM pairs WHERE experiment_id = ? AND task_id = ?",
+                (experiment_id, task_id),
+            )
+            .fetchone()
+        )
+        if row is None:
+            return None
+        decoded = dict(row)
+        decoded["unblinded"] = bool(decoded["unblinded"])
+        return decoded
+
+    def set_pair_pick(
+        self,
+        pair_id: int,
+        pick: str,
+        *,
+        decided_by: str,
+        reason: str | None = None,
+        judge: str | None = None,
+    ) -> bool:
+        """Record a pair's pick once: False when the pair has a pick already (or does
+        not exist). ``pick`` is ``tie`` exactly when ``decided_by`` is."""
+        if pick not in PAIR_PICKS:
+            raise ValueError(f"invalid pick: {pick}")
+        if decided_by not in PAIR_DECISIONS:
+            raise ValueError(f"invalid pick decision: {decided_by}")
+        if (pick == "tie") != (decided_by == "tie"):
+            raise ValueError(f"pick {pick} cannot be decided by {decided_by}")
+        self._require_experiments()
+        with self._write() as conn:
+            cursor = conn.execute(
+                "UPDATE pairs SET pick = ?, decided_by = ?, reason = ?, judge = ?, "
+                "picked_at = ? WHERE id = ? AND pick IS NULL",
+                (pick, decided_by, reason, judge, time.time(), pair_id),
             )
             return cursor.rowcount == 1
 

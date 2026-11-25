@@ -9,12 +9,17 @@ import threading
 import time
 import warnings
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
+from itertools import count
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
+import helmraiser.ledger.db as ledger_db
 from helmraiser.ledger.db import (
+    LIVE_RUN_STATUSES,
+    PREVIOUS_SCHEMA_VERSION,
     SCHEMA_VERSION,
     Ledger,
     ProjectScope,
@@ -55,6 +60,58 @@ def schema_shape(conn: sqlite3.Connection) -> dict[str, Any]:
             ]
     shape["user_version"] = conn.execute("PRAGMA user_version").fetchone()[0]
     return shape
+
+
+def frozen_shape(conn: sqlite3.Connection) -> dict[str, Any]:
+    """``schema_shape`` as read back from its JSON file (lists, not tuples)."""
+    return cast("dict[str, Any]", json.loads(json.dumps(schema_shape(conn))))
+
+
+def expected_shape(version: int) -> dict[str, Any]:
+    return cast(
+        "dict[str, Any]",
+        json.loads((Path(__file__).parent / f"schema_v{version}.json").read_text()),
+    )
+
+
+def make_v11_ledger(path: Path, run_status: str = "awaiting_approval") -> list[str]:
+    """A version 11 ledger as the previous Helmraiser created it, holding a task, a run
+    in ``run_status``, an event and an approval; returns its dump."""
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        for statement in ledger_db._SCHEMA.split(";"):
+            if statement.strip():
+                conn.execute(statement)
+        conn.execute("PRAGMA user_version = 11")
+        conn.execute(
+            "INSERT INTO tasks (task_id, id, project, title, priority, status, source_path, "
+            "snapshot, created_at, updated_at) VALUES "
+            "('p:t1', 't1', '/repo', 'Task t1', 2, 'running', '/repo/t1.md', 'snap', 1, 2)"
+        )
+        conn.execute(
+            "INSERT INTO runs (run_id, task_id, project, status, policy, isolation, "
+            "model_implement, model_review, pi_version, started_at) VALUES "
+            "('run-1', 'p:t1', '/repo', ?, 'review', 'none', 'a/impl', 'a/review', '0.87', 3)",
+            (run_status,),
+        )
+        conn.execute(
+            "INSERT INTO run_events (run_id, ts, source, type, payload) "
+            "VALUES ('run-1', 4, 'helmraiser', 'example', '{}')"
+        )
+        conn.execute(
+            "INSERT INTO approvals (run_id, kind, decision, decided_at) "
+            "VALUES ('run-1', 'merge', 'pending', 5)"
+        )
+        conn.commit()
+        assert frozen_shape(conn) == expected_shape(11)
+        return list(conn.iterdump())
+    finally:
+        conn.close()
+
+
+def backups(path: Path) -> list[Path]:
+    return sorted(path.parent.glob(f"{path.name}.v11-*.bak"))
 
 
 EXPECTED_TABLES = {
@@ -158,17 +215,24 @@ class TestSchema:
         assert "run_events_run" in indexes
         assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
 
-    def test_new_ledger_schema_matches_version_11(self, ledger: Ledger, tmp_path: Path):
-        assert SCHEMA_VERSION == 11
-        expected = json.loads((Path(__file__).parent / "schema_v11.json").read_text())
+    def test_new_ledger_schema_matches_version_12(self, ledger: Ledger, tmp_path: Path):
+        assert SCHEMA_VERSION == 12
+        assert ledger.experiments_available and ledger.upgrade_pending is None
         conn = sqlite3.connect(tmp_path / "helmraiser.db")
         try:
-            assert json.loads(json.dumps(schema_shape(conn))) == expected
+            assert frozen_shape(conn) == expected_shape(12)
         finally:
             conn.close()
 
-    @pytest.mark.parametrize("version", range(1, SCHEMA_VERSION))
-    def test_older_version_is_refused_unchanged(self, tmp_path: Path, version: int):
+    @pytest.mark.parametrize(
+        "version",
+        [
+            v
+            for v in range(1, SCHEMA_VERSION + 2)
+            if v not in (PREVIOUS_SCHEMA_VERSION, SCHEMA_VERSION)
+        ],
+    )
+    def test_other_version_is_refused_unchanged(self, tmp_path: Path, version: int):
         path = tmp_path / "helmraiser.db"
         Ledger(path).close()
         conn = sqlite3.connect(path)
@@ -253,6 +317,258 @@ class TestSchema:
         ledger = Ledger()
         assert ledger.db_path == tmp_path / "data" / "helmraiser.db"
         assert ledger.db_path.exists()
+
+
+@pytest.fixture
+def distinct_stamps(monkeypatch):
+    """Give every backup its own timestamp, so a second backup cannot overwrite the first."""
+    ticks = count()
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 11, 25, 12, tzinfo=UTC) + timedelta(seconds=next(ticks))
+
+    monkeypatch.setattr(ledger_db, "datetime", Clock)
+
+
+class TestUpgradeFromVersion11:
+    def test_live_statuses_are_those_with_a_process(self):
+        assert LIVE_RUN_STATUSES == {"starting", "running", "verifying", "reviewing", "aborting"}
+
+    def test_upgrade_keeps_rows_adds_tables_and_backs_up(self, tmp_path: Path, distinct_stamps):
+        path = tmp_path / "helmraiser.db"
+        before = make_v11_ledger(path)
+
+        with Ledger(path) as ledger:
+            assert ledger.experiments_available and ledger.upgrade_pending is None
+            assert ledger.get_task("p:t1")["title"] == "Task t1"
+            assert ledger.get_run("run-1")["status"] == "awaiting_approval"
+            assert [e["type"] for e in ledger.events("run-1")] == ["example"]
+            assert ledger.active_experiment() is None
+
+        (backup,) = backups(path)
+        assert backup.name == "helmraiser.db.v11-20261125T120000Z.bak"
+        conn = sqlite3.connect(path)
+        saved = sqlite3.connect(backup)
+        try:
+            assert frozen_shape(conn) == expected_shape(12)
+            # Every version 11 row is still there, and the backup is the ledger as it was.
+            dump = list(conn.iterdump())
+            assert set(before) <= set(dump)
+            assert list(saved.iterdump()) == before
+            assert saved.execute("PRAGMA user_version").fetchone()[0] == 11
+        finally:
+            conn.close()
+            saved.close()
+
+        Ledger(path).close()
+        assert len(backups(path)) == 1
+
+    @pytest.mark.parametrize("status", sorted(LIVE_RUN_STATUSES))
+    def test_live_run_defers_the_upgrade_to_a_later_open(
+        self, tmp_path: Path, status: str, distinct_stamps
+    ):
+        path = tmp_path / "helmraiser.db"
+        make_v11_ledger(path, run_status=status)
+        message = "ledger upgrade to version 12 pending: 1 run still running"
+
+        with Ledger(path) as ledger:
+            assert not ledger.experiments_available
+            assert ledger.upgrade_pending == message
+            with pytest.raises(ValueError, match=message):
+                ledger.active_experiment()
+            with pytest.raises(ValueError, match=message):
+                ledger.start_experiment("e1", {"A": {}, "B": {}}, quota_brake=0.85)
+            # Everything that exists at version 11 still works.
+            task_id = ledger.upsert_task(make_spec(tmp_path, "t2"), "snapshot")
+            ledger.create_run(run_row("run-2", task_id, str(tmp_path)))
+            ledger.append_event("run-2", "helmraiser", "example", {})
+            assert {r["run_id"] for r in ledger.list_runs()} == {"run-1", "run-2"}
+            assert ledger._get_conn().execute("PRAGMA user_version").fetchone()[0] == 11
+            with Ledger(path) as again:
+                assert again.upgrade_pending == (
+                    "ledger upgrade to version 12 pending: 2 runs still running"
+                )
+            ledger.finish_run("run-1", "failed")
+            ledger.finish_run("run-2", "landed")
+        assert backups(path) == []
+
+        with Ledger(path) as ledger:
+            assert ledger.experiments_available
+            assert ledger.active_experiment() is None
+        assert len(backups(path)) == 1
+        conn = sqlite3.connect(path)
+        try:
+            assert frozen_shape(conn) == expected_shape(12)
+        finally:
+            conn.close()
+
+    @pytest.mark.parametrize("status", ["awaiting_approval", "resuming", "landed", "failed"])
+    def test_runs_without_a_process_do_not_defer_the_upgrade(self, tmp_path: Path, status: str):
+        path = tmp_path / "helmraiser.db"
+        make_v11_ledger(path, run_status=status)
+        with Ledger(path) as ledger:
+            assert ledger.experiments_available
+            assert ledger.get_run("run-1")["status"] == status
+
+    def test_read_only_open_does_not_upgrade(self, tmp_path: Path):
+        path = tmp_path / "helmraiser.db"
+        before = make_v11_ledger(path)
+        with Ledger(path, read_only=True) as ledger:
+            assert ledger.upgrade_pending == (
+                "ledger upgrade to version 12 pending: opened read-only"
+            )
+            assert ledger.get_run("run-1") is not None
+        conn = sqlite3.connect(path)
+        try:
+            assert list(conn.iterdump()) == before
+        finally:
+            conn.close()
+        assert backups(path) == []
+
+    def test_concurrent_openers_upgrade_once(self, tmp_path: Path, distinct_stamps):
+        path = tmp_path / "helmraiser.db"
+        make_v11_ledger(path)
+        barrier = threading.Barrier(8)
+        errors: list[BaseException] = []
+        available: list[bool] = []
+
+        def open_ledger() -> None:
+            barrier.wait()
+            try:
+                with Ledger(path) as ledger:
+                    available.append(ledger.experiments_available)
+                    ledger.is_paused()
+            except (sqlite3.Error, ValueError) as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=open_ledger) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=60)
+
+        assert errors == []
+        assert available == [True] * 8
+        assert len(backups(path)) == 1
+        conn = sqlite3.connect(path)
+        try:
+            assert frozen_shape(conn) == expected_shape(12)
+        finally:
+            conn.close()
+
+    def test_failed_backup_leaves_version_11(self, tmp_path: Path, distinct_stamps):
+        path = tmp_path / "helmraiser.db"
+        before = make_v11_ledger(path)
+        # A directory where the backup would go: SQLite cannot open it.
+        (tmp_path / "helmraiser.db.v11-20261125T120000Z.bak").mkdir()
+        with Ledger(path) as ledger:
+            assert not ledger.experiments_available
+            assert ledger.upgrade_pending is not None
+            assert "backup to" in ledger.upgrade_pending
+            assert ledger.get_run("run-1") is not None
+        conn = sqlite3.connect(path)
+        try:
+            assert list(conn.iterdump()) == before
+        finally:
+            conn.close()
+
+        with Ledger(path) as ledger:
+            assert ledger.experiments_available
+        assert [b.name for b in backups(path) if b.is_file()] == [
+            "helmraiser.db.v11-20261125T120001Z.bak"
+        ]
+
+
+class TestExperiments:
+    ARMS = {"A": {"skills": "default"}, "B": {"skills": "none"}}
+
+    def test_start_freezes_the_definition(self, ledger: Ledger):
+        experiment_id = ledger.start_experiment(
+            "skills",
+            self.ARMS,
+            quota_brake=0.95,
+            end_pairs=30,
+            end_at=1_800_000_000.0,
+            exclude_projects=["/repo/x"],
+        )
+        active = ledger.active_experiment()
+        assert active is not None
+        assert active == ledger.get_experiment("skills")
+        assert active["id"] == experiment_id
+        assert active["arms"] == self.ARMS
+        assert active["exclude_projects"] == ["/repo/x"]
+        assert (active["status"], active["end_pairs"], active["quota_brake"]) == (
+            "active",
+            30,
+            0.95,
+        )
+        assert active["ended_at"] is None and active["end_reason"] is None
+        assert ledger.get_experiment("missing") is None
+
+    def test_only_one_experiment_is_active(self, ledger: Ledger):
+        first = ledger.start_experiment("one", self.ARMS, quota_brake=0.85)
+        with pytest.raises(ValueError, match="experiment one is already active"):
+            ledger.start_experiment("two", self.ARMS, quota_brake=0.85)
+        # The schema enforces it too, not only the method.
+        conn = ledger._get_conn()
+        with pytest.raises(sqlite3.IntegrityError):
+            conn.execute(
+                "INSERT INTO experiments (name, arms, quota_brake, started_at) "
+                "VALUES ('raw', '{}', 0.85, 0)"
+            )
+        conn.rollback()
+        assert ledger.end_experiment(first, "stopped")
+        assert not ledger.end_experiment(first, "stopped")
+        ended = ledger.get_experiment("one")
+        assert ended is not None
+        assert (ended["status"], ended["end_reason"]) == ("ended", "stopped")
+        assert ended["ended_at"] is not None
+        assert ledger.active_experiment() is None
+        with pytest.raises(ValueError, match="experiment one already exists"):
+            ledger.start_experiment("one", self.ARMS, quota_brake=0.85)
+        second = ledger.start_experiment("two", self.ARMS, quota_brake=0.85)
+        assert ledger.active_experiment()["id"] == second
+
+    def test_set_pick_succeeds_once(self, ledger: Ledger, tmp_path: Path):
+        experiment_id = ledger.start_experiment("e", self.ARMS, quota_brake=0.85)
+        task_id = ledger.upsert_task(make_spec(tmp_path), "snapshot")
+        pair_id = ledger.create_pair(experiment_id, task_id, "B", "A")
+        with pytest.raises(sqlite3.IntegrityError):
+            ledger.create_pair(experiment_id, task_id, "A", "B")
+        pair = ledger.get_pair(experiment_id, task_id)
+        assert pair is not None
+        assert (pair["id"], pair["arm_x"], pair["arm_y"]) == (pair_id, "B", "A")
+        assert (pair["run_x"], pair["run_y"], pair["pick"], pair["unblinded"]) == (
+            None,
+            None,
+            None,
+            False,
+        )
+
+        assert ledger.set_pair_pick(
+            pair_id, "X", decided_by="judged", reason="cleaner diff", judge="claude-code/oracle"
+        )
+        assert not ledger.set_pair_pick(pair_id, "Y", decided_by="failure")
+        assert not ledger.set_pair_pick(pair_id + 1, "Y", decided_by="failure")
+        pair = ledger.get_pair(experiment_id, task_id)
+        assert pair is not None
+        assert (pair["pick"], pair["decided_by"], pair["reason"], pair["judge"]) == (
+            "X",
+            "judged",
+            "cleaner diff",
+            "claude-code/oracle",
+        )
+        assert pair["picked_at"] is not None
+
+    @pytest.mark.parametrize(
+        ("pick", "decided_by"),
+        [("Z", "judged"), ("X", "coin"), ("tie", "judged"), ("X", "tie")],
+    )
+    def test_set_pick_refuses_invalid_values(self, ledger: Ledger, pick: str, decided_by: str):
+        with pytest.raises(ValueError):
+            ledger.set_pair_pick(1, pick, decided_by=decided_by)
 
 
 class TestTasks:

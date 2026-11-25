@@ -1,5 +1,7 @@
 # Helmraiser — Current State
 
+The ledger is at schema version 12, with `experiments` and `pairs` tables for live experiments (slice 1: tables and ledger methods only, nothing fills them yet); a version 11 ledger is backed up beside itself (`helmraiser.db.v11-<UTC time>.bak`) and upgraded on the first open with no live run (`starting`, `running`, `verifying`, `reviewing`, `aborting`), and until then opens at 11 with `Ledger.upgrade_pending` saying why.
+
 `helmraiser stats --json` provides read-only window/project outcome, quality, failure, cost, latency, scout-funnel and weekly aggregates, with scout acceptance/scope fingerprints and cooldown scheduling errors isolated per project.
 
 `helmraiser eval review|report` (`loop/eval_review.py`) replays past review stages from their stored prompts at the verified reviewed commit (withholding evidence files written after that review) under seven reviewer variants (baseline, no skills, curated skills, Spec plus Standards, both, and a review procedure on the single or Spec reviewer), optionally repeated (`--repeat`) or on another review model (`--review-model`), judges findings blind against labelled cases and reports recall (mean and spread across reps), severity, clean-case findings, reading effort and cost; nothing in the live loop changes.
@@ -88,6 +90,7 @@ enabled for the route in `SECURITY.md`. The remaining release item is in `TASKS.
 
 ## Known gaps
 
+- **The 11→12 ledger upgrade counts runs, not processes.** A running scout, a `work --once` child that has not yet recorded its run, or a worker that has not yet restarted onto the new code can still be on version 11 code when the upgrade happens; such a process fails the next time it opens the ledger.
 - **Failed reopened PR runs.** A reopened run that fails (including setup failure) cannot be retried, reworked or landed while its PR stays open; recovery is a hand commit on the PR branch or closing the PR.
 - **Git maintenance needs idle time.** A project that always has a live run never
   receives sweep maintenance. External Git commands in a repository without

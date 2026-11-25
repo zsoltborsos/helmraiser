@@ -2587,6 +2587,14 @@ direct entry-file edits or deliberate `LEEBOARD_HARNESS` overrides. Explicit tas
 
 ## Troubleshooting
 
+- **Ledger schema version.** The ledger (`$HELMRAISER_DATA_DIR/helmraiser.db`) is at
+  schema version 12. A version 11 ledger is upgraded the first time it is opened
+  (not read-only) while no run is `starting`, `running`, `verifying`, `reviewing` or
+  `aborting`, after a backup beside it (`helmraiser.db.v11-<UTC time>.bak`). Until then
+  it opens at version 11, where everything but the experiment tables works, and the
+  ledger's experiment calls fail with `ledger upgrade to version 12 pending: N runs
+  still running`. Any other version is refused (`ledger … has schema
+  version N; this Helmraiser expects version 12`).
 - **Verify fails in the worktree but passes in your checkout.** A run's worktree
   (`<worktree_root>/<repo-name>-<hash>/worktree-<id>-<run>` by default) is a fresh checkout without
   `.venv`, and your editable install points at the primary `src`. Give the task or

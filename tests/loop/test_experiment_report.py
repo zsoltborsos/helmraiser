@@ -6,7 +6,7 @@ import pytest
 
 from helmraiser.ledger.db import Ledger
 from helmraiser.loop.experiment_report import build_experiment_report
-from tests.ledger.test_db import make_spec, make_v11_ledger
+from tests.ledger.test_db import make_spec, make_v11_ledger, run_row
 
 ARMS = {"A": {"skills": "default"}, "B": {"skills": "none"}}
 
@@ -37,6 +37,40 @@ def pair_factory(ledger, tmp_path):
                 pair_id, pick, decided_by=decision, reason=reason, judge=judge
             )
         return ledger.get_pair(experiment_id, spec.task_id)
+
+    return create
+
+
+@pytest.fixture
+def run_factory(ledger, tmp_path):
+    ids = count()
+
+    def create(pair, label, *, cost=1, minutes=1, iterations=(), verdict=None, link=True):
+        run_id = f"run-{next(ids)}"
+        ledger.create_run(
+            {
+                **run_row(run_id, pair["task_id"], str(tmp_path)),
+                "cost_usd": cost,
+                "started_at": 0,
+                "ended_at": minutes * 60 if minutes is not None else None,
+                "verdict": verdict,
+            }
+        )
+        for n in iterations:
+            ledger.start_iteration(run_id, n, f"session-{n}", "a/impl")
+            ledger.finish_iteration(
+                run_id,
+                n,
+                agent_ok=True,
+                commit_sha=None,
+                verify_passed=True,
+                verify_results=[],
+                cost_usd=999,
+            )
+        if link:
+            with ledger._write() as conn:
+                conn.execute(f"UPDATE pairs SET run_{label} = ? WHERE id = ?", (run_id, pair["id"]))
+        return run_id
 
     return create
 
@@ -133,3 +167,66 @@ def test_pending_upgrade(tmp_path):
         with pytest.raises(ValueError) as error:
             build_experiment_report(ledger)
         assert str(error.value) == ledger.upgrade_pending
+
+
+@pytest.mark.parametrize("sample_count", [3, 4])
+def test_run_metrics(ledger, experiment, pair_factory, run_factory, sample_count):
+    samples = [
+        # cost, minutes, sparse iteration numbers, current review verdict
+        ((1, 1, (), "approve"), (2, 2, (5,), "reject")),
+        ((5, 3, (7,), "approve"), (4, 4, (1, 9), None)),
+        ((9, 9, (2, 8, 20), None), (8, 8, (1, 2, 3, 4), "approve")),
+        ((20, None, (1, 2, 3, 4), "reject"), (10, 10, (1, 2, 3, 4, 5, 6), "approve")),
+    ]
+    for i, (a, b) in enumerate(samples[:sample_count]):
+        pair = pair_factory(
+            experiment,
+            arm_x="B" if i % 2 else "A",
+            pick="tie" if i == 2 else "X",
+            decision="tie" if i == 2 else ("failure" if i == 1 else "judged"),
+        )
+        for arm, (cost, minutes, iterations, verdict) in [("A", a), ("B", b)]:
+            label = "x" if pair["arm_x"] == arm else "y"
+            run_factory(
+                pair, label, cost=cost, minutes=minutes, iterations=iterations, verdict=verdict
+            )
+        # Same task but not one of this pair's linked runs: excluded.
+        run_factory(pair, "x", cost=10000, minutes=10000, iterations=range(10), link=False)
+    unpicked = pair_factory(experiment, pick=None)
+    for label in ("x", "y"):
+        run_factory(unpicked, label, cost=10000, minutes=10000, iterations=range(10))
+    unpaired_task = ledger.upsert_task(make_spec(ledger.db_path.parent, "unpaired"), "snapshot")
+    run_factory({"task_id": unpaired_task}, "x", cost=10000, link=False)
+
+    arms = build_experiment_report(ledger)["arms"]
+    assert arms["A"]["median_cost_usd"] == (5 if sample_count == 3 else 7)
+    assert arms["B"]["median_cost_usd"] == (4 if sample_count == 3 else 6)
+    assert arms["A"]["median_minutes"] == 3
+    assert arms["B"]["median_minutes"] == (4 if sample_count == 3 else 6)
+    assert arms["A"]["median_iterations"] == (1 if sample_count == 3 else 2)
+    assert arms["B"]["median_iterations"] == (2 if sample_count == 3 else 3)
+    expected_a = {"approve": 2, "none": 1}
+    expected_b = {"approve": sample_count - 2, "none": 1, "reject": 1}
+    if sample_count == 4:
+        expected_a["reject"] = 1
+    assert arms["A"]["review_verdicts"] == expected_a
+    assert arms["B"]["review_verdicts"] == expected_b
+    assert list(arms["A"]["review_verdicts"]) == sorted(expected_a)
+
+
+def test_missing_run_links(ledger, experiment, pair_factory, run_factory):
+    pair = pair_factory(experiment)
+    # Null run links are ignored without dropping the pair.
+    report = build_experiment_report(ledger)
+    assert report["pairs"] == {"total": 1, "picked": 1, "unpicked": 0}
+    for arm in report["arms"].values():
+        assert arm["median_cost_usd"] is None
+        assert arm["median_minutes"] is None
+        assert arm["median_iterations"] is None
+        assert arm["review_verdicts"] == {}
+    run_factory(pair, "y", minutes=None)
+    arm = build_experiment_report(ledger)["arms"]["B"]
+    assert arm["median_cost_usd"] == 1
+    assert arm["median_minutes"] is None
+    assert arm["median_iterations"] == 0
+    assert arm["review_verdicts"] == {"none": 1}

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from math import comb
+from statistics import median
 from typing import Any
 
 from helmraiser.ledger.db import Ledger
@@ -36,6 +38,21 @@ def _sign_test(wins_a: int, wins_b: int) -> dict[str, Any]:
     return {"n": n, "wins": {"A": wins_a, "B": wins_b}, "p_value": p_value}
 
 
+def _run_metrics(ledger: Ledger, runs: list[dict[str, Any]]) -> dict[str, Any]:
+    costs = [run["cost_usd"] for run in runs]
+    minutes = [
+        (run["ended_at"] - run["started_at"]) / 60 for run in runs if run["ended_at"] is not None
+    ]
+    iterations = [len(ledger.iterations(run["run_id"])) for run in runs]
+    verdicts = Counter(run["verdict"] or "none" for run in runs)
+    return {
+        "median_cost_usd": median(costs) if costs else None,
+        "median_minutes": median(minutes) if minutes else None,
+        "median_iterations": median(iterations) if iterations else None,
+        "review_verdicts": dict(sorted(verdicts.items())),
+    }
+
+
 def build_experiment_report(ledger: Ledger, name: str | None = None) -> dict[str, Any]:
     """Report the frozen experiment and its picked pairs in one read snapshot."""
     if not ledger.experiments_available:
@@ -60,7 +77,13 @@ def build_experiment_report(ledger: Ledger, name: str | None = None) -> dict[str
             .fetchall()
         )
         reasons = []
+        runs: dict[str, list[dict[str, Any]]] = {"A": [], "B": []}
         for pair in pairs:
+            for label in ("x", "y"):
+                run_id = pair[f"run_{label}"]
+                run = ledger.get_run(run_id) if run_id is not None else None
+                if run is not None:
+                    runs[pair[f"arm_{label}"]].append(run)
             winner = "tie" if pair["pick"] == "tie" else pair[f"arm_{pair['pick'].lower()}"]
             reasons.append(
                 {
@@ -71,6 +94,8 @@ def build_experiment_report(ledger: Ledger, name: str | None = None) -> dict[str
                     "judge": pair["judge"],
                 }
             )
+        for arm in ("A", "B"):
+            arms[arm].update(_run_metrics(ledger, runs[arm]))
         return {
             "experiment": record,
             "pairs": {key: counts[key] for key in ("total", "picked", "unpicked")},

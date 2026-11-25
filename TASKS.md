@@ -68,8 +68,10 @@ the grilling session:
 
 Slices, in order (1, 3 and 4 interactive; 2, 5 and 6 may run as Helmraiser tasks):
 
-1. Ledger 11→12 upgrade, the two tables, backup, tested on a real version 11 ledger.
-2. Arm overrides applied at run start; `experiment start|stop|status` with validation.
+1. Done (b72bc5c, 98b1779): ledger schema 12; the live ledger is upgraded.
+2. Queued as Helmraiser tasks `experiment-commands` (`experiment start|stop|status`,
+   arm validation) and `experiment-arm-overrides` (an arm applied to a run; depends on
+   the first).
 3. Forking and scheduling: fork at queue, pair slot, sibling overlap, brake, exclusions.
 4. Pair lifecycle: blind `wait`/`show`/`diff`, auto-pick, retry/abort/drop, `pick-packet`,
    `pick`, `approve` refused.

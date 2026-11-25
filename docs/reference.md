@@ -14,7 +14,60 @@ See also the [execution model](architecture/execution-model.md).
 - [Policies and delivery](#policies), [isolation](#isolation), [services](#services-for-verify)
 - [Sandbox preflight](#trying-commands-in-the-sandbox), [monitoring](#monitoring), [status contract](#status-contract)
 - [Unattended operation](#running-unattended), [retries](#retrying-a-failed-run), [rework](#reworking-a-run-awaiting-merge-approval)
-- [Leeboard](#leeboard-optional), [troubleshooting](#troubleshooting)
+- [Experiments](#experiments), [Leeboard](#leeboard-optional), [troubleshooting](#troubleshooting)
+
+## Experiments
+
+An optional `experiment` object in `~/.helmraiser/config.json` defines a live
+experiment:
+
+```json
+"experiment": {
+  "name": "hub-skills-vs-none",
+  "arms": {"A": {"skills": "default"}, "B": {"skills": "none"}},
+  "end_pairs": 30,
+  "end_at": "2026-12-09",
+  "quota_brake": 0.95,
+  "exclude_projects": []
+}
+```
+
+```bash
+helmraiser experiment start --json --data-dir ~/.helmraiser
+helmraiser experiment status --json --data-dir ~/.helmraiser
+helmraiser experiment stop --reason "manual stop" --json --data-dir ~/.helmraiser
+```
+
+All three commands accept optional `--json` and `--data-dir`. Without JSON they
+print human-readable output. Start validates and freezes the definition in the
+ledger; later config edits do not change it. There can be only one active
+experiment, and names cannot be reused even after stopping. All three commands
+refuse a deferred ledger upgrade, printing the ledger's upgrade-pending explanation.
+Status shows only the active experiment, or `none`, with total, picked, unpicked,
+judged wins and failure wins per arm, and ties. Ties count as picked, not arm wins.
+JSON returns `{"experiment": <record or null>, "pairs": <counts>}`; errors return
+`{"error": "message"}` with exit code 1. Stopping with none active is an error.
+
+The name must be nonblank, and arms must be exactly `A` (control) and `B`.
+Each arm may be empty or contain only:
+
+- `models`: overrides for known model profile stages, as `provider/id[:thinking]`
+  strings or objects with `model` and optional `thinking`. Effective implement and
+  review model IDs must differ, including profiles inherited from config; different
+  thinking levels do not make the same model a different reviewer.
+- `skills`: `default`, `none`, `discover`, or a single directory name existing under
+  `~/.local/share/helmraiser/skill-sets/`. Paths and traversal are refused.
+- `pi_rpc_implement`: a boolean.
+
+Only overrides are stored, not expanded model profiles. `end_pairs` defaults to 30
+and must be a positive integer. Optional `end_at` accepts an ISO date or datetime;
+date-only and naive datetimes mean UTC, and offsets are converted to UTC for storage.
+An unset end date is shown explicitly. `quota_brake` defaults to 0.85 and must be
+finite, greater than zero and at most one. `exclude_projects` defaults to an empty
+list; nonblank paths are expanded and resolved before storage.
+
+**This slice is lifecycle-only:** forking, applying arms to runs, picking,
+automatic end conditions, and quota-brake enforcement are not built yet.
 
 ## Requirements
 

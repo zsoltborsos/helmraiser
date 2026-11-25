@@ -1,6 +1,8 @@
 # Helmraiser — Current State
 
-The ledger is at schema version 12, with `experiments` and `pairs` tables for live experiments (slice 1: tables and ledger methods only, nothing fills them yet); a version 11 ledger is backed up beside itself (`helmraiser.db.v11-<UTC time>.bak`) and upgraded on the first open with no live run (`starting`, `running`, `verifying`, `reviewing`, `aborting`), and until then opens at 11 with `Ledger.upgrade_pending` saying why.
+`helmraiser experiment start|stop|status` validates and freezes A/B definitions and reports pair counts; lifecycle only, without forking, arm application, picking, automatic ending or quota-brake enforcement.
+
+The ledger is at schema version 12, with `experiments` and `pairs` tables for live experiments (tables and ledger lifecycle methods); a version 11 ledger is backed up beside itself (`helmraiser.db.v11-<UTC time>.bak`) and upgraded on the first open with no live run (`starting`, `running`, `verifying`, `reviewing`, `aborting`), and until then opens at 11 with `Ledger.upgrade_pending` saying why.
 
 `helmraiser stats --json` provides read-only window/project outcome, quality, failure, cost, latency, scout-funnel and weekly aggregates, with scout acceptance/scope fingerprints and cooldown scheduling errors isolated per project.
 

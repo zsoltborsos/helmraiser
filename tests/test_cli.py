@@ -119,6 +119,7 @@ def test_root_app_exposes_only_the_governed_loop_commands():
         "stats",
         "log",
         "show",
+        "diff",
         "attach",
         "doctor",
         "preflight",

@@ -42,8 +42,11 @@ from helmraiser.isolation.process import (
 )
 from helmraiser.ledger.db import PARKED_RUN_STATUSES, TERMINAL_RUN_STATUSES, Ledger
 from helmraiser.ledger.rundir import RunDir
+from helmraiser.loop import blinding, pairs
+from helmraiser.loop.blinding import Blind
 from helmraiser.loop.budget import completed_active_minutes, iteration_limit
 from helmraiser.loop.model_report import REPORT_GROUPINGS, build_model_report, render_models_section
+from helmraiser.loop.packet import DiffUnavailable, run_diff
 from helmraiser.loop.reconcile import find_phantom_runs, orphaned_services
 from helmraiser.loop.report import build_report, parse_since, pending_scope_request, render_report
 from helmraiser.loop.routing import format_dispatch_decision
@@ -389,6 +392,26 @@ def doctor(
         raise typer.Exit(code=EXIT_ERROR)
 
 
+REVEAL_HELP = "Show the setup of a run of an unpicked pair; this marks the pair unblinded"
+
+
+def _blind(ledger: Ledger, run: dict[str, Any], *, reveal: bool = False) -> Blind | None:
+    """How to hide ``run``'s setup; None when it is shown. ``reveal`` shows the setup of
+    a blinded run: the pair is marked unblinded, with a warning on stderr."""
+    pair = blinding.blinding_pair(ledger, str(run["run_id"]))
+    if pair is None:
+        return None
+    if not reveal:
+        return Blind(ledger, pair, run)
+    _unblind(ledger, pair)
+    return None
+
+
+def _unblind(ledger: Ledger, pair: dict[str, Any]) -> None:
+    ledger.set_pair_unblinded(int(pair["id"]))
+    typer.echo(f"warning: the pair of task {pair['task_id']} is now unblinded", err=True)
+
+
 def _pending_kind(ledger: Ledger, run_id: str) -> str:
     pending = ledger.pending_approval(run_id)
     return str(pending["kind"]) if pending else "merge"
@@ -405,6 +428,8 @@ def _wait_run_row(
     """Serialize only ledger data, without consulting or writing run-directory files."""
     fields = ("run_id", "verdict", "failure_reason", "branch_name", "pr_url", "stage", "project")
     row = {field: run[field] if run else None for field in fields}
+    if run:
+        row["failure_reason"] = blinding.failure_reason(ledger, run)
     row.update(
         task_id=run["task_id"] if run else task_id,
         status=run["status"] if run else task_status,
@@ -422,6 +447,27 @@ def _wait_run_row(
             if scope:
                 row["scope_request"] = scope
     return row
+
+
+def _wait_pair(
+    ledger: Ledger, pair: dict[str, Any], states: dict[str, pairs.Arm]
+) -> dict[str, Any]:
+    """A pair in the ``wait`` output: its state and each label's run, never an arm."""
+    labels = {}
+    for label, arm in states.items():
+        row = _wait_run_row(ledger, arm.run, str(pair["task_id"]), "", timed_out=False)
+        labels[label.lower()] = {
+            key: value
+            for key, value in row.items()
+            if key not in ("task_id", "project", "timed_out")
+        }
+    return {
+        "state": pairs.pair_state(pair, states),
+        "picked": pair["pick"] is not None,
+        "pick": pair["pick"],
+        "decided_by": pair["decided_by"],
+        **labels,
+    }
 
 
 def _resolve_wait_ref(
@@ -529,7 +575,7 @@ def status(
                     "origin": run_origin(str(r["run_id"]), base),
                     **(
                         {
-                            "reason": r["failure_reason"],
+                            "reason": blinding.failure_reason(ledger, r),
                             "hints": _verify_hints(ledger, str(r["run_id"])),
                         }
                         if lane == "failed"
@@ -663,7 +709,11 @@ def status(
                 markup=False,
                 soft_wrap=True,
             )
-        if any(row["pending"] == "merge" for row in full["awaiting"]):
+        # Not for an arm of an unpicked pair: its rework waits for the pick.
+        if any(
+            row["pending"] == "merge" and ("pair" not in row or row["pair"]["picked"])
+            for row in full["awaiting"]
+        ):
             console.print(
                 '  merge rework: helmraiser rework <run> --note "<feedback>"', markup=False
             )
@@ -784,11 +834,14 @@ def report(
 
 
 def _print_wait_result(row: dict[str, Any]) -> None:
-    console.print(
-        f"{row['status']} {row['task_id']} run {row['run_id'] or '-'} — "
-        f"${row['cost_usd'] or 0.0:.4f}",
-        markup=False,
-    )
+    if "pair" in row and not row["pair"]["picked"]:
+        console.print(f"{row['status']} {row['task_id']} pair X, Y", markup=False, soft_wrap=True)
+    else:
+        console.print(
+            f"{row['status']} {row['task_id']} run {row['run_id'] or '-'} — "
+            f"${row['cost_usd'] or 0.0:.4f}",
+            markup=False,
+        )
     for key, label in (
         ("failure_reason", "reason"),
         ("pending", "pending"),
@@ -805,7 +858,40 @@ def _print_wait_result(row: dict[str, Any]) -> None:
             f"{request['reason'] or '(no reason given)'}",
             markup=False,
         )
-    if row["status"] == "awaiting_approval":
+    pair = row.get("pair")
+    if pair is not None:
+        picked = f" {pair['pick']} ({pair['decided_by']})" if pair["picked"] else ""
+        console.print(f"  pair: {pair['state'].replace('_', ' ')}{picked}", markup=False)
+        for label in pairs.LABELS:
+            arm = pair[label.lower()]
+            outcome = f"awaiting {arm['pending']} approval" if arm["pending"] else arm["status"]
+            if arm["failure_reason"]:
+                outcome += f" ({arm['failure_reason']})"
+            console.print(
+                f"  {label}: {outcome} — review {arm['verdict'] or '-'} — "
+                f"${arm['cost_usd']:.4f} — run {arm['run_id']}",
+                markup=False,
+                soft_wrap=True,
+            )
+            if "scope_request" in arm:
+                request = arm["scope_request"]
+                console.print(
+                    f"    scope request: {', '.join(request['paths'])} — "
+                    f"{request['reason'] or '(no reason given)'}",
+                    markup=False,
+                    soft_wrap=True,
+                )
+    if pair is not None and not pair["picked"]:
+        # An unpicked pair has no run of its own to approve: the next step is the pair's.
+        steps = {
+            "awaiting_pick": f"helmraiser pick-packet {row['task_id']}, then helmraiser pick "
+            f'{row["task_id"]} X|Y|tie --reason "<why>" --judge "<who>"',
+            "needs_approval": "helmraiser approve <run> (or reject) for the arm that awaits it",
+            "failed": f"helmraiser retry {row['task_id']}",
+        }
+        if pair["state"] in steps:
+            console.print(f"  next: {steps[pair['state']]}", markup=False, soft_wrap=True)
+    elif row["status"] == "awaiting_approval":
         console.print(f"  next: helmraiser approve {row['run_id']} (or reject)", markup=False)
     if row["timed_out"]:
         typer.echo("Timed out waiting for the requested condition.", err=True)
@@ -819,7 +905,9 @@ def wait(
     as_json: bool = typer.Option(False, "--json", help="Machine-readable output"),
     data_dir: Path | None = typer.Option(None, "--data-dir", help="Override HELMRAISER_DATA_DIR"),
 ) -> None:
-    """Wait silently until a run needs its owner or has ended (ledger reads only)."""
+    """Wait silently until a run needs its owner or has ended (ledger reads only). A
+    task with an unpicked pair is waited for as one: until both of its runs can be
+    picked or have failed, or one awaits a plan or scope approval."""
     try:
         if until not in ("attention", "end"):
             _fail(f"{ref}: --until must be attention or end", as_json=as_json, code=2)
@@ -860,41 +948,68 @@ def wait(
             if until == "attention":
                 stop_statuses = stop_statuses | PARKED_RUN_STATUSES
             while True:
-                task_id, task_status = canonical_id, "queued"
-                if kind == "run":
-                    run = ledger.get_run(canonical_id)
-                    if run is None:
-                        _fail(f"{ref}: run no longer exists", as_json=as_json, code=2)
-                else:
-                    task = ledger.get_task(canonical_id)
-                    if task is None:
-                        _fail(f"{ref}: task no longer exists", as_json=as_json, code=2)
-                    task_status = str(task["status"])
-                    runs = [
-                        r
-                        for r in ledger.list_runs(task_id=canonical_id)
-                        if r["run_id"] not in history
-                    ]
-                    run = max(runs, key=lambda r: (r["started_at"], r["run_id"]), default=None)
-                    if run is None and task_status != "queued":
-                        _fail(
-                            f"{ref}: task in status {task_status} has no run",
-                            as_json=as_json,
-                            code=2,
+                # One snapshot per poll: a pick must not land between the reads of a
+                # pair and of its runs.
+                with ledger.read_snapshot():
+                    task_id, task_status = canonical_id, "queued"
+                    pair: dict[str, Any] | None = None
+                    states: dict[str, pairs.Arm] | None = None
+                    if kind == "run":
+                        run = ledger.get_run(canonical_id)
+                        if run is None:
+                            _fail(f"{ref}: run no longer exists", as_json=as_json, code=2)
+                    else:
+                        task = ledger.get_task(canonical_id)
+                        if task is None:
+                            _fail(f"{ref}: task no longer exists", as_json=as_json, code=2)
+                        task_status = str(task["status"])
+                        runs = [
+                            r
+                            for r in ledger.list_runs(task_id=canonical_id)
+                            if r["run_id"] not in history
+                        ]
+                        run = max(runs, key=lambda r: (r["started_at"], r["run_id"]), default=None)
+                        if run is None and task_status != "queued":
+                            _fail(
+                                f"{ref}: task in status {task_status} has no run",
+                                as_json=as_json,
+                                code=2,
+                            )
+                        # The task is the unit of a pair: an unpicked pair is waited
+                        # for as one, a picked pair as the run its pick chose.
+                        pair = ledger.pair_for_run(str(run["run_id"])) if run else None
+                        states = pairs.arms(ledger, pair) if pair is not None else None
+                    if pair is not None and states is not None and pair["pick"] is None:
+                        run = None
+                        met = (
+                            all(a.run["status"] in TERMINAL_RUN_STATUSES for a in states.values())
+                            if until == "end"
+                            else pairs.pair_state(pair, states) != "under_way"
                         )
-                met = run is not None and run["status"] in stop_statuses
-                remaining = deadline - time.monotonic() if deadline is not None else None
-                timed_out = not met and remaining is not None and remaining <= 0
-                if met or timed_out:
-                    row = _wait_run_row(ledger, run, task_id, task_status, timed_out=timed_out)
+                    else:
+                        if pair is not None and states is not None:
+                            chosen = pairs.picked_arm(pair, states)
+                            run = chosen.run if chosen is not None else run
+                        met = run is not None and run["status"] in stop_statuses
+                    remaining = deadline - time.monotonic() if deadline is not None else None
+                    timed_out = not met and remaining is not None and remaining <= 0
+                    row = None
+                    if met or timed_out:
+                        row = _wait_run_row(ledger, run, task_id, task_status, timed_out=timed_out)
+                        if pair is not None and states is not None:
+                            row["pair"] = _wait_pair(ledger, pair, states)
+                if row is not None:
                     if as_json:
                         typer.echo(json.dumps(row))
                     else:
                         _print_wait_result(row)
-                    code = (
-                        124 if timed_out else (1 if row["status"] in ("failed", "aborted") else 0)
+                    # An unpicked pair has failed when both of its runs have, whatever
+                    # its task's status says.
+                    failed = (
+                        row["status"] in ("failed", "aborted")
+                        or row.get("pair", {}).get("state") == "failed"
                     )
-                    raise typer.Exit(code)
+                    raise typer.Exit(124 if timed_out else (1 if failed else 0))
                 delay = durations["interval"]
                 time.sleep(min(delay, remaining) if remaining is not None else delay)
     except KeyboardInterrupt:
@@ -984,16 +1099,22 @@ def log(
     since_id: int = typer.Option(0, "--since-id", help="Only events with id > N"),
     interval: float = typer.Option(2.0, "--interval", help="Poll interval for --follow (s)"),
     as_json: bool = typer.Option(False, "--json", help="JSONL, one event per line"),
+    reveal: bool = typer.Option(False, "--reveal", help=REVEAL_HELP),
     data_dir: Path | None = typer.Option(None, "--data-dir", help="Override HELMRAISER_DATA_DIR"),
 ) -> None:
-    """Print a run's ledger events as a timeline (or JSONL with --json)."""
+    """Print a run's ledger events as a timeline (or JSONL with --json). Until its pair
+    is picked, a paired run's events show ``hidden`` for its arm, models and provider,
+    and for everything a pi session recorded but the event's type."""
     ledger = open_ledger(data_dir)
     row = _find_run(ledger, run, as_json=as_json)
     run_id = str(row["run_id"])
+    blind = _blind(ledger, row, reveal=reveal)
     last = since_id
     while True:
         for event in ledger.events(run_id, since_id=last):
             last = int(event["id"])
+            if blind is not None:
+                event = blind.event(event)
             typer.echo(json.dumps(event, default=str) if as_json else format_event(event))
         if not follow:
             return
@@ -1025,11 +1146,21 @@ def _snapshot_budget(
         return None, f"task snapshot unreadable: {exc}"
 
 
-def build_show(ledger: Ledger, row: dict[str, Any], data_dir: Path, now: float) -> dict[str, Any]:
-    """One run's state and limits, read only. The limits are what the runner enforces:
-    ``loop/budget.py`` decides the iteration limit, and the cost and time limits are the
-    snapshot's caps plus every rework's extras."""
+def build_show(
+    ledger: Ledger, row: dict[str, Any], data_dir: Path, now: float, blind: Blind | None = None
+) -> dict[str, Any]:
+    """One run's state, setup and limits, read only. The limits are what the runner
+    enforces: ``loop/budget.py`` decides the iteration limit, and the cost and time
+    limits are the snapshot's caps plus every rework's extras. ``blind`` hides the
+    setup of a run of an unpicked pair."""
     run_id = str(row["run_id"])
+    setup = blinding.hidden_setup() if blind is not None else blinding.recorded_setup(ledger, row)
+    paired = ledger.pair_for_run(run_id)
+    pair = (
+        {"pair": {**(pairs.run_pair(ledger, run_id) or {}), "unblinded": paired["unblinded"]}}
+        if paired is not None
+        else {}
+    )
     reworks = ledger.reworks(run_id)
     budget, warning = _snapshot_budget(ledger, row, data_dir)
 
@@ -1056,8 +1187,13 @@ def build_show(ledger: Ledger, row: dict[str, Any], data_dir: Path, now: float) 
         "project": row["project"],
         "status": row["status"],
         "stage": row["stage"],
-        "failure_reason": row["failure_reason"],
+        "failure_reason": (
+            blind.text(row["failure_reason"]) if blind is not None else row["failure_reason"]
+        ),
         "verdict": row["verdict"],
+        **pair,
+        "models": setup["models"],
+        "arm": setup["arm"],
         "policy": row["policy"],
         "delivery": row["delivery"],
         "base_branch": row["base_branch"],
@@ -1126,6 +1262,18 @@ def _print_show(data: dict[str, Any]) -> None:
     for key in SHOW_FIELDS:
         if data[key] is not None:
             typer.echo(f"{key}: {data[key]}")
+    if "pair" in data:
+        pair = data["pair"]
+        state = "picked" if pair["picked"] else "unpicked"
+        typer.echo(
+            f"pair: {pair['label']} of {pair['task_id']} ({state}"
+            + (", unblinded)" if pair["unblinded"] else ")")
+        )
+    typer.echo(
+        "models: " + " ".join(f"{stage}={model or '-'}" for stage, model in data["models"].items())
+    )
+    if data["arm"] is not None:
+        typer.echo(f"arm: {_arm_text(data['arm']['name'], data['arm']['overrides'])}")
     if data["worktree_path"]:
         state = "exists" if data["worktree_exists"] else "missing"
         typer.echo(f"worktree_path: {data['worktree_path']} ({state})")
@@ -1152,18 +1300,137 @@ def _limit_text(limit: float | None, spec: str) -> str:
     return "unknown" if limit is None else format(limit, spec)
 
 
+def _arm_text(name: str, overrides: Any) -> str:
+    """``B {"skills": "none"}``: an arm and its overrides, or ``hidden``."""
+    if name == blinding.HIDDEN:
+        return blinding.HIDDEN
+    return f"{name} {json.dumps(overrides, sort_keys=True)}"
+
+
+def _passed(results: list[bool]) -> str | None:
+    """``pass`` or ``fail`` for a run's steps; None when it has run none."""
+    if not results:
+        return None
+    return "pass" if all(results) else "fail"
+
+
+# What ``show <task>`` puts side by side for a pair: the row's name, then its key.
+PAIR_ROWS: tuple[tuple[str, str], ...] = (
+    ("run", "run_id"),
+    ("status", "status"),
+    ("stage", "stage"),
+    ("pending", "pending_approval"),
+    ("failure", "failure_reason"),
+    ("verdict", "verdict"),
+    ("findings", "findings"),
+    ("verify", "verify"),
+    ("evidence", "evidence"),
+    ("cost_usd", "cost_usd"),
+    ("minutes", "minutes"),
+    ("iterations", "iterations"),
+    ("branch", "branch_name"),
+    ("pr", "pr_url"),
+)
+
+
+def build_pair_show(
+    ledger: Ledger, pair: dict[str, Any], data_dir: Path, now: float, *, reveal: bool = False
+) -> dict[str, Any] | None:
+    """A pair's two runs side by side, by label: outcome, cost and the results of
+    verify, evidence and the review. Which arm each label was (``reveal``) is ``hidden``
+    until the pair has its pick, unless ``reveal`` asks for it. None for a pair that
+    lacks a run."""
+    states = pairs.arms(ledger, pair)
+    if states is None:
+        return None
+    picked = pair["pick"] is not None
+    if reveal and not picked:
+        _unblind(ledger, pair)
+        pair = {**pair, "unblinded": True}
+    labels: dict[str, dict[str, Any]] = {}
+    for label, arm in states.items():
+        blind = None if reveal else _blind(ledger, arm.run)
+        data = build_show(ledger, arm.run, data_dir, now, blind)
+        reviews = ledger.events(arm.run_id, types=("review_verdict",))
+        limits = data["limits"]
+        labels[label.lower()] = {
+            **{key: data[key] for _name, key in PAIR_ROWS if key in data},
+            "findings": len(reviews[-1]["payload"].get("findings") or []) if reviews else None,
+            "verify": _passed(
+                [result.passed for result in last_verify_results(ledger.iterations(arm.run_id))]
+            ),
+            "evidence": _passed([bool(row["ok"]) for row in ledger.evidence(arm.run_id)]),
+            "cost_usd": limits["cost_usd"]["used"],
+            "minutes": limits["minutes"]["used"],
+            "iterations": limits["iterations"]["used"],
+        }
+    setups: dict[str, Any] = pairs.reveal(ledger, pair)
+    if not picked and not reveal:
+        setups = {label: dict.fromkeys(setup, blinding.HIDDEN) for label, setup in setups.items()}
+    task = ledger.get_task(str(pair["task_id"]))
+    state = pairs.pair_state(pair, states)
+    return {
+        "task_id": pair["task_id"],
+        "title": task["title"] if task else None,
+        "project": task["project"] if task else None,
+        "pair": {
+            "state": state,
+            "picked": picked,
+            "awaiting_pick": state == "awaiting_pick",
+            "unblinded": pair["unblinded"],
+            "pick": pair["pick"],
+            "decided_by": pair["decided_by"],
+            "reason": pair["reason"],
+            "judge": pair["judge"],
+            "picked_at": _iso(pair["picked_at"]),
+            "reveal": setups,
+            **labels,
+        },
+    }
+
+
+def _print_pair_show(data: dict[str, Any]) -> None:
+    pair = data["pair"]
+    typer.echo(f"task: {data['task_id']}")
+    if pair["picked"]:
+        typer.echo(f"pair: picked {pair['pick']} ({pair['decided_by']}), judged by {pair['judge']}")
+        typer.echo(f"reason: {' '.join(str(pair['reason']).split())}")
+    else:
+        typer.echo(f"pair: unpicked, {pair['state'].replace('_', ' ')}")
+    if pair["unblinded"]:
+        typer.echo("unblinded: the setups were shown before the pick")
+    cells = {
+        name: [str("-" if pair[label][key] is None else pair[label][key]) for label in ("x", "y")]
+        for name, key in PAIR_ROWS
+    }
+    width = max(len(row[0]) for row in cells.values())
+    typer.echo(f"{'':<12}{'X':<{width}}  Y")
+    for name, (x, y) in cells.items():
+        typer.echo(f"{name:<12}{x:<{width}}  {y}")
+    for label, setup in pair["reveal"].items():
+        typer.echo(f"{label}: arm {_arm_text(setup['arm'], setup['overrides'])}")
+    if pair["awaiting_pick"]:
+        typer.echo(
+            f"next: helmraiser pick-packet {data['task_id']}, then helmraiser pick "
+            f'{data["task_id"]} X|Y|tie --reason "<why>" --judge "<who>"'
+        )
+
+
 def show(
     run: str = typer.Argument(
         ..., help="Run id, task id (short id or <project-key>:<id>), or unique run prefix"
     ),
     as_json: bool = typer.Option(False, "--json", help="Machine-readable output"),
+    reveal: bool = typer.Option(False, "--reveal", help=REVEAL_HELP),
     data_dir: Path | None = typer.Option(None, "--data-dir", help="Override HELMRAISER_DATA_DIR"),
 ) -> None:
-    """One run's state and limits: status, branch, worktree, and iterations, cost and minutes
-    used against the limits its task snapshot and reworks set. A task reference selects
-    its most recent run. Reads the ledger only."""
+    """One run's state, setup and limits: status, branch, worktree, models, and
+    iterations, cost and minutes used against the limits its task snapshot and reworks
+    set. A task reference selects its most recent run; when that run is one of a pair,
+    it shows the pair's runs X and Y side by side. Until the pair is picked, the arm
+    and the models read ``hidden``. Reads the ledger only; ``--reveal`` writes one mark."""
     try:
-        ledger = open_ledger(data_dir, read_only=True)
+        ledger = open_ledger(data_dir, read_only=not reveal)
     except (OSError, sqlite3.Error, ValueError) as exc:
         _fail(f"cannot read ledger: {exc}", as_json=as_json, code=EXIT_ERROR)
     with ledger:
@@ -1179,11 +1446,90 @@ def show(
         if row is None:
             message = f"task {run} has no runs" if kind == "task" else f"unknown run: {run}"
             _fail(message, as_json=as_json, code=EXIT_ERROR)
-        data = build_show(ledger, row, _data_dir(data_dir), time.time())
+        base, now = _data_dir(data_dir), time.time()
+        pair = ledger.pair_for_run(str(row["run_id"])) if kind == "task" else None
+        side_by_side = (
+            build_pair_show(ledger, pair, base, now, reveal=reveal) if pair is not None else None
+        )
+        if side_by_side is None:
+            data = build_show(ledger, row, base, now, _blind(ledger, row, reveal=reveal))
     if as_json:
-        typer.echo(json.dumps(data))
+        typer.echo(json.dumps(side_by_side if side_by_side is not None else data))
+    elif side_by_side is not None:
+        _print_pair_show(side_by_side)
     else:
         _print_show(data)
+
+
+# ── diff ──────────────────────────────────────────────────────────────
+
+
+def diff(
+    ref: str = typer.Argument(
+        ..., help="Run id, task id (short id or <project-key>:<id>), or unique run prefix"
+    ),
+    label: str | None = typer.Argument(
+        None, metavar="[X|Y]", help="Which run of the task's pair; not for a run"
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Machine-readable output"),
+    data_dir: Path | None = typer.Option(None, "--data-dir", help="Override HELMRAISER_DATA_DIR"),
+) -> None:
+    """Print a run's diff against its base commit: the ``diff.patch`` of its run
+    directory, or ``git diff base_commit..head_commit`` when that file is absent. A task
+    reference selects its most recent run, or run X or Y when that run is one of a pair."""
+    try:
+        ledger = open_ledger(data_dir, read_only=True)
+    except (OSError, sqlite3.Error, ValueError) as exc:
+        _fail(f"cannot read ledger: {exc}", as_json=as_json, code=EXIT_ERROR)
+    with ledger:
+        kind, canonical_id = _resolve_wait_ref(ledger, ref, as_json=as_json, error_code=EXIT_ERROR)
+        if kind == "task":
+            row = max(
+                ledger.list_runs(task_id=canonical_id),
+                key=lambda row: (row["started_at"], row["run_id"]),
+                default=None,
+            )
+            if row is None:
+                _fail(f"task {ref} has no runs", as_json=as_json, code=EXIT_ERROR)
+        else:
+            row = ledger.get_run(canonical_id)
+            assert row is not None
+        pair = ledger.pair_for_run(str(row["run_id"])) if kind == "task" else None
+        chosen = (label or "").upper()
+        if pair is None and chosen:
+            what = "a run" if kind == "run" else "a task without a pair"
+            _fail(
+                f"X|Y selects a run of a task's pair; {ref} is {what}",
+                as_json=as_json,
+                code=EXIT_VALIDATION,
+            )
+        if pair is not None:
+            if chosen not in pairs.LABELS:
+                _fail(
+                    f"task {canonical_id} has a pair: helmraiser diff {canonical_id} X|Y",
+                    as_json=as_json,
+                    code=EXIT_VALIDATION,
+                )
+            row = ledger.get_run(str(pair[f"run_{chosen.lower()}"])) or row
+    try:
+        text, source = run_diff(row, _data_dir(data_dir))
+    except DiffUnavailable as exc:
+        _fail(str(exc), as_json=as_json, code=EXIT_ERROR)
+    if as_json:
+        typer.echo(
+            json.dumps(
+                {
+                    "run_id": row["run_id"],
+                    "task_id": row["task_id"],
+                    "label": chosen or None,
+                    "base_commit": row["base_commit"],
+                    "source": source,
+                    "diff": text,
+                }
+            )
+        )
+    else:
+        typer.echo(text, nl=False)
 
 
 # ── attach ────────────────────────────────────────────────────────────
@@ -1220,6 +1566,7 @@ def attach(
     stage: str = typer.Option("implement", "--stage", help="implement, review or plan"),
     exec_: bool = typer.Option(False, "--exec", help="Replace this process with pi"),
     as_json: bool = typer.Option(False, "--json", help="Machine-readable output"),
+    reveal: bool = typer.Option(False, "--reveal", help=REVEAL_HELP),
     data_dir: Path | None = typer.Option(None, "--data-dir", help="Override HELMRAISER_DATA_DIR"),
 ) -> None:
     """Print (or with --exec run) the pi command that opens a run's session."""
@@ -1232,6 +1579,13 @@ def attach(
     base = _data_dir(data_dir)
     ledger = open_ledger(data_dir)
     row = _find_run(ledger, run, as_json=as_json)
+    if _blind(ledger, row, reveal=reveal) is not None:
+        _fail(
+            f"run {row['run_id']} is one arm of an unpicked pair, and its pi session shows "
+            "its model: pick first, or pass --reveal",
+            as_json=as_json,
+            code=EXIT_VALIDATION,
+        )
     plan = attach_plan(ledger, row, stage, base)
     if plan["session_file"] is None:
         _fail(
@@ -1259,4 +1613,5 @@ def register_monitor_commands(app: typer.Typer) -> None:
     app.command("stats")(stats)
     app.command("log")(log)
     app.command("show", context_settings={"ignore_unknown_options": True})(show)
+    app.command("diff", context_settings={"ignore_unknown_options": True})(diff)
     app.command("attach")(attach)

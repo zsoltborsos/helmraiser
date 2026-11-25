@@ -230,3 +230,52 @@ def test_missing_run_links(ledger, experiment, pair_factory, run_factory):
     assert arm["median_minutes"] is None
     assert arm["median_iterations"] == 0
     assert arm["review_verdicts"] == {"none": 1}
+
+
+def test_post_pick_rework(ledger, experiment, pair_factory, run_factory):
+    def event(run_id, at, event_type="rework_requested"):
+        event_id = ledger.append_event(run_id, "helmraiser", event_type, {"round": 99, "ts": 0})
+        with ledger._write() as conn:
+            conn.execute("UPDATE run_events SET ts = ? WHERE id = ?", (at, event_id))
+
+    # B wins via Y, then A wins via Y by failure: both reverse the naive X=A mapping.
+    for arm_x, decision, count_after in [("A", "judged", 2), ("B", "failure", 3)]:
+        pair = pair_factory(experiment, arm_x=arm_x, pick="Y", decision=decision)
+        loser = run_factory(pair, "x")
+        winner = run_factory(pair, "y")
+        picked_at = pair["picked_at"]
+        event(winner, picked_at - 1)
+        event(winner, picked_at)
+        for offset in range(1, count_after + 1):
+            event(winner, picked_at + offset)
+        event(loser, picked_at + 10)
+        event(winner, picked_at + 10, "review_feedback")
+        event(winner, picked_at + 10, "rework_reopened")
+    # Nor do tied or not-yet-picked runs have winners whose rework can count.
+    for pick, decision in [("tie", "tie"), (None, None)]:
+        pair = pair_factory(experiment, pick=pick, decision=decision)
+        for label in ("x", "y"):
+            run_id = run_factory(pair, label)
+            event(run_id, (pair["picked_at"] or 0) + 100)
+    arms = build_experiment_report(ledger)["arms"]
+    assert arms["A"]["post_pick_rework_rounds"] == 3
+    assert arms["B"]["post_pick_rework_rounds"] == 2
+
+
+def test_empty_experiment(ledger, experiment):
+    report = build_experiment_report(ledger)
+    assert report["experiment"]["arms"] == ARMS
+    assert report["pairs"] == {"total": 0, "picked": 0, "unpicked": 0}
+    assert report["sign_test"] == {"n": 0, "wins": {"A": 0, "B": 0}, "p_value": None}
+    assert report["reasons"] == []
+    for arm in ("A", "B"):
+        assert report["arms"][arm] == {
+            "judged_wins": 0,
+            "failure_wins": 0,
+            "ties": 0,
+            "median_cost_usd": None,
+            "median_minutes": None,
+            "median_iterations": None,
+            "review_verdicts": {},
+            "post_pick_rework_rounds": 0,
+        }

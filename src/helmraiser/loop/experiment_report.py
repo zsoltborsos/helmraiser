@@ -65,6 +65,7 @@ def build_experiment_report(ledger: Ledger, name: str | None = None) -> dict[str
                 "judged_wins": counts["judged_wins"][arm],
                 "failure_wins": counts["failure_wins"][arm],
                 "ties": counts["ties"],
+                "post_pick_rework_rounds": 0,
             }
             for arm in ("A", "B")
         }
@@ -85,6 +86,13 @@ def build_experiment_report(ledger: Ledger, name: str | None = None) -> dict[str
                 if run is not None:
                     runs[pair[f"arm_{label}"]].append(run)
             winner = "tie" if pair["pick"] == "tie" else pair[f"arm_{pair['pick'].lower()}"]
+            if winner != "tie":
+                winning_run = pair[f"run_{pair['pick'].lower()}"]
+                if winning_run is not None:
+                    arms[winner]["post_pick_rework_rounds"] += sum(
+                        event["ts"] > pair["picked_at"]
+                        for event in ledger.events(winning_run, types=("rework_requested",))
+                    )
             reasons.append(
                 {
                     "task_id": pair["task_id"],

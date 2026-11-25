@@ -56,6 +56,7 @@ from helmraiser.loop.excerpt import DEFAULT_EXCERPT_CHARS, DEFAULT_EXCERPT_LINES
 from helmraiser.loop.experiments import RunArm, RunPair, apply_arm
 from helmraiser.loop.hints import SETUP_READONLY_HINT, setup_readonly_line
 from helmraiser.loop.merge import MergeDecision, decide
+from helmraiser.loop.pairs import auto_pick
 from helmraiser.loop.prompts import (
     NO_CHANGES_PROMPT,
     escalation_prompt,
@@ -2481,7 +2482,10 @@ class GovernedRun:
             self.ledger.update_run(self.run_id, pr_url=self.pr_url)
             self._event("delivered", {"pr_url": self.pr_url}, stage="merge")
 
-        decision = decide("review" if self.reworks else self.task.policy, verdict, finalize)
+        # One arm of a pair never lands by itself, whatever the policy: it waits for
+        # the pick.
+        parked = bool(self.reworks) or self.ledger.pair_for_run(self.run_id) is not None
+        decision = decide("review" if parked else self.task.policy, verdict, finalize)
         if decision.status != "landed":
             self.pending_approval = "merge"
         self._event(
@@ -2519,6 +2523,7 @@ class GovernedRun:
             "run_end",
             {"status": status, "failure_reason": reason, "active_minutes": minutes},
         )
+        auto_pick(self.ledger, self.run_id)
         outcome = RunOutcome(
             run_id=self.run_id,
             status=status,

@@ -8,8 +8,15 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
-from helmraiser.ledger.db import TERMINAL_RUN_STATUSES, Ledger, default_db_path
+from helmraiser.ledger.db import (
+    LIVE_RUN_STATUSES,
+    RESUMING_RUN_STATUS,
+    TERMINAL_RUN_STATUSES,
+    Ledger,
+    default_db_path,
+)
 from helmraiser.ledger.rundir import RunDir, restamp_summary
+from helmraiser.loop.pairs import auto_pick, task_pair
 from helmraiser.loop.status import write_status
 from helmraiser.pipeline.run_identity import resolve_run_id
 from helmraiser.runner.process_control import (
@@ -76,8 +83,13 @@ def abort_run(
     project_dir: Path,
     run_id: str,
     process_controller: ProcessController | None = None,
+    *,
+    settle_pair: bool = True,
 ) -> bool:
     """Abort ``run_id`` recorded in ``project_dir``'s state; False if unknown.
+
+    ``settle_pair``: when this call closes the ledger run, let its pair's other arm win
+    by failure (``auto_pick``). ``abort_runs`` turns it off while it aborts both arms.
 
     Raises ``ValueError`` when ``run_id`` is not a canonical UUID4.
     """
@@ -111,7 +123,69 @@ def abort_run(
                     restamp_summary(RunDir(canonical_run_id, ledger_path.parent), "aborted")
                 except OSError:
                     pass
+                if settle_pair:
+                    auto_pick(ledger, canonical_run_id)
                 write_status(ledger, ledger_path.parent)
         except (OSError, sqlite3.Error):
             pass
     return True
+
+
+def _abort_unstarted(ledger: Ledger, run_id: str) -> bool:
+    """Close a ``resuming`` run that the project state does not know (a pair's second
+    run before its start) as aborted, taking it from the worker first. False when the
+    run is not resuming or a worker has just claimed it."""
+    row = ledger.get_run(run_id)
+    if row is None or row["status"] != RESUMING_RUN_STATUS or not ledger.claim_resumable(run_id):
+        return False
+    ledger.finish_run(run_id, "aborted", "aborted: before it started")
+    ledger.set_task_status(str(row["task_id"]), "aborted", run_id=run_id)
+    return True
+
+
+def abort_runs(
+    project_dir: Path,
+    ref: str,
+    process_controller: ProcessController | None = None,
+) -> list[str]:
+    """Abort run ``ref`` as ``abort_run`` does. When it is one run of an unpicked pair,
+    or ``ref`` is the id of a task whose pair is unpicked, abort both of the pair's
+    runs: an abort acts on the task, and must not leave one arm to win by the other's
+    abort. Returns the runs aborted; empty when ``ref`` is unknown.
+
+    Raises ``ValueError`` when ``ref`` is neither a canonical UUID4 nor such a task.
+    """
+    controller = () if process_controller is None else (process_controller,)
+    ledger_path = default_db_path()
+    ledger: Ledger | None = None
+    pair = None
+    if ledger_path.is_file():
+        try:
+            ledger = Ledger(ledger_path)
+            pair = ledger.pair_for_run(ref) or task_pair(ledger, ref)
+        except (OSError, sqlite3.Error, ValueError):
+            pair = None
+    if (
+        ledger is None
+        or pair is None
+        or pair["pick"] is not None
+        or not (pair["run_x"] and pair["run_y"])
+    ):
+        return [ref] if abort_run(project_dir, ref, *controller) else []
+
+    def live(run_id: str) -> bool:
+        row = ledger.get_run(run_id)
+        return row is not None and row["status"] in LIVE_RUN_STATUSES
+
+    # Neither abort settles the pair by itself, and the arm without a process goes
+    # first: a live arm's worker records its end later, and by then the other arm is
+    # aborted and cannot win by failure.
+    runs = sorted((str(pair["run_x"]), str(pair["run_y"])), key=live)
+    aborted = [
+        run_id
+        for run_id in runs
+        if abort_run(project_dir, run_id, *controller, settle_pair=False)
+        or _abort_unstarted(ledger, run_id)
+    ]
+    write_status(ledger, ledger_path.parent)
+    return aborted

@@ -124,6 +124,9 @@ class Fork:
     experiment_id: int
     arms: Mapping[str, RunArm]
     paired: bool
+    # The arms behind X and Y of the pair the task already has (a retried pair), which
+    # its new runs keep. None: a new pair, with a new draw.
+    labels: tuple[str, str] | None = None
 
     def tasks(self, task: TaskSpec, config: dict[str, Any]) -> list[TaskSpec]:
         """``task`` as each of its runs would get it, for the checks before a start."""
@@ -132,10 +135,11 @@ class Fork:
 
     def runs(self, labels: tuple[str, str] | None = None) -> tuple[RunArm, RunPair | None]:
         """The claiming run's arm and, for a pair, what it records for the other run.
-        ``labels`` are the arms behind X and Y (default: ``draw_labels``)."""
+        ``labels`` are the arms behind X and Y (default: those of the task's existing
+        pair, else ``draw_labels``)."""
         if not self.paired:
             return self.arms[CONTROL_ARM], None
-        arm_x, arm_y = labels or draw_labels()
+        arm_x, arm_y = labels or self.labels or draw_labels()
         return self.arms[arm_x], RunPair(self.experiment_id, self.arms[arm_y])
 
 
@@ -154,24 +158,46 @@ def fork_decision(
     None: the task runs as without experiments, with no arm. That is so when the
     ledger has no experiment tables yet or no experiment is active, the task sets
     ``experiment: false`` or is plan-approval-first, its project is excluded, or the
-    experiment already has a pair for it (a re-queued task). Otherwise the task forks
-    into a pair, unless codex weekly usage is at or above the experiment's quota brake
-    or has no reading: then it runs unpaired on the control arm.
+    experiment has a pair for it that is picked or has a run that did not fail (a
+    re-queued task). Otherwise the task forks into a pair, unless codex weekly usage
+    is at or above the experiment's quota brake or has no reading: then it runs
+    unpaired on the control arm.
+
+    An unpicked pair whose two runs both ended as failed or aborted (a retried pair)
+    is claimed again: the fork carries its labels, and the claim gives its row the new
+    runs.
+
+    An active experiment whose ``end_at`` has passed is ended here, with reason
+    ``end_at``, and the task does not fork.
     """
     if not ledger.experiments_available:
         return None
     experiment = ledger.active_experiment()
-    if experiment is None or task.experiment is False or task.policy == "approve-plan-first":
+    if experiment is None:
+        return None
+    if experiment["end_at"] is not None and now >= float(experiment["end_at"]):
+        ledger.end_experiment(int(experiment["id"]), "end_at")
+        return None
+    if task.experiment is False or task.policy == "approve-plan-first":
         return None
     # Exclusions are stored resolved.
     if str(task.project.expanduser().resolve()) in experiment["exclude_projects"]:
         return None
-    if ledger.get_pair(int(experiment["id"]), task.task_id) is not None:
-        return None
+    labels = None
+    pair = ledger.get_pair(int(experiment["id"]), task.task_id)
+    if pair is not None:
+        runs = [ledger.get_run(str(pair[key])) for key in ("run_x", "run_y") if pair[key]]
+        if (
+            pair["pick"] is not None
+            or len(runs) != 2
+            or any(run is None or run["status"] not in ("failed", "aborted") for run in runs)
+        ):
+            return None
+        labels = (str(pair["arm_x"]), str(pair["arm_y"]))
     arms = {name: RunArm.from_overrides(name, experiment["arms"][name]) for name in ARM_NAMES}
     fraction = codex_weekly_fraction(ledger, config, now)
     paired = fraction is not None and fraction < float(experiment["quota_brake"])
-    return Fork(int(experiment["id"]), arms, paired)
+    return Fork(int(experiment["id"]), arms, paired, labels)
 
 
 def _mapping(value: Any, key: str, allowed: set[str]) -> Mapping[str, Any]:

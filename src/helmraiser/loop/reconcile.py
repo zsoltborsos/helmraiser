@@ -11,6 +11,7 @@ from typing import Any
 from helmraiser.ledger.db import IDLE_RUN_STATUSES, TERMINAL_RUN_STATUSES, Ledger, ProjectScope
 from helmraiser.ledger.rundir import RunDir, restamp_summary
 from helmraiser.loop.abort import AbortCoordinator
+from helmraiser.loop.pairs import auto_pick
 from helmraiser.loop.services import labelled_containers, remove_containers
 from helmraiser.loop.status import write_status
 from helmraiser.runner.process_control import ProcessController, ProcessIdentity
@@ -164,6 +165,7 @@ def reconcile(
             "reconciled",
             {"status": "failed", "reason": reason},
         )
+        auto_pick(ledger, phantom.run_id)
         item = phantom.as_dict()
         item.update({"status": "failed", "reason": reason})
         reconciled.append(item)

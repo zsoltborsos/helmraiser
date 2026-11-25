@@ -521,6 +521,7 @@ class TestStatus:
             "resuming",
             "reworks",
             "awaiting_count",
+            "awaiting_pick_count",
             "failed_24h_count",
             "spend",
             "usage",

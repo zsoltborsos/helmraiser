@@ -19,6 +19,7 @@ from helmraiser.ledger.db import (
     default_data_dir,
 )
 from helmraiser.ledger.rundir import RunDir
+from helmraiser.loop.pairs import awaiting_pick_count, run_pair
 from helmraiser.loop.routing import calculate_headroom
 from helmraiser.loop.spend import (
     caps_enforcement,
@@ -77,6 +78,14 @@ def run_origin(run_id: str, data_dir: Path | None) -> TaskOrigin | None:
         return _snapshot_origin(RunDir(run_id, data_dir).task_md.read_text(encoding="utf-8"))
     except (OSError, UnicodeError):
         return None
+
+
+def pair_field(ledger: Ledger, run_id: str) -> dict[str, Any]:
+    """``{"pair": {task_id, label, picked, awaiting_pick}}`` for a paired run's status
+    row, with the blind label and never the arm. Empty for an unpaired run, whose row
+    keeps its shape."""
+    pair = run_pair(ledger, run_id)
+    return {"pair": pair} if pair is not None else {}
 
 
 def ended_since(ledger: Ledger, status: str, cutoff: float) -> list[dict[str, Any]]:
@@ -278,6 +287,7 @@ def build_status(
                     "task": run["task_id"],
                     "status": run["status"],
                     **history,
+                    **pair_field(ledger, str(run["run_id"])),
                 }
             )
         if run["status"] == RESUMING_RUN_STATUS:
@@ -293,6 +303,7 @@ def build_status(
                     "held_by": resume_holds.get(run["run_id"]),
                     **history,
                     "origin": run_origin(str(run["run_id"]), data_dir),
+                    **pair_field(ledger, str(run["run_id"])),
                 }
             )
             continue
@@ -312,6 +323,7 @@ def build_status(
                 "cost_usd": round(float(run["cost_usd"] or 0.0), 4),
                 "minutes": int((now - float(run["started_at"])) // 60),
                 "origin": run_origin(str(run["run_id"]), data_dir),
+                **pair_field(ledger, str(run["run_id"])),
             }
         )
     failed_24h = len(failed_since(ledger, now - 24 * 3600))
@@ -359,6 +371,7 @@ def build_status(
         "resuming": resuming,
         "reworks": reworked,
         "awaiting_count": len(ledger.list_runs(status="awaiting_approval")),
+        "awaiting_pick_count": awaiting_pick_count(ledger),
         "failed_24h_count": failed_24h,
         "spend": spend_by_provider(ledger, now),
         "usage": usage_payload,

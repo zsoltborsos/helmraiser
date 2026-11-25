@@ -190,7 +190,10 @@ def dependency_holds(
         by_key = {t["task_id"]: id for id, t in indexed.items()}
         history: dict[str, list[dict[str, Any]]] = {}
         for run in runs:
-            if run["project"] == project and run["task_id"] in by_key:
+            # A picked pair's task is judged by the run its pick chose: the run that
+            # lost (``pair_lost``, see ``Ledger._with_pairs``) was rejected, and it may
+            # be the task's latest run.
+            if run["project"] == project and run["task_id"] in by_key and not run.get("pair_lost"):
                 history.setdefault(by_key[run["task_id"]], []).append(run)
         graph: dict[str, tuple[str, ...]] = {}
         invalid: dict[str, str] = {}

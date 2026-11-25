@@ -14,7 +14,7 @@ import sqlite3
 import threading
 import time
 import weakref
-from collections.abc import Collection, Iterable, Iterator
+from collections.abc import Collection, Iterable, Iterator, Mapping
 from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -189,6 +189,32 @@ RUN_STATUSES = frozenset(
 LIVE_RUN_STATUSES = RUN_STATUSES - TERMINAL_RUN_STATUSES - IDLE_RUN_STATUSES
 # A task with two nonterminal runs (a pair) shows the first of these that either has.
 _TASK_STATUS_PRECEDENCE = ("running", RESUMING_RUN_STATUS, "awaiting_approval")
+
+
+def pair_loser(pair: Mapping[str, Any], runs: Mapping[str, Mapping[str, Any]]) -> str | None:
+    """The run of a picked pair that its pick did not choose. For ``X`` or ``Y`` that is
+    the other label's run. A tie delivers one arm and the pair row does not say which:
+    its loser is the run that ``pick`` rejected, when ``runs`` (run ID → row) shows
+    exactly one. None for an unpicked pair, and for a tie that shows no single loser."""
+    run_x: str | None = pair["run_x"]
+    run_y: str | None = pair["run_y"]
+    if pair["pick"] == "X":
+        return run_y
+    if pair["pick"] == "Y":
+        return run_x
+    if pair["pick"] != "tie":
+        return None
+    rejected = [
+        run_id
+        for run_id in (run_x, run_y)
+        if run_id is not None
+        and run_id in runs
+        and runs[run_id]["status"] == "failed"
+        and runs[run_id]["failure_reason"] == "rejected"
+    ]
+    return rejected[0] if len(rejected) == 1 else None
+
+
 _SCOUT_COLUMNS = frozenset(
     {
         "lens",
@@ -630,7 +656,9 @@ class Ledger:
     ) -> bool:
         """Replace retry text only while no nonterminal run owns its declarations.
 
-        ``parked_run``: rework's run, which may own them while it awaits approval.
+        ``parked_run``: rework's run, which may own them while it awaits approval. The
+        other run of its pair may own them beside it: the two share the task, and a
+        scope approval of one changes the snapshot for both.
         """
         with self._write() as conn:
             terminal = sorted(TERMINAL_RUN_STATUSES)
@@ -639,9 +667,12 @@ class Ledger:
                 f"AND status NOT IN ({', '.join('?' for _ in terminal)})",
                 [task_id, *terminal],
             ).fetchall()
-            parked = [(r["run_id"], r["status"]) for r in owners] == [
-                (parked_run, "awaiting_approval")
-            ]
+            states = {r["run_id"]: r["status"] for r in owners}
+            parked = states.get(parked_run) == "awaiting_approval" and all(
+                self._paired(conn, str(parked_run), run_id)
+                for run_id in states
+                if run_id != parked_run
+            )
             if not parked and self._snapshot_is_active(conn, task_id, snapshot):
                 return True
             cursor = conn.execute(
@@ -649,6 +680,17 @@ class Ledger:
                 (snapshot, time.time(), task_id),
             )
             return cursor.rowcount == 1
+
+    def _paired(self, conn: sqlite3.Connection, run_a: str, run_b: str) -> bool:
+        """``run_a`` and ``run_b`` are the two runs of one pair."""
+        return (
+            self.experiments_available
+            and conn.execute(
+                "SELECT 1 FROM pairs WHERE (run_x = ? AND run_y = ?) OR (run_x = ? AND run_y = ?)",
+                (run_a, run_b, run_b, run_a),
+            ).fetchone()
+            is not None
+        )
 
     def get_task(self, task_id: str) -> dict[str, Any] | None:
         row = (
@@ -1090,8 +1132,11 @@ class Ledger:
         pair of the active experiment: ``run`` is run X, and the same transaction
         records run Y (``pair["run"]``, as ``resuming`` at stage ``new``), the pair row
         and Y's first events (``pair["events"]``, a list of ``(type, payload)``).
-        Refused with ``experiment_changed`` when that experiment is no longer active
-        or already has a pair for the task.
+        Refused with ``experiment_changed`` when that experiment is no longer active.
+        A pair the experiment already has for the task is claimed again (a retried
+        pair): its row keeps its arms and gets the two new runs. That is refused with
+        ``experiment_changed`` when the pair is picked, has other arms behind X and Y,
+        or has a run that is not over.
         """
         now = time.time()
         record = {"status": "starting", "started_at": now, **run}
@@ -1121,19 +1166,25 @@ class Ledger:
             hold = self.held_tasks(project=task["project"], config=config).get(task["task_id"])
             if hold:
                 raise RunUnavailable(hold)
-            if pair is not None and (
-                conn.execute(
+            existing = None
+            if pair is not None:
+                existing = conn.execute(
+                    "SELECT * FROM pairs WHERE experiment_id = ? AND task_id = ?",
+                    (pair["experiment_id"], task["task_id"]),
+                ).fetchone()
+                active = conn.execute(
                     "SELECT 1 FROM experiments WHERE id = ? AND status = 'active'",
                     (pair["experiment_id"],),
                 ).fetchone()
-                is None
-                or conn.execute(
-                    "SELECT 1 FROM pairs WHERE experiment_id = ? AND task_id = ?",
-                    (pair["experiment_id"], task["task_id"]),
-                ).fetchone()
-                is not None
-            ):
-                raise RunUnavailable({"reason": "experiment_changed"})
+                if active is None or (
+                    existing is not None
+                    and not (
+                        existing["pick"] is None
+                        and (existing["arm_x"], existing["arm_y"]) == (pair["arm_x"], pair["arm_y"])
+                        and self._runs_over(conn, existing["run_x"], existing["run_y"])
+                    )
+                ):
+                    raise RunUnavailable({"reason": "experiment_changed"})
             for row in records:
                 columns = list(row)
                 conn.execute(
@@ -1145,19 +1196,25 @@ class Ledger:
                 # Raw SQL: ``create_pair`` and ``append_event`` take the write lock,
                 # which this transaction holds and which is not reentrant.
                 run_y = records[1]["run_id"]
-                conn.execute(
-                    "INSERT INTO pairs (experiment_id, task_id, arm_x, arm_y, run_x, run_y, "
-                    "created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                    (
-                        pair["experiment_id"],
-                        task["task_id"],
-                        pair["arm_x"],
-                        pair["arm_y"],
-                        record["run_id"],
-                        run_y,
-                        now,
-                    ),
-                )
+                if existing is not None:
+                    conn.execute(
+                        "UPDATE pairs SET run_x = ?, run_y = ? WHERE id = ?",
+                        (record["run_id"], run_y, existing["id"]),
+                    )
+                else:
+                    conn.execute(
+                        "INSERT INTO pairs (experiment_id, task_id, arm_x, arm_y, run_x, "
+                        "run_y, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (
+                            pair["experiment_id"],
+                            task["task_id"],
+                            pair["arm_x"],
+                            pair["arm_y"],
+                            record["run_id"],
+                            run_y,
+                            now,
+                        ),
+                    )
                 for event_type, payload in pair["events"]:
                     conn.execute(
                         "INSERT INTO run_events (run_id, ts, source, type, payload) "
@@ -1173,6 +1230,15 @@ class Ledger:
                 ),
             )
         return str(record["run_id"])
+
+    @staticmethod
+    def _runs_over(conn: sqlite3.Connection, *run_ids: str | None) -> bool:
+        """Every one of ``run_ids`` is a run that ended as failed or aborted."""
+        for run_id in run_ids:
+            row = conn.execute("SELECT status FROM runs WHERE run_id = ?", (run_id,)).fetchone()
+            if row is None or row["status"] not in ("failed", "aborted"):
+                return False
+        return True
 
     def update_run(self, run_id: str, **fields: Any) -> bool:
         if not fields:
@@ -1455,6 +1521,15 @@ class Ledger:
         )
         return self._decode_experiment(row) if row else None
 
+    def experiment_by_id(self, experiment_id: int) -> dict[str, Any] | None:
+        self._require_experiments()
+        row = (
+            self._get_conn()
+            .execute("SELECT * FROM experiments WHERE id = ?", (experiment_id,))
+            .fetchone()
+        )
+        return self._decode_experiment(row) if row else None
+
     def active_experiment(self) -> dict[str, Any] | None:
         self._require_experiments()
         row = (
@@ -1512,15 +1587,47 @@ class Ledger:
         decoded["unblinded"] = bool(decoded["unblinded"])
         return decoded
 
+    @staticmethod
+    def _decode_pair(row: sqlite3.Row) -> dict[str, Any]:
+        decoded = dict(row)
+        decoded["unblinded"] = bool(decoded["unblinded"])
+        return decoded
+
+    def pair_for_task(self, task_id: str) -> dict[str, Any] | None:
+        """The task's pair, the newest when it has one in several experiments. None
+        without one, and on a ledger left at version 11."""
+        if not self.experiments_available:
+            return None
+        row = (
+            self._get_conn()
+            .execute("SELECT * FROM pairs WHERE task_id = ? ORDER BY id DESC LIMIT 1", (task_id,))
+            .fetchone()
+        )
+        return self._decode_pair(row) if row else None
+
+    def unpicked_pairs(self) -> list[dict[str, Any]]:
+        """Every pair without a pick; none on a ledger left at version 11."""
+        if not self.experiments_available:
+            return []
+        rows = self._get_conn().execute("SELECT * FROM pairs WHERE pick IS NULL ORDER BY id")
+        return [self._decode_pair(row) for row in rows.fetchall()]
+
     def _with_pairs(self, runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Set ``pair`` on each run, for ``project_hold``: its pair's id, None when it
-        is unpaired."""
+        is unpaired. And ``pair_lost``, for ``dependency_holds``: whether the run is
+        the one its pair's pick did not choose (``pair_loser``)."""
         pairs: dict[str, int] = {}
+        lost: set[str] = set()
         if self.experiments_available:
-            for row in self._get_conn().execute("SELECT id, run_x, run_y FROM pairs"):
+            by_id = {run["run_id"]: run for run in runs}
+            for row in self._get_conn().execute("SELECT id, run_x, run_y, pick FROM pairs"):
                 pairs[row["run_x"]] = pairs[row["run_y"]] = row["id"]
+                loser = pair_loser(dict(row), by_id)
+                if loser is not None:
+                    lost.add(loser)
         for run in runs:
             run["pair"] = pairs.get(run["run_id"])
+            run["pair_lost"] = run["run_id"] in lost
         return runs
 
     def experiment_pair_counts(self, experiment_id: int) -> dict[str, Any]:

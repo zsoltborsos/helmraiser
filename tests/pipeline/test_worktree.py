@@ -359,6 +359,25 @@ def test_create_refuses_missing_explicit_base(repo: Path) -> None:
         WorktreeManager(repo).create("topic", new_id(), base="programme/missing")
 
 
+def test_create_pins_the_branch_to_a_base_commit(repo: Path) -> None:
+    git(repo, "branch", "-m", "main")
+    pinned = git(repo, "rev-parse", "HEAD")
+    (repo / "later.txt").write_text("later\n", encoding="utf-8")
+    git(repo, "add", "later.txt")
+    git(repo, "commit", "-m", "later")
+    manager = WorktreeManager(repo)
+    run_id = new_id()
+
+    worktree = manager.create("topic", run_id, base="main", base_commit=pinned)
+
+    metadata = manager.metadata(run_id)
+    assert (metadata["base_branch"], metadata["base_commit"]) == ("main", pinned)
+    assert git(worktree, "rev-parse", "HEAD") == pinned != git(repo, "rev-parse", "main")
+    assert not (worktree / "later.txt").exists()
+    with pytest.raises(RuntimeError, match="base commit 0123abc does not exist"):
+        manager.create("topic", new_id(), base="main", base_commit="0123abc")
+
+
 def test_discard_removes_worktree_and_metadata(repo: Path) -> None:
     manager = WorktreeManager(repo)
     run_id = new_id()

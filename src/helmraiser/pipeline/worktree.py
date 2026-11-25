@@ -369,9 +369,19 @@ class WorktreeManager:
             self.command_timeout = previous_timeout
 
     def create(
-        self, topic_id: str, run_id: str, resume: bool = False, base: str | None = None
+        self,
+        topic_id: str,
+        run_id: str,
+        resume: bool = False,
+        base: str | None = None,
+        base_commit: str | None = None,
     ) -> Path:
-        """Create this run's new branch/worktree from an explicit base or checkout HEAD."""
+        """Create this run's new branch/worktree from an explicit base or checkout HEAD.
+
+        ``base_commit`` pins the new branch to that commit instead of the base's tip:
+        a pair's second run starts from the commit its first run started from.
+        """
+        pinned = base_commit
         worktree_path = self._path(topic_id, run_id).resolve()
         branch_name = self._branch(topic_id, run_id)
 
@@ -413,6 +423,13 @@ class WorktreeManager:
                 )
             base_branch = base_branch_result.stdout.strip()
             base_commit = self._git("rev-parse", "HEAD").stdout.strip()
+        if pinned is not None:
+            resolved = self._git(
+                "rev-parse", "--verify", "--quiet", f"{pinned}^{{commit}}", check=False
+            )
+            if resolved.returncode != 0:
+                raise RuntimeError(f"base commit {pinned} does not exist")
+            base_commit = resolved.stdout.strip()
 
         self._worktree_dir.mkdir(parents=True, exist_ok=True)
         metadata = {

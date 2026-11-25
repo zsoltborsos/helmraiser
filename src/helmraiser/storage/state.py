@@ -307,6 +307,12 @@ class StateManager:
         )
         return dict(row) if row else None
 
+    def get_run_lock(self, run_id: str) -> dict | None:
+        """Return the lock row that ``run_id`` holds, if any. A pair's two runs each
+        hold a lock of their own topic, so a run's lock is found by run, not by task."""
+        row = self._get_conn().execute("SELECT * FROM locks WHERE run_id = ?", (run_id,)).fetchone()
+        return dict(row) if row else None
+
     def get_process_lease(self, run_id: str) -> ProcessLease | None:
         """Return the persisted child-process identity for ``run_id``."""
         row = (

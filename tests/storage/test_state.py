@@ -278,6 +278,19 @@ class TestStateManagerLocks:
         result = mgr.acquire_lock("run-123", "topic-456", pid=os.getpid() + 1)
         assert result is True
 
+    def test_run_lock_is_found_by_run_whatever_its_topic(self):
+        mgr, _ = self._make_manager()
+        # A pair's two runs lock a topic each for the one task.
+        assert mgr.acquire_lock("run-x", "task/run-x", pid=11)
+        assert mgr.acquire_lock("run-y", "task/run-y", pid=12)
+        assert mgr.get_lock("task") is None
+        lock = mgr.get_run_lock("run-y")
+        assert lock is not None
+        assert (lock["topic_id"], lock["pid"]) == ("task/run-y", 12)
+        mgr.release_lock("run-y", "task/run-y")
+        assert mgr.get_run_lock("run-y") is None
+        assert mgr.get_run_lock("run-x")["pid"] == 11
+
     def test_concurrent_lock_acquisition(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "state.db"

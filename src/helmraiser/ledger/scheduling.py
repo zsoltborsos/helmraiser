@@ -35,12 +35,18 @@ def project_hold(
     # Variants of one task (``variant_of``) are compared side by side from the same base:
     # a parked variant keeps its own worktree and branch and does not hold its siblings.
     variant = variant_of(candidate)
+    # A pair's two runs (each run's ``pair`` is its pair's id, see ``Ledger._with_pairs``)
+    # share one task and one slot: the other run of a resuming candidate's pair holds it
+    # on neither slots, paths nor dependencies.
+    own = next((r for r in runs if r["run_id"] == resume_id), None) if resume_id else None
+    pair = own.get("pair") if own is not None else None
     holders = sorted(
         (
             r
             for r in runs
             if r["status"] not in TERMINAL_RUN_STATUSES
             and r["run_id"] != resume_id
+            and not (pair is not None and r.get("pair") == pair)
             and not (
                 variant
                 and r["status"] in PARKED_RUN_STATUSES
@@ -76,7 +82,6 @@ def project_hold(
         return hold(holders[0]) if holders else None
     # Resumable runs must not hold each other, on slots or paths: only one resumed
     # earlier holds, so the oldest go first.
-    own = next((r for r in runs if r["run_id"] == resume_id), None) if resume_id else None
     if own is not None:
         holders = [
             r
@@ -85,7 +90,8 @@ def project_hold(
             or (r["started_at"], r["run_id"]) < (own["started_at"], own["run_id"])
         ]
     # A resumable candidate already owns a slot; queued candidates need a new one.
-    if len(holders) >= limit:
+    # Both runs of a pair take one slot.
+    if len({r.get("pair") or r["run_id"] for r in holders}) >= limit:
         return hold(holders[0], "project_busy")
     for run in holders:
         other = rows.get(run["task_id"])

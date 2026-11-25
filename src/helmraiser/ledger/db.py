@@ -166,6 +166,9 @@ PARKED_RUN_STATUSES = frozenset({"awaiting_approval"})
 # process; its ``stage`` is where the worker resumes it: ``start``, ``implement`` or
 # ``verify``.
 RESUMING_RUN_STATUS = "resuming"
+# The stage of a pair's second run, which the claim of the first records as ``resuming``:
+# it has not started, and the worker runs it as a fresh pipeline run, not a resume.
+NEW_RUN_STAGE = "new"
 # Runs that are not terminal but have no process: parked for the owner, or resuming.
 IDLE_RUN_STATUSES = PARKED_RUN_STATUSES | {RESUMING_RUN_STATUS}
 RUN_STATUSES = frozenset(
@@ -184,6 +187,8 @@ RUN_STATUSES = frozenset(
 )
 # Runs that a live ``work --once`` process is driving.
 LIVE_RUN_STATUSES = RUN_STATUSES - TERMINAL_RUN_STATUSES - IDLE_RUN_STATUSES
+# A task with two nonterminal runs (a pair) shows the first of these that either has.
+_TASK_STATUS_PRECEDENCE = ("running", RESUMING_RUN_STATUS, "awaiting_approval")
 _SCOUT_COLUMNS = frozenset(
     {
         "lens",
@@ -574,9 +579,34 @@ class Ledger:
             )
         return task_id
 
-    def set_task_status(self, task_id: str, status: str) -> bool:
+    def _task_status(self, conn: sqlite3.Connection, task_id: str, status: str, run_id: str) -> str:
+        """The status to write on a task when its run ``run_id`` moves to ``status``.
+
+        A pair's task has two runs. While the task's other run is not terminal, the
+        task shows the strongest of running, resuming and awaiting_approval among that
+        run and ``status``. Without such a run it shows ``status``: an unpaired task
+        never has two nonterminal runs.
+        """
+        terminal = sorted(TERMINAL_RUN_STATUSES)
+        others = conn.execute(
+            "SELECT DISTINCT status FROM runs WHERE task_id = ? AND run_id != ? "
+            f"AND status NOT IN ({', '.join('?' for _ in terminal)})",
+            [task_id, run_id, *terminal],
+        ).fetchall()
+        if not others:
+            return status
+        present = {status} | {
+            row["status"] if row["status"] in IDLE_RUN_STATUSES else "running" for row in others
+        }
+        return next(s for s in _TASK_STATUS_PRECEDENCE if s in present)
+
+    def set_task_status(self, task_id: str, status: str, *, run_id: str | None = None) -> bool:
+        """Write a task's status. ``run_id``: the run whose change this reports; the
+        task's other nonterminal run, if any, then takes part (see ``_task_status``)."""
         now = time.time()
         with self._write() as conn:
+            if run_id is not None:
+                status = self._task_status(conn, task_id, status, run_id)
             cursor = conn.execute(
                 "UPDATE tasks SET status = ?, updated_at = ?, "
                 "queued_at = CASE WHEN ? = 'queued' THEN COALESCE(queued_at, ?) ELSE queued_at END "
@@ -711,7 +741,7 @@ class Ledger:
                 candidates.setdefault(str(task["project"]), []).append(task)
         for candidate_project, rows in candidates.items():
             tasks = self.list_tasks(project=candidate_project)
-            runs = self.list_runs(project=candidate_project)
+            runs = self._with_pairs(self.list_runs(project=candidate_project))
             for run in runs:
                 approval = self.pending_approval(run["run_id"])
                 run["pending"] = approval["kind"] if approval else None
@@ -735,7 +765,7 @@ class Ledger:
             candidates.setdefault(str(run["project"]), []).append(run)
         for candidate_project, rows in candidates.items():
             tasks = self.list_tasks(project=candidate_project)
-            runs = self.list_runs(project=candidate_project)
+            runs = self._with_pairs(self.list_runs(project=candidate_project))
             for run in runs:
                 approval = self.pending_approval(run["run_id"])
                 run["pending"] = approval["kind"] if approval else None
@@ -1047,13 +1077,39 @@ class Ledger:
         return str(record["run_id"])
 
     def claim_queued_run(
-        self, run: dict[str, Any], *, snapshot: str, config: dict[str, Any]
+        self,
+        run: dict[str, Any],
+        *,
+        snapshot: str,
+        config: dict[str, Any],
+        pair: dict[str, Any] | None = None,
     ) -> str:
-        """Recheck admission and publish ownership in one serialized transaction."""
-        record = {"status": "starting", "started_at": time.time(), **run}
-        unknown = set(record) - _RUN_COLUMNS
-        if unknown:
-            raise ValueError(f"unknown run columns: {', '.join(sorted(unknown))}")
+        """Recheck admission and publish ownership in one serialized transaction.
+
+        ``pair`` (``{experiment_id, arm_x, arm_y, run, events}``) claims the task as a
+        pair of the active experiment: ``run`` is run X, and the same transaction
+        records run Y (``pair["run"]``, as ``resuming`` at stage ``new``), the pair row
+        and Y's first events (``pair["events"]``, a list of ``(type, payload)``).
+        Refused with ``experiment_changed`` when that experiment is no longer active
+        or already has a pair for the task.
+        """
+        now = time.time()
+        record = {"status": "starting", "started_at": now, **run}
+        records = [record]
+        if pair is not None:
+            self._require_experiments()
+            records.append(
+                {
+                    "started_at": record["started_at"],
+                    **pair["run"],
+                    "status": RESUMING_RUN_STATUS,
+                    "stage": NEW_RUN_STAGE,
+                }
+            )
+        for row in records:
+            unknown = set(row) - _RUN_COLUMNS
+            if unknown:
+                raise ValueError(f"unknown run columns: {', '.join(sorted(unknown))}")
         with self._write() as conn:
             task = self.get_task(record["task_id"])
             if not task or task["status"] != "queued" or task["snapshot"] != snapshot:
@@ -1065,14 +1121,56 @@ class Ledger:
             hold = self.held_tasks(project=task["project"], config=config).get(task["task_id"])
             if hold:
                 raise RunUnavailable(hold)
-            columns = list(record)
+            if pair is not None and (
+                conn.execute(
+                    "SELECT 1 FROM experiments WHERE id = ? AND status = 'active'",
+                    (pair["experiment_id"],),
+                ).fetchone()
+                is None
+                or conn.execute(
+                    "SELECT 1 FROM pairs WHERE experiment_id = ? AND task_id = ?",
+                    (pair["experiment_id"], task["task_id"]),
+                ).fetchone()
+                is not None
+            ):
+                raise RunUnavailable({"reason": "experiment_changed"})
+            for row in records:
+                columns = list(row)
+                conn.execute(
+                    f"INSERT INTO runs ({', '.join(columns)}) "
+                    f"VALUES ({', '.join('?' for _ in columns)})",
+                    [row[c] for c in columns],
+                )
+            if pair is not None:
+                # Raw SQL: ``create_pair`` and ``append_event`` take the write lock,
+                # which this transaction holds and which is not reentrant.
+                run_y = records[1]["run_id"]
+                conn.execute(
+                    "INSERT INTO pairs (experiment_id, task_id, arm_x, arm_y, run_x, run_y, "
+                    "created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        pair["experiment_id"],
+                        task["task_id"],
+                        pair["arm_x"],
+                        pair["arm_y"],
+                        record["run_id"],
+                        run_y,
+                        now,
+                    ),
+                )
+                for event_type, payload in pair["events"]:
+                    conn.execute(
+                        "INSERT INTO run_events (run_id, ts, source, type, payload) "
+                        "VALUES (?, ?, 'helmraiser', ?, ?)",
+                        (run_y, now, event_type, json.dumps(payload, default=str)),
+                    )
             conn.execute(
-                f"INSERT INTO runs ({', '.join(columns)}) VALUES ({', '.join('?' for _ in columns)})",
-                [record[c] for c in columns],
-            )
-            conn.execute(
-                "UPDATE tasks SET status = 'running', updated_at = ? WHERE task_id = ?",
-                (time.time(), task["task_id"]),
+                "UPDATE tasks SET status = ?, updated_at = ? WHERE task_id = ?",
+                (
+                    self._task_status(conn, task["task_id"], "running", str(record["run_id"])),
+                    now,
+                    task["task_id"],
+                ),
             )
         return str(record["run_id"])
 
@@ -1204,11 +1302,16 @@ class Ledger:
                 "UPDATE runs SET status = ?, stage = ? WHERE run_id = ?",
                 (RESUMING_RUN_STATUS, stage, run_id),
             )
-            conn.execute(
-                "UPDATE tasks SET status = ?, updated_at = ? "
-                "WHERE task_id = (SELECT task_id FROM runs WHERE run_id = ?)",
-                (RESUMING_RUN_STATUS, now, run_id),
-            )
+            handed = conn.execute("SELECT task_id FROM runs WHERE run_id = ?", (run_id,)).fetchone()
+            if handed is not None:
+                conn.execute(
+                    "UPDATE tasks SET status = ?, updated_at = ? WHERE task_id = ?",
+                    (
+                        self._task_status(conn, handed["task_id"], RESUMING_RUN_STATUS, run_id),
+                        now,
+                        handed["task_id"],
+                    ),
+                )
             return cursor.rowcount == 1
 
     def next_resumable(
@@ -1245,7 +1348,7 @@ class Ledger:
                 and project_hold(
                     task,
                     self.list_tasks(project=row["project"]),
-                    self.list_runs(project=row["project"]),
+                    self._with_pairs(self.list_runs(project=row["project"])),
                     config,
                     resume_id=row["run_id"],
                 )
@@ -1392,6 +1495,33 @@ class Ledger:
         decoded = dict(row)
         decoded["unblinded"] = bool(decoded["unblinded"])
         return decoded
+
+    def pair_for_run(self, run_id: str) -> dict[str, Any] | None:
+        """The pair that ``run_id`` is run X or run Y of. None for an unpaired run, and
+        on a ledger left at version 11, which has no pairs."""
+        if not self.experiments_available:
+            return None
+        row = (
+            self._get_conn()
+            .execute("SELECT * FROM pairs WHERE run_x = ? OR run_y = ?", (run_id, run_id))
+            .fetchone()
+        )
+        if row is None:
+            return None
+        decoded = dict(row)
+        decoded["unblinded"] = bool(decoded["unblinded"])
+        return decoded
+
+    def _with_pairs(self, runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Set ``pair`` on each run, for ``project_hold``: its pair's id, None when it
+        is unpaired."""
+        pairs: dict[str, int] = {}
+        if self.experiments_available:
+            for row in self._get_conn().execute("SELECT id, run_x, run_y FROM pairs"):
+                pairs[row["run_x"]] = pairs[row["run_y"]] = row["id"]
+        for run in runs:
+            run["pair"] = pairs.get(run["run_id"])
+        return runs
 
     def experiment_pair_counts(self, experiment_id: int) -> dict[str, Any]:
         """Count picks using the actual blind-label arm assignments."""

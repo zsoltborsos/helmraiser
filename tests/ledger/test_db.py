@@ -598,6 +598,275 @@ class TestExperiments:
             ledger.set_pair_pick(1, pick, decided_by=decided_by)
 
 
+ARMS = {"A": {"skills": "default"}, "B": {"skills": "none"}}
+ARM_EVENT = ("experiment_arm", {"name": "A", "overrides": ARMS["A"], "replaced": {}})
+ROUTING_EVENT = ("routing", {"lever": "plan", "from": False, "to": True})
+
+
+def claim_pair(
+    ledger: Ledger,
+    experiment_id: int,
+    spec: TaskSpec,
+    run_x: str = "x",
+    run_y: str = "y",
+    config: dict[str, Any] | None = None,
+) -> str:
+    """Claim queued ``spec`` as a pair: X on arm B, Y on arm A."""
+    project = str(spec.project)
+    return ledger.claim_queued_run(
+        run_row(run_x, spec.task_id, project, "starting"),
+        snapshot=render_task(spec),
+        config=config or {},
+        pair={
+            "experiment_id": experiment_id,
+            "arm_x": "B",
+            "arm_y": "A",
+            "run": {**run_row(run_y, spec.task_id, project), "model_implement": "y/impl"},
+            "events": [ARM_EVENT, ROUTING_EVENT],
+        },
+    )
+
+
+@pytest.fixture
+def experiment(ledger: Ledger) -> int:
+    return ledger.start_experiment("e", ARMS, quota_brake=0.85)
+
+
+class TestPairClaim:
+    def test_claim_records_both_runs_the_pair_and_the_arm_event(
+        self, ledger: Ledger, tmp_path: Path, experiment: int
+    ):
+        spec = make_spec(tmp_path)
+        ledger.upsert_task(spec, render_task(spec))
+
+        assert claim_pair(ledger, experiment, spec) == "x"
+
+        x, y = ledger.get_run("x"), ledger.get_run("y")
+        assert (x["status"], x["stage"]) == ("starting", None)
+        assert (y["status"], y["stage"]) == ("resuming", "new")
+        assert y["model_implement"] == "y/impl" and y["started_at"] == x["started_at"]
+        pair = ledger.get_pair(experiment, spec.task_id)
+        assert (pair["run_x"], pair["run_y"], pair["arm_x"], pair["arm_y"]) == ("x", "y", "B", "A")
+        assert pair["pick"] is None
+        assert ledger.pair_for_run("x") == ledger.pair_for_run("y") == pair
+        assert ledger.pair_for_run("other") is None
+        assert [(e["type"], e["payload"]) for e in ledger.events("y")] == [
+            ARM_EVENT,
+            ROUTING_EVENT,
+        ]
+        assert ledger.events("x") == []
+        assert ledger.get_task(spec.task_id)["status"] == "running"
+
+    def test_two_claims_race_and_the_loser_finds_the_task_changed(self, tmp_path: Path):
+        db = tmp_path / "race.db"
+        spec = make_spec(tmp_path)
+        with Ledger(db) as ledger:
+            experiment_id = ledger.start_experiment("e", ARMS, quota_brake=0.85)
+            ledger.upsert_task(spec, render_task(spec))
+        barrier = threading.Barrier(2)
+        won, lost, errors = [], [], []
+
+        def claim(n: int) -> None:
+            with Ledger(db) as connection:
+                barrier.wait(timeout=5)
+                try:
+                    won.append(claim_pair(connection, experiment_id, spec, f"x{n}", f"y{n}"))
+                except RunUnavailable as exc:
+                    lost.append(exc.hold)
+                except Exception as exc:
+                    errors.append(exc)
+
+        threads = [threading.Thread(target=claim, args=(n,)) for n in (1, 2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+            assert not thread.is_alive()
+        assert not errors
+        assert len(won) == 1 and lost == [{"reason": "task_changed"}]
+        with Ledger(db) as ledger:
+            run_x, run_y = won[0], won[0].replace("x", "y")
+            assert {r["run_id"] for r in ledger.list_runs()} == {run_x, run_y}
+            pair = ledger.get_pair(experiment_id, spec.task_id)
+            assert (pair["run_x"], pair["run_y"]) == (run_x, run_y)
+            assert [e["type"] for e in ledger.events(run_y)] == ["experiment_arm", "routing"]
+            assert ledger.get_run(run_y)["status"] == "resuming"
+
+    @pytest.mark.parametrize("change", ["ended", "paired"])
+    def test_claim_rechecks_the_experiment(
+        self, ledger: Ledger, tmp_path: Path, experiment: int, change: str
+    ):
+        spec = make_spec(tmp_path)
+        ledger.upsert_task(spec, render_task(spec))
+        if change == "ended":
+            assert ledger.end_experiment(experiment, "stopped")
+        else:
+            ledger.create_pair(experiment, spec.task_id, "A", "B")
+
+        with pytest.raises(RunUnavailable) as refused:
+            claim_pair(ledger, experiment, spec)
+
+        assert refused.value.hold == {"reason": "experiment_changed"}
+        assert not ledger.list_runs()
+        assert ledger.get_task(spec.task_id)["status"] == "queued"
+        assert ledger.events("y") == []
+        # Without the pair, the task is claimed as before.
+        ledger.claim_queued_run(
+            run_row("solo", spec.task_id, str(tmp_path)), snapshot=render_task(spec), config={}
+        )
+        assert ledger.pair_for_run("solo") is None
+
+    def test_pair_for_run_without_experiment_tables(self, tmp_path: Path):
+        path = tmp_path / "v11.db"
+        make_v11_ledger(path, run_status="running")
+        with Ledger(path) as ledger:
+            assert not ledger.experiments_available
+            assert ledger.pair_for_run("run-1") is None
+            # Admission reads no pairs table either.
+            queued = ledger.upsert_task(make_spec(Path("/repo"), "t2"), "")
+            assert ledger.held_tasks(config={})[queued]["run_id"] == "run-1"
+
+
+class TestPairTaskStatus:
+    """A pair's task shows the strongest status of its two runs."""
+
+    def pair(self, ledger: Ledger, tmp_path: Path, experiment: int) -> str:
+        spec = make_spec(tmp_path)
+        ledger.upsert_task(spec, render_task(spec))
+        claim_pair(ledger, experiment, spec)
+        return spec.task_id
+
+    def end(self, ledger: Ledger, task_id: str, run_id: str, status: str) -> str:
+        """As ``GovernedRun._close``: the run first, then its task."""
+        ledger.finish_run(run_id, status)
+        ledger.set_task_status(task_id, status, run_id=run_id)
+        return str(ledger.get_task(task_id)["status"])
+
+    @pytest.mark.parametrize(
+        ("x_end", "y_end", "final"),
+        [
+            ("awaiting_approval", "awaiting_approval", "awaiting_approval"),
+            ("awaiting_approval", "failed", "awaiting_approval"),
+            ("failed", "awaiting_approval", "awaiting_approval"),
+            ("failed", "failed", "failed"),
+            ("failed", "aborted", "aborted"),
+        ],
+    )
+    def test_first_end_leaves_the_task_running_then_the_strongest_remains(
+        self, ledger: Ledger, tmp_path: Path, experiment: int, x_end: str, y_end: str, final: str
+    ):
+        task_id = self.pair(ledger, tmp_path, experiment)
+        assert ledger.claim_resumable("y")
+        ledger.set_task_status(task_id, "running", run_id="y")
+
+        assert self.end(ledger, task_id, "x", x_end) == "running"
+        assert self.end(ledger, task_id, "y", y_end) == final
+
+    @pytest.mark.parametrize("x_end", ["awaiting_approval", "failed"])
+    def test_task_resumes_while_the_second_run_waits_to_start(
+        self, ledger: Ledger, tmp_path: Path, experiment: int, x_end: str
+    ):
+        task_id = self.pair(ledger, tmp_path, experiment)
+
+        assert self.end(ledger, task_id, "x", x_end) == "resuming"
+        assert ledger.claim_resumable("y")
+        ledger.set_task_status(task_id, "running", run_id="y")
+        assert ledger.get_task(task_id)["status"] == "running"
+
+    @pytest.mark.parametrize(("y_status", "shown"), [("running", "running"), (None, "resuming")])
+    def test_hand_back_uses_the_precedence(
+        self, ledger: Ledger, tmp_path: Path, experiment: int, y_status: str | None, shown: str
+    ):
+        task_id = self.pair(ledger, tmp_path, experiment)
+        assert ledger.claim_resumable("y")
+        self.end(ledger, task_id, "x", "awaiting_approval")
+        if y_status is None:
+            self.end(ledger, task_id, "y", "awaiting_approval")
+
+        assert ledger.hand_back("x", "implement")
+
+        assert ledger.get_run("x")["status"] == "resuming"
+        assert ledger.get_task(task_id)["status"] == shown
+
+    def test_unpaired_task_takes_the_status_given(self, ledger: Ledger, tmp_path: Path):
+        task_id = ledger.upsert_task(make_spec(tmp_path), "")
+        ledger.create_run(run_row("r", task_id, str(tmp_path), "running"))
+        for status in ("running", "awaiting_approval", "failed"):
+            ledger.finish_run("r", status)
+            assert ledger.set_task_status(task_id, status, run_id="r")
+            assert ledger.get_task(task_id)["status"] == status
+        # Without a run, the status is written as given whatever the task's runs are.
+        ledger.create_run(run_row("live", task_id, str(tmp_path), "running"))
+        assert ledger.set_task_status(task_id, "failed")
+        assert ledger.get_task(task_id)["status"] == "failed"
+
+
+class TestPairScheduling:
+    def specs(self, ledger: Ledger, tmp_path: Path, **paths: tuple[str, ...]) -> dict:
+        specs = {id: make_spec(tmp_path, id, paths=value) for id, value in paths.items()}
+        for spec in specs.values():
+            ledger.upsert_task(spec, render_task(spec))
+        return specs
+
+    def test_limit_one_admits_the_second_run_and_holds_other_tasks(
+        self, ledger: Ledger, tmp_path: Path, experiment: int
+    ):
+        specs = self.specs(ledger, tmp_path, t=("t/**",), other=("other/**",))
+        claim_pair(ledger, experiment, specs["t"])
+
+        assert ledger.resume_holds(config={}) == {}
+        assert ledger.next_resumable(config={})["run_id"] == "y"
+        other = specs["other"].task_id
+        assert ledger.held_tasks(config={})[other]["run_id"] in ("x", "y")
+        assert ledger.next_queued(config={}) is None
+        assert ledger.claim_resumable("y", checked=True, config={})
+        assert ledger.next_queued(config={}) is None
+        # The pair holds the project until both runs are over.
+        ledger.finish_run("x", "failed")
+        assert ledger.held_tasks(config={})[other]["run_id"] == "y"
+        ledger.finish_run("y", "failed")
+        assert ledger.next_queued(config={})["task_id"] == other
+
+    def test_second_run_starts_while_the_first_awaits_approval(
+        self, ledger: Ledger, tmp_path: Path, experiment: int
+    ):
+        specs = self.specs(ledger, tmp_path, t=("t/**",))
+        claim_pair(ledger, experiment, specs["t"])
+        ledger.finish_run("x", "awaiting_approval")
+
+        assert ledger.claim_resumable("y", checked=True, config={})
+
+    def test_arms_share_paths_and_one_slot(self, ledger: Ledger, tmp_path: Path, experiment: int):
+        config = {"max_runs_per_project": 2}
+        specs = self.specs(
+            ledger, tmp_path, t=("same/**",), overlap=("same/**",), a=("a/**",), b=("b/**",)
+        )
+        claim_pair(ledger, experiment, specs["t"], config=config)
+
+        # The two runs declare the same paths and do not hold each other.
+        assert ledger.resume_holds(config=config) == {}
+        assert ledger.claim_resumable("y", checked=True, config=config)
+        held = ledger.held_tasks(config=config)
+        assert held[specs["overlap"].task_id]["reason"] == "paths_overlap"
+        # Both runs take one of the project's two slots: one disjoint task still fits.
+        assert specs["a"].task_id not in held and specs["b"].task_id not in held
+        ledger.claim_queued_run(
+            run_row("a", specs["a"].task_id, str(tmp_path)),
+            snapshot=render_task(specs["a"]),
+            config=config,
+        )
+        assert ledger.held_tasks(config=config)[specs["b"].task_id]["reason"] == "project_busy"
+
+    def test_unpaired_runs_of_one_task_still_hold_each_other(self, ledger: Ledger, tmp_path: Path):
+        key = ledger.upsert_task(make_spec(tmp_path, "t"), "")
+        ledger.create_run({**run_row("old", key, str(tmp_path), "failed"), "started_at": 1.0})
+        ledger.hand_back("old", "verify")
+        ledger.create_run({**run_row("now", key, str(tmp_path), "running"), "started_at": 2.0})
+
+        assert ledger.next_resumable(config={}) is None
+        assert ledger.resume_holds(config={})["old"]["run_id"] == "now"
+
+
 class TestTasks:
     def test_upsert_and_get(self, ledger: Ledger, tmp_path: Path):
         spec = make_spec(tmp_path)

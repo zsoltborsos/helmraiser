@@ -191,18 +191,31 @@ exits 2. Otherwise `pick`, in this order:
    with `rejected`), with the note `pair pick: <label> lost`. An arm that is already
    over is left as it is.
 3. approves the picked arm as `approve` does, with the reason as the approval note: a
-   fast-forward merge, or a pull request for `delivery: pr`, then `landed`.
+   fast-forward merge, or a pull request for `delivery: pr`. Either leaves the run
+   `landed`: a `delivery: pr` run is `landed` when its pull request opens, not when it
+   merges (see [Policies](#policies)).
 4. prints the reveal: which arm each label was, with that arm's overrides.
 
 `tie` delivers the cheaper arm (lower `cost_usd`), then the one with fewer iterations,
 then X. The pair's `pick` stays `tie`.
 
 `--json` prints one object: `picked`, `task_id`, `decided_by`, `reason`, `judge`,
-`delivered` (the delivered label), `winner` (`label`, `run_id`, `status`, `branch_name`
-and `head` or `pr_url`), `loser` (`label`, `run_id`, `status`, `branch_name`, and
-`worktree_removed` / `worktree_error` when `pick` rejected it), `reveal`
-(`{"X": {"arm", "overrides"}, "Y": {…}}`), `experiment` (`name`, `status`,
-`end_reason`) and, when the project has tasks that may start now, `eligible`.
+`delivered` (the delivered label), `winner` (`label`, `run_id`, `status`, `branch_name`,
+`delivery` and `head` or `pr_url`), `loser` (`label`, `run_id`, `status`, `branch_name`,
+and `worktree_removed` / `worktree_error` when `pick` rejected it), `reveal`
+(`{"X": {"arm", "overrides"}, "Y": {…}}`), `unblinded` (whether [`--reveal`](#--reveal)
+showed the setups before the pick), `experiment` (`name`, `status`, `end_reason`) and,
+when the project has tasks that may start now, `eligible`.
+
+`winner.status` is the run's status after the delivery, read from the ledger.
+`winner.delivery` is `merge` or `pr`. A merged winner has `head` and is reported as
+`X landed: run <id> → <commit>`. A `delivery: pr` winner has `pr_url` and is reported as
+a pull request that was opened, not as landed:
+
+```text
+  X PR opened: run <run> → <url>
+  it is not merged yet: helmraiser land <run>
+```
 
 If the delivery is refused (a dirty primary checkout, a rebase conflict, …), the pick
 and the other arm's rejection stand: the output adds `error`, `delivered` is `null`,
@@ -294,8 +307,191 @@ counts such pairs. An unpaired run's row has no `pair` key. Human `status` marks
 paired row in the approvals table (`merge (pair X)`) and prints the `pick` command for
 each pair awaiting its pick.
 
-Not built yet: the blind views (`wait`, `show` and `diff` by task, `pick-packet`), and
-hiding the models and arm names of an unpicked pair in `show`, `log` and `report`.
+### Blind until the pick
+
+Until a pair has its pick, the commands, `status.json` and the widget do not say which
+arm, models or skills either of its runs used. A hidden value reads `"hidden"`; its key
+stays, so the JSON keeps its shape. After the pick everything is shown as for any run.
+
+Shown throughout: the diff, the verify and evidence results, Helmraiser's review verdict
+and findings, cost, minutes and iterations, and the branch and worktree names (they carry
+the task id and the run ID, no arm).
+
+A run is **blinded** while it is run X or Y of a pair without a pick. So is an earlier
+run of that pair's task: a [retried pair](#retrying-a-pair) keeps its labels and arms,
+and the arm of a previous run would give its label away. A run that the task gets after
+the pair's runs (the task ran again without forking) is not blinded.
+
+| Where | What a blinded run shows |
+|-------|--------------------------|
+| `show <run>` | `models` is `{"plan": "hidden", "implement": "hidden", "fallback": "hidden", "review": "hidden"}` and `arm` is `{"name": "hidden", "overrides": "hidden", "replaced": "hidden"}` |
+| `log <run>` | The `experiment_arm`, `routing` and `provider_held` events keep their keys, with every value `hidden`. An event recorded from a pi session (`source` is `pi`) keeps its `type`, with every other value `hidden`: its messages and tool calls name the model, show its thinking and read its skills. In Helmraiser's other events the keys `model`, `models`, `provider`, `skills` and `thinking` are `hidden` (the `model` of `iteration_start` and `escalated`) |
+| Failure reasons | In `show`, `wait`, the `failed` list of `status`, `report`, `compare` and the refusals of `pick`, `pick-packet` and `retry`, a model name reads `hidden`: each model of the pair's runs and of the experiment's arms, written as `provider/id:thinking`, as `provider/id`, as the bare id or as the provider. So does a path under the worker's skill folders (`skills/` and `skill-sets/`) |
+| `status`, `status.json`, `caps` | They name no model per run. `spend` counts the runs of a pair whose two runs differ in a provider under the provider `hidden`: a provider's sum would tell them apart by their cost |
+| `report`, `report --models` | The cost per model, and the models table, count the runs of a pair whose two runs differ in a model under `hidden` (`--by setup`: a setup of four `hidden`) |
+| `compare` | A blinded run's `setup` is `hidden` for each stage |
+| `attach <run>` | Refused with exit code 2: the pi session shows its model |
+
+A pair whose two runs record the same models is summed as always in `spend`, `report`
+and `report --models`: such a sum says nothing about either arm.
+
+`experiment status` and `experiment report` count picked pairs and name no run.
+
+Not hidden: the subscription `usage` fractions of `status` and `caps`, which gate caps
+and routing and are sums over all runs; and the files of a run's directory and worktree
+(`events.jsonl`, the pi sessions), which these commands do not print.
+
+#### `--reveal`
+
+`show`, `log` and `attach` take `--reveal`, for debugging. On a blinded run it shows the
+setup (`attach` is allowed), marks the pair `unblinded` in the ledger, and prints one
+line to stderr:
+
+```text
+warning: the pair of task <task> is now unblinded
+```
+
+The mark stays with the pair. It does not unblind later commands: each needs its own
+`--reveal`. `pick` then reports `"unblinded": true`, and a line in its text output; the
+pair's entry in the `reasons` of `experiment report` has `"unblinded": true`, and
+`; unblinded` in text. On a run that is not blinded `--reveal` changes nothing.
+`show --reveal` opens the ledger for writing; `show` without it only reads.
+
+#### `wait`, `show` and `diff` by task
+
+The task is the unit of a pair: a task reference names both runs.
+
+**`helmraiser wait <task>`** follows the task's latest run, as for any task. When that
+run is one of a pair:
+
+- **The pair has no pick.** The pair is waited for as one. `--until attention` returns
+  when both arms are settled (each awaits its merge approval, or is over), or when an
+  arm awaits a plan or scope approval. `--until end` returns when both runs are over.
+- **The pair has a pick**, from `pick` or by failure, before or during the wait. The
+  wait is for the run that the pick chose, as for any run: it returns when that run
+  awaits approval or is over, at once if it does already, and goes on while it is
+  reworked or retried. A tie's run is the one that `pick` did not reject.
+
+The `--json` object has the fields of [Waiting for a run](#waiting-for-a-run) and a
+`pair` object. Without a pick, the run fields (`run_id`, `verdict`, `cost_usd`, …) are
+null and `status` is the task's status; with a pick they are the picked run's.
+
+```json
+{"state": "awaiting_pick", "picked": false, "pick": null, "decided_by": null,
+ "x": {"run_id": "…", "status": "awaiting_approval", "pending": "merge", "verdict": "pass",
+       "cost_usd": 0.7, "failure_reason": null, "branch_name": "…", "pr_url": null,
+       "stage": null, "started_at": "…", "ended_at": "…"},
+ "y": {"…": "…"}}
+```
+
+| `state` | Meaning | Exit code |
+|---------|---------|-----------|
+| `awaiting_pick` | Both arms are settled and at least one awaits its merge approval: write the packet and pick | 0 |
+| `needs_approval` | An arm awaits a plan or scope approval (`x.pending` or `y.pending`; a scope request is in that label's `scope_request`) | 0 |
+| `failed` | Both arms are over and neither can be delivered: `retry <task>` | 1, whatever the task's status |
+| `picked` | The pair has a pick; `pick` and `decided_by` say which | The picked run's: 0, or 1 when it failed |
+| `under_way` | Only with `timed_out`: an arm is still running or waits for the worker | 124 |
+
+`x` and `y` never carry an arm. `wait <run>` on a run of a pair waits for that run alone,
+with no `pair` object.
+
+**`helmraiser show <task>`**, when the task's latest run is one of a pair, shows the
+pair's runs side by side instead of one run. `--json`:
+
+```json
+{"task_id": "<project-key>:<id>", "title": "…", "project": "/abs/repo",
+ "pair": {"state": "awaiting_pick", "picked": false, "awaiting_pick": true, "unblinded": false,
+          "pick": null, "decided_by": null, "reason": null, "judge": null, "picked_at": null,
+          "reveal": {"X": {"arm": "hidden", "overrides": "hidden"},
+                     "Y": {"arm": "hidden", "overrides": "hidden"}},
+          "x": {"run_id": "…", "status": "awaiting_approval", "stage": null,
+                "pending_approval": "merge", "failure_reason": null, "verdict": "pass",
+                "findings": 0, "verify": "pass", "evidence": null, "cost_usd": 0.7,
+                "minutes": 12.5, "iterations": 2, "branch_name": "…", "pr_url": null},
+          "y": {"…": "…"}}}
+```
+
+`state` is as for `wait`. `findings` counts the findings of the run's last review (null
+before a review). `verify` and `evidence` are `pass`, `fail`, or null when no step ran;
+`evidence` is `fail` when any step is not ok. `minutes` and `iterations` are the `used`
+values of [Showing one run](#showing-one-run). A picked pair has `pick`, `decided_by`,
+`reason`, `judge`, `picked_at` and the `reveal` of `pick`; an unpicked pair's `reveal`
+is `hidden` unless `--reveal` is given. The text output is one row per field with a
+column per label, then one `X: arm …` and `Y: arm …` line. `show <run>` shows one run
+of a pair as any run, with a `pair` object: `{task_id, label, picked, awaiting_pick,
+unblinded}`.
+
+**`helmraiser diff <task-or-run> [X|Y] [--json]`** prints a run's diff against its base
+commit: the `diff.patch` of its run directory (written before each review), or, when
+that file is absent, `git diff <base_commit>..<head_commit>` in the project, with the
+run's branch as the head while it records no head commit.
+
+- A run reference (id or unique prefix) needs no label; one is refused (exit 2).
+- A task reference selects its latest run. When that run is one of a pair, `X` or `Y`
+  (any case) is required (exit 2 without); for a task without a pair a label is refused.
+- `--json` prints `run_id`, `task_id`, `label`, `base_commit`, `source` (`patch` or
+  `git`) and `diff`. A run without a base commit or branch, or a failing `git diff`,
+  exits 1.
+
+#### The pick packet
+
+```bash
+helmraiser pick-packet <task> [--out PATH] [--json]
+```
+
+It writes the one Markdown file that a judge reads, and prints its path. The default
+path is `<data-dir>/pairs/<task id slug>/packet.md`; the slug is the full task id in
+lower case with every run of other characters as one `-`. `--json` prints `task_id`,
+`path` and `bytes`. `<task>` is resolved as for `pick`. Writing a packet reads the ledger
+only: it reveals nothing and marks nothing.
+
+The packet holds:
+
+- the task's title and its brief: the body of the task's snapshot, without the
+  frontmatter, which can carry models;
+- then for X, and then for Y:
+  - the outcome (`awaiting merge approval`, or the status with its failure reason) and
+    the review verdict;
+  - cost, active minutes and iterations;
+  - each verify step of the last verified iteration, by name, `pass` or `fail`;
+  - each evidence step, by name, `pass` or `fail`, with its criteria from the snapshot;
+  - the review: the reviewer's text from `review.md` without its verdict block, then
+    the recorded findings and evidence checks, and why Helmraiser changed the verdict
+    when it did;
+  - the full diff, as `diff` prints it.
+
+It never holds a model, a thinking level, a skill, an arm name, a run ID, a session,
+branch or worktree name, or the task id (which is made of the project's path). No
+output tail of a verify or evidence step is included: tails can carry paths and model
+names.
+
+- In everything about a run, the diff included, these are replaced: the two run IDs and
+  their first eight characters (`<run>`), the branch names (`<branch>`), the worktree
+  paths and directory names (`<worktree>`) and the data directory (`<data-dir>`).
+- In what Helmraiser and the reviewer wrote (outcome, step names, criteria, review text,
+  findings), also: model names and worker skill paths (`hidden`, as in
+  [failure reasons](#blind-until-the-pick)), the worktree prefix of a path (removed, so
+  the path is relative), the project path (`<project>`) and the home directory (`~`).
+- The brief and the content of the diffs are otherwise as the task and the runs wrote
+  them: a model name or an absolute path that the task itself is about stays.
+
+`pick-packet` refuses, with exit code 1 and no file written, when the task or run has
+no pair, the pair has a pick already, an arm is still under way or awaits a plan or
+scope approval, or no arm awaits its merge approval (both failed).
+
+#### `rework` on a pair
+
+`helmraiser rework <run>` refuses a run of an unpicked pair, in any status, with exit
+code 2:
+
+```text
+this run is one arm of a pair; pick first, then rework the winner (helmraiser pick <task>)
+```
+
+A rework would change what the pick judges. After the pick, the picked run is reworked
+as any run, and its rework rounds are counted against it in `experiment report`. Human
+`status` does not print its `merge rework` hint for rows that are all arms of unpicked
+pairs.
 
 ## Requirements
 
@@ -1732,9 +1928,11 @@ per command.
 | `helmraiser drafts [--project P]` / `drafts drop <task> --reason TEXT [--class CLASS]` | Lists pending scout drafts, or retains one as dropped with its reason and optional class |
 | `helmraiser drafts request <repo>…` / `drafts request --cancel <repo>…` | Requests safe worker-driven scouts for chosen focus projects, or cancels pending requests |
 | `helmraiser wait <ref>` | Blocks silently until owner attention or completion; one result object with `--json` (see [Waiting for a run](#waiting-for-a-run)) |
-| `helmraiser log <run> [-f] [--since-id N]` | A run's ledger events as a timeline, or JSONL with `--json`; `-f` follows until the run is terminal or awaiting approval (plan, scope or merge); invoke it again after resumption to continue following. |
-| `helmraiser show <ref> [--json]` | State and limits by run ID, short/full task ID, or unique run prefix (see [Showing one run](#showing-one-run)) |
-| `helmraiser attach <run> [--stage implement\|review\|plan] [--exec]` | Prints the `pi --session-dir … --session …` command that opens the run's pi session; `--exec` runs it |
+| `helmraiser log <run> [-f] [--since-id N] [--reveal]` | A run's ledger events as a timeline, or JSONL with `--json`; `-f` follows until the run is terminal or awaiting approval (plan, scope or merge); invoke it again after resumption to continue following. A run of an unpicked pair hides its setup (see [Blind until the pick](#blind-until-the-pick)) |
+| `helmraiser show <ref> [--json] [--reveal]` | State, models and limits by run ID, short/full task ID, or unique run prefix (see [Showing one run](#showing-one-run)); a pair's two runs side by side for a task with a pair |
+| `helmraiser diff <ref> [X\|Y] [--json]` | A run's diff against its base commit, by run or by task and pair label (see [`wait`, `show` and `diff` by task](#wait-show-and-diff-by-task)) |
+| `helmraiser pick-packet <task> [--out PATH] [--json]` | Writes the file a judge reads to pick between a pair's runs (see [The pick packet](#the-pick-packet)) |
+| `helmraiser attach <run> [--stage implement\|review\|plan] [--exec] [--reveal]` | Prints the `pi --session-dir … --session …` command that opens the run's pi session; `--exec` runs it. Refused for a run of an unpicked pair without `--reveal` |
 | `helmraiser queue list\|next\|pause\|resume` | Inspect and control dispatch; `pause --minutes N` auto-resumes, and `resume` also clears provider holds |
 | `helmraiser queue remove <task>` | Take one `queued` task out of the queue by full task id (`<project-slug>:<id>`) or a unique bare id; it returns to `draft`, the file is untouched, and `intake` queues it again |
 | `helmraiser caps [on\|off\|reset]` | Show subscription usage, elapsed window share, routing headroom and dollar spend, or control enforcement |
@@ -1794,12 +1992,17 @@ timeout notice goes to stderr.
 A task timing out without an eligible new run keeps `task_id`, `status: "queued"`
 and `timed_out: true`; all other required fields are null. `scope_request` is omitted.
 
+A task whose latest run is one of a pair is waited for as the pair, and its object has
+one more field, `pair`: see [`wait`, `show` and `diff` by task](#wait-show-and-diff-by-task).
+Each poll reads the ledger in one snapshot. The `failure_reason` of a run of an unpicked
+pair names no model (see [Blind until the pick](#blind-until-the-pick)).
+
 `wait` has different exit codes from other commands:
 
 | Code | Meaning |
 |------|---------|
 | 0 | Condition met without failure: awaiting approval or `landed` |
-| 1 | Run ended `failed` or `aborted`; rejection is `failed` with reason `rejected` |
+| 1 | Run ended `failed` or `aborted`; rejection is `failed` with reason `rejected`. For an unpicked pair: both runs ended so |
 | 2 | Unknown/ambiguous ref, nonqueued task without a run, unreadable/incompatible ledger, or invalid option |
 | 124 | Timeout elapsed first |
 | 130 | Interrupted (Ctrl-C), silently |
@@ -1809,6 +2012,7 @@ and `timed_out: true`; all other required fields are null. `scope_request` is om
 ```bash
 helmraiser show <ref>          # run id, task id or unique run prefix
 helmraiser show <ref> --json
+helmraiser show <ref> --reveal # the setup of a run of an unpicked pair
 ```
 
 References resolve in order: exact run ID, task ID (short ID or full
@@ -1818,7 +2022,8 @@ with no runs fails immediately. Unknown or ambiguous references fail with exit 1
 name the accepted forms; `--json` returns `{"error": "…"}`.
 
 `show` reads the ledger and the run's own task snapshot (`task.md` in its run directory,
-else the ledger's copy: never the task file, which may have changed) and writes nothing.
+else the ledger's copy: never the task file, which may have changed) and writes nothing
+but the mark of `--reveal`.
 Human output begins with `pr: <url>` when available; JSON keeps the unchanged `pr_url`
 field. PR approval also ends its human output with the bare URL, so
 `helmraiser approve <run> | tail -1` returns it (approval JSON is unchanged).
@@ -1846,7 +2051,21 @@ pending, otherwise null. `rework_rounds` counts the owner's rework requests.
 The remaining fields are `run_id`, `task_id`, `project`, `status`, `stage`,
 `failure_reason`, `verdict`, `policy`, `delivery`, `base_branch`, `base_commit`,
 `head_commit`, `branch_name`, `pr_url`, `worktree_path`, `started_at` and `ended_at`
-(ISO-8601 UTC).
+(ISO-8601 UTC), and the run's setup:
+
+- `models`: the models the run recorded, `{plan, implement, fallback, review}`; `plan`
+  is null without a plan stage, `fallback` when the task had none. Text:
+  `models: plan=- implement=<model> fallback=<model> review=<model>`.
+- `arm`: the run's `experiment_arm` event, `{name, overrides, replaced}`; null for a run
+  without an arm (no `arm:` line in text).
+- `pair`, only for a run of a pair: `{task_id, label, picked, awaiting_pick, unblinded}`.
+  Text: `pair: X of <task> (unpicked)`.
+
+For a run of an unpicked pair, `models` and `arm` read `hidden` and the failure reason
+names no model, unless `--reveal` is given: see
+[Blind until the pick](#blind-until-the-pick). For a task whose latest run is one of a
+pair, `show <task>` prints the pair instead: see
+[`wait`, `show` and `diff` by task](#wait-show-and-diff-by-task).
 
 ### Models table
 
@@ -1861,7 +2080,8 @@ task had none) and the review model. Each row gets a `setup` object in `--json`
 (`plan`, `implement`, `fallback`, `review`; `null` for none) next to the
 unchanged columns, and the markdown table shows the setup as a label such as
 `plan=none impl=<model> fb=<model> rev=<model>` in place of the `model` column.
-`--by` needs `--models`.
+`--by` needs `--models`. The runs of an unpicked pair whose arms differ in a model
+are one row, `hidden` (see [Blind until the pick](#blind-until-the-pick)).
 
 Columns: `runs`, `planned` (runs with a plan
 stage), `landed`, `awaiting`,
@@ -1895,7 +2115,9 @@ iteration count, whether it escalated, automated review verdicts and diff (cut a
 80,000 characters). Model names and setup metadata are omitted. Differing task
 briefs produce a warning and A's brief is used. After judging, the output reveals
 each run's setup alongside the verdict, confidence, scores, defects and merge advice.
-Position bias is not corrected; swap the arguments to check it manually.
+Position bias is not corrected; swap the arguments to check it manually. The setup of
+a run of an unpicked pair is not revealed: each stage reads `hidden`, and `pick` decides
+that pair.
 
 `--json` returns `judge` (`model`, `cost_usd`), `runs` (A/B facts with setups, without
 brief, reviews or diff), `verdict`, `winner_run_id` (`null` for a tie), and `warnings`;
@@ -2121,7 +2343,7 @@ The `status.json` object has these fields:
 | `awaiting_pick_count` | integer | Count of pairs that wait for `helmraiser pick`: no pick yet, both arms awaiting merge approval or over, and at least one awaiting merge approval. Both arms of such a pair are also counted in `awaiting_count` while they await approval |
 | `running[].pair`, `resuming[].pair`, `reworks[].pair` | object | Only on a paired run's row: `{task_id, label, picked, awaiting_pick}`. `label` is the run's blind label (`X` or `Y`), never its arm; `picked` says whether the pair has a pick; `awaiting_pick` is as counted by `awaiting_pick_count`. See [Pairs in the status output](#pairs-in-the-status-output) |
 | `failed_24h_count` | integer | Count of runs that ended as `failed` in the last 24 hours; rows are in the CLI's `failed` list |
-| `spend` | object | Provider → rolling `5h`, `7d` and `30d` ledger spend in USD |
+| `spend` | object | Provider → rolling `5h`, `7d` and `30d` ledger spend in USD. The provider `hidden` holds the spend of the runs of unpicked pairs whose arms differ in a provider (see [Blind until the pick](#blind-until-the-pick)) |
 | `usage` | object | Per subscription and window: `fraction`, `spend_usd`, `resets_at`, `warn_at`, `stop_at` |
 | `routing` | object | `headroom` maps every configured or reported subscription to `has_headroom` and its available `5h`, `week` and `month` windows. Each window has `used`, `elapsed`, `target` and `headroom`; unavailable numeric values are `null`. `has_headroom` is true only when at least one window is present and every window's headroom is strictly above the configured margin |
 | `scouts` | object | Scout routing and activity: `focus_projects`, `paused_projects`, `pending`, `running`, and `recent` as described below |
@@ -2168,7 +2390,8 @@ helmraiser status --json | jq '{queued_count, awaiting_count, running: (.running
 Each row carries the same identity keys — `run_id`, `task`, `project`, `id` and `title` —
 plus its own fields. An `awaiting` row also names where to review the run: `worktree`,
 `branch` and `base_commit`. A paired run's row in any of the three lists has the same
-`pair` object as in `running`.
+`pair` object as in `running`. A `failed` row's `reason` names no model while the run is
+one of an unpicked pair.
 
 The Omarchy widget reads the count keys `queued_count`, `awaiting_count` and
 `failed_24h_count`.
@@ -2517,7 +2740,8 @@ when there are any, `eligible` as for `approve`. A refusal is `{"error": "…"}`
 ### Reworking a run awaiting merge approval
 
 `helmraiser rework <run-or-unique-prefix> [--note "<feedback>"] [--rebase] [--json]` accepts
-`awaiting_approval` with a pending **merge** approval, not a pending plan. It also accepts
+`awaiting_approval` with a pending **merge** approval, not a pending plan. A run of an
+unpicked pair is refused: see [`rework` on a pair](#rework-on-a-pair). It also accepts
 `landed` runs with `delivery: pr`, a recorded `pr_url`, and a PR that
 `gh pr view <url> --json state` reports as `OPEN`. Closed or merged PRs and non-PR
 landed runs are refused (exit 2); gh failures or invalid responses are reported (exit 1).

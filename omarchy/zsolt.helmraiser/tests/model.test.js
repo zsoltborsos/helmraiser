@@ -355,6 +355,20 @@ test("formatCost, usageText, formatMinutes, runLine and awaitingLine", () => {
   assert.equal(Model.awaitingLine(s.awaiting[1]), "plan approval · $0.00")
 })
 
+test("awaitingLine labels an unpicked pair arm and a scope request", () => {
+  const s = Model.parseStatus({
+    ...cliPayload,
+    awaiting: [
+      { run_id: "r1", task: "t", pending: "merge", verdict: "pass", cost_usd: 1, pair: { task_id: "p:t", label: "X", picked: false, awaiting_pick: true } },
+      { run_id: "r2", task: "t", pending: "merge", verdict: "pass", cost_usd: 1, pair: { task_id: "p:t", label: "Y", picked: true, awaiting_pick: false } },
+      { run_id: "r3", task: "u", pending: "scope", verdict: null, cost_usd: 0 }
+    ]
+  })
+  assert.equal(Model.awaitingLine(s.awaiting[0]), "pair awaiting pick (X) · pass · $1.00")
+  assert.equal(Model.awaitingLine(s.awaiting[1]), "merge approval · pass · $1.00")
+  assert.equal(Model.awaitingLine(s.awaiting[2]), "scope approval · $0.00")
+})
+
 test("pausedText includes the reason and a local until time", () => {
   assert.equal(Model.pausedText(null), "")
   assert.equal(Model.pausedText({ reason: "manual", until: null }), "Paused: manual")

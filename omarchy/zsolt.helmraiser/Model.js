@@ -64,7 +64,10 @@ function parseStatus(raw) {
       task: text(row.task),
       pending: text(row.pending) || "merge",
       verdict: text(row.verdict),
-      costUsd: number(row.cost_usd)
+      costUsd: number(row.cost_usd),
+      // One arm of an experiment pair: only its blind label, and whether it awaits a pick.
+      pairLabel: row.pair && typeof row.pair === "object" ? text(row.pair.label) : "",
+      awaitingPick: !!(row.pair && row.pair.awaiting_pick)
     }
   })
   var failed = list(data.failed).map(function(row) {
@@ -319,7 +322,11 @@ function runLine(run) {
 }
 
 function awaitingLine(row) {
-  var parts = [row.pending === "plan" ? "plan approval" : "merge approval"]
+  var parts = [
+    row.awaitingPick
+      ? "pair awaiting pick (" + row.pairLabel + ")"
+      : row.pending === "plan" ? "plan approval" : row.pending === "scope" ? "scope approval" : "merge approval"
+  ]
   if (row.verdict) parts.push(row.verdict)
   parts.push(formatCost(row.costUsd))
   return parts.join(" · ")

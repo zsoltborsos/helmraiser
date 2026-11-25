@@ -101,8 +101,8 @@ def validate_experiment(definition: Any, config: dict[str, Any]) -> ExperimentDe
             raise ExperimentError(f"{key}.models: reviewer must differ from implement model")
         arms[arm] = normalized
     end_pairs = data.get("end_pairs", 30)
-    if type(end_pairs) is not int or end_pairs <= 0:
-        raise ExperimentError("end_pairs: expected a positive integer")
+    if type(end_pairs) is not int or not 0 < end_pairs <= 9223372036854775807:
+        raise ExperimentError("end_pairs: expected a positive integer at most 9223372036854775807")
     quota = data.get("quota_brake", 0.85)
     if (
         isinstance(quota, bool)
@@ -121,7 +121,7 @@ def validate_experiment(definition: Any, config: dict[str, Any]) -> ExperimentDe
                 if date.tzinfo is None
                 else date.astimezone(UTC).timestamp()
             )
-        except ValueError as exc:
+        except (ValueError, OverflowError) as exc:
             raise ExperimentError("end_at: expected an ISO date or datetime") from exc
     exclusions = data.get("exclude_projects", [])
     if not isinstance(exclusions, list):

@@ -145,6 +145,8 @@ enabled for the route in `SECURITY.md`. The remaining release item is in `TASKS.
   then counts the base's own commits as the run's changes. Use
   `helmraiser retry <run> --adopt-base` to record the new base and retry.
 
+- **A sandboxed run cannot write some names, and `add` and `intake` refuse a `paths:` entry that names one.** srt write-protects `.gitconfig`, `.gitmodules`, the shell rc files, `.ripgreprc`, `.mcp.json`, `.vscode`, `.idea`, `.claude/commands`, `.claude/agents` and `.git` in the worktree (`SRT_PROTECTED` in `task/paths.py`); make those edits outside Helmraiser. An `EROFS` on `packed-refs.lock` during a commit is harmless.
+
 - **Failed/aborted worktrees have limited retention.** Clean trees are removed after
   seven days or once superseded by a later landed run, by `helmraiser clean` or the
   hourly watch-worker sweep. Retry requires the worktree to remain; branches stay.

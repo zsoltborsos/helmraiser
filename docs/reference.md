@@ -1695,6 +1695,21 @@ watch worker runs `git maintenance run --auto` during its hourly sweep only when
 project has no live run, skipping projects whose directory no longer exists.
 `helmraiser doctor` warns when a repository lacks the setting.
 
+**Built-in write protections.** Whatever a task's `paths` say, `srt` never lets a sandboxed
+run write these names in the worktree and below it (it looks three levels down by
+default): `.gitconfig`, `.gitmodules`, `.bashrc`,
+`.bash_profile`, `.zshrc`, `.zprofile`, `.profile`, `.ripgreprc`, `.mcp.json`, the
+directories `.vscode`, `.idea`, `.claude/commands` and `.claude/agents`, and git's own
+`.git` (a file in a run worktree, protected whole; in a nested repository its `hooks` and
+`config`). A write fails with `EROFS`. `add` and `intake` therefore refuse a task whose
+`paths:` entry names one of them, itself or beneath it, at any depth and in any letter case
+(`.claude/agents/**`, `sub/.vscode/settings.json`, `.mcp.json`): make that edit outside
+Helmraiser. Patterns that only could match, such as `**`, `src/**` or `.claude/**`, are
+accepted, and a task with `isolation: none` is not checked. An `EROFS` message about
+`packed-refs.lock` while a commit runs is harmless: git tried to pack refs automatically
+after the commit, which needs a lock in the primary `.git` outside the session's own
+branch-ref directory, and the commit had already succeeded.
+
 **What a sandboxed pi cannot read.** Reads are allowed everywhere except:
 
 - Credential and private locations, denied whether or not they exist: `~/.ssh`,

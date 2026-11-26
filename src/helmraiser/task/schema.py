@@ -16,8 +16,15 @@ from helmraiser.task.model import (
     TaskSpec,
     parse_depends_on,
 )
-from helmraiser.task.paths import parse_paths
+from helmraiser.task.paths import parse_paths, srt_protected_errors
 from helmraiser.task.project import load_project_defaults
+
+
+def protected_path_errors(task: TaskSpec) -> list[str]:
+    """Errors for ``paths`` that name what srt never lets a sandboxed run write."""
+    if task.paths is None or task.isolation == "none":
+        return []
+    return srt_protected_errors(task.paths)
 
 
 def validate_task(task: TaskSpec) -> list[str]:
@@ -35,6 +42,8 @@ def validate_task(task: TaskSpec) -> list[str]:
             parse_paths(list(task.paths))
         except ValueError as exc:
             errors.append(str(exc))
+        else:
+            errors += protected_path_errors(task)
 
     if not task.id or not ID_PATTERN.match(task.id):
         errors.append("id is required and must match [a-z0-9][a-z0-9._-]*")

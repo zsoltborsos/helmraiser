@@ -26,6 +26,52 @@ def _segments(pattern: str) -> tuple[str, ...]:
     return segments + ("?*", "**") if pattern.endswith("/") else segments
 
 
+# What srt (@anthropic-ai/sandbox-runtime 0.0.83) write-protects in the working directory and
+# below it, with no setting to lift it: DANGEROUS_FILES and getDangerousDirectories() in
+# sandbox/sandbox-utils.js, and linuxGetCwdMandatoryDenyPaths() and
+# linuxGetMandatoryDenyPaths() in sandbox/linux-sandbox-utils.js. ``.git`` stands for the
+# worktree's ``.git`` file (protected whole) and, in a nested repository, its hooks and config.
+# A name here is a run of path segments, compared in lower case as srt does.
+SRT_PROTECTED = (
+    ".gitconfig",
+    ".gitmodules",
+    ".bashrc",
+    ".bash_profile",
+    ".zshrc",
+    ".zprofile",
+    ".profile",
+    ".ripgreprc",
+    ".mcp.json",
+    ".vscode",
+    ".idea",
+    ".claude/commands",
+    ".claude/agents",
+    ".git",
+)
+
+
+def srt_protected_errors(paths: tuple[str, ...]) -> list[str]:
+    """One error for each pattern that names an srt-protected path, itself or beneath it.
+
+    The name must be literal segments of the pattern, at any depth: ``.claude/agents/**``,
+    ``sub/.vscode/x`` and ``.mcp.json`` name one; ``**`` or ``.claude/**`` only could match.
+    """
+    errors = []
+    for pattern in paths:
+        segments = [segment.lower() for segment in _segments(pattern)]
+        for name in SRT_PROTECTED:
+            parts = name.split("/")
+            if any(
+                segments[i : i + len(parts)] == parts for i in range(len(segments) - len(parts) + 1)
+            ):
+                errors.append(
+                    f"paths entry {pattern!r} names {name}, which the sandbox never lets a "
+                    "run write: remove it from paths and make that edit outside Helmraiser"
+                )
+                break
+    return errors
+
+
 def paths_overlap(left: tuple[str, ...], right: tuple[str, ...]) -> bool:
     """Conservatively compare literal segment prefixes before any wildcard."""
 

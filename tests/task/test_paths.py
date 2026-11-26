@@ -11,6 +11,7 @@ from helmraiser.task.paths import (
     matches_paths,
     parse_paths,
     paths_overlap,
+    srt_protected_errors,
 )
 from helmraiser.task.schema import validate_task
 from helmraiser.utils.markdown import serialize_frontmatter
@@ -106,6 +107,79 @@ def test_invalid(value):
 @pytest.mark.parametrize("paths", [(), ("",), ("/src",), ("src/../docs",)])
 def test_direct_spec_invalid(paths):
     assert any("paths" in e for e in validate_task(replace(task(declared=False), paths=paths)))
+
+
+@pytest.mark.parametrize(
+    "pattern,protected",
+    [
+        # a protected directory, itself or beneath it
+        (".claude/agents/**", ".claude/agents"),
+        (".claude/agents/", ".claude/agents"),
+        (".claude/agents/foo.md", ".claude/agents"),
+        (".claude/commands/*.md", ".claude/commands"),
+        (".vscode/settings.json", ".vscode"),
+        ("./.idea//**", ".idea"),
+        # a protected file
+        (".mcp.json", ".mcp.json"),
+        (".bashrc", ".bashrc"),
+        (".gitmodules", ".gitmodules"),
+        # nested, with the name as a segment at any depth
+        ("sub/.vscode/settings.json", ".vscode"),
+        ("a/b/c/.claude/agents/x.md", ".claude/agents"),
+        ("packages/app/.mcp.json", ".mcp.json"),
+        ("**/.idea/**", ".idea"),
+        ("docs/**/.zshrc", ".zshrc"),
+        # git's own files: srt keeps a worktree's .git whole, a repository's hooks and config
+        (".git/hooks/pre-commit", ".git"),
+        ("sub/.git/config", ".git"),
+        # srt compares names in lower case
+        (".Claude/Agents/x.md", ".claude/agents"),
+    ],
+)
+def test_srt_protected_paths_are_refused(pattern, protected):
+    (error,) = srt_protected_errors((pattern,))
+    assert repr(pattern) in error and protected in error
+    assert "never lets a run write" in error and "outside Helmraiser" in error
+    assert validate_task(task([pattern])) == [error]
+
+
+@pytest.mark.parametrize(
+    "pattern",
+    [
+        "**",
+        "src/**",
+        "src/app.py",
+        "docs/",
+        ".claude/**",
+        ".claude/skills/**",
+        ".claude/settings.json",
+        ".claude/agent/x.md",
+        ".github/workflows/ci.yml",
+        ".gitignore",
+        ".gitattributes",
+        "foo.mcp.json",
+        "src/.mcp.jsonx",
+        ".v*/settings.json",
+        "**/.claude*/**",
+        "agents/.claude/x.md",
+        "*",
+    ],
+)
+def test_ordinary_paths_and_wildcards_are_not_refused(pattern):
+    assert srt_protected_errors((pattern,)) == []
+    assert validate_task(task([pattern])) == []
+
+
+def test_each_protected_pattern_gets_its_own_error():
+    errors = srt_protected_errors(("src/**", ".mcp.json", "docs/", ".idea/x"))
+    assert len(errors) == 2
+    assert "'.mcp.json'" in errors[0] and "'.idea/x'" in errors[1]
+
+
+def test_isolation_none_is_not_sandboxed_so_nothing_is_refused():
+    spec = replace(task([".claude/agents/**"]), isolation="none")
+    assert validate_task(spec) == []
+    assert len(validate_task(replace(spec, isolation="process"))) == 1
 
 
 def test_task_paths_verify_name_is_reserved():

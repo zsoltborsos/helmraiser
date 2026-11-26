@@ -31,7 +31,7 @@ from helmraiser.project_notes import project_notes_for_body, project_notes_secti
 from helmraiser.task.loader import TaskLoadError, parse_task, profile_models, spec_to_frontmatter
 from helmraiser.task.model import ISOLATIONS, ModelSpec, TaskSpec, VerifyStep
 from helmraiser.task.project import effective_env, effective_setup, load_project_defaults
-from helmraiser.task.schema import validate_task
+from helmraiser.task.schema import protected_path_errors, validate_task
 from helmraiser.task.structural import (
     body_outside_paths_warnings,
     large_budget_warnings,
@@ -458,6 +458,8 @@ def run_intake(
     """
     notes: list[str] = []
     proposal: dict[str, Any] | None = None
+    if refused := protected_path_errors(spec):  # no acceptance block makes it startable
+        return IntakeOutcome(spec, None, notes, refused)
     frontmatter = spec_to_frontmatter(spec)
     original_models = frontmatter.get("models", {})
 

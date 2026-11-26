@@ -388,6 +388,17 @@ class TestAdd:
         assert result.exit_code == 2
         assert any("id" in e for e in json.loads(result.output)["errors"])
 
+    def test_add_refuses_a_path_the_sandbox_never_lets_a_run_write(
+        self, tmp_project: Path, data_dir: Path, ledger: Ledger
+    ):
+        draft = DRAFT.replace("status: draft", "status: draft\npaths: ['.claude/agents/**']")
+        path = write_task(tmp_project, draft)
+        result = invoke("add", str(path), "--json", data_dir=data_dir)
+        assert result.exit_code == 2
+        (error,) = json.loads(result.output)["errors"]
+        assert "'.claude/agents/**'" in error and "never lets a run write" in error
+        assert ledger.get_task("fix-widget") is None
+
     def test_add_no_arguments(self, data_dir: Path):
         result = invoke("add", data_dir=data_dir)
         assert result.exit_code == 2
@@ -1685,6 +1696,20 @@ class TestIntakeYes:
         assert out["proposal"] is None
         assert any("already carries a valid acceptance block" in n for n in out["notes"])
         assert ledger.get_task(out["task_id"])["status"] == "queued"
+
+    def test_protected_path_is_refused_without_asking_the_model(
+        self, tmp_project: Path, data_dir: Path, ledger: Ledger, monkeypatch
+    ):
+        adapter = ScriptedPiAdapter({"intake": PiScript(final_text="never used")})
+        use_adapter(monkeypatch, adapter)
+        draft = DRAFT.replace("status: draft", "status: draft\npaths: ['sub/.vscode/**']")
+        path = write_task(tmp_project, draft)
+        result = invoke("intake", str(path), "--yes", "--json", data_dir=data_dir)
+        assert result.exit_code == 2, result.output
+        (error,) = json.loads(result.output)["errors"]
+        assert "'sub/.vscode/**'" in error and "outside Helmraiser" in error
+        assert adapter.calls == []
+        assert ledger.get_task("fix-widget") is None
 
     def test_real_adapter_is_wired_from_config(self, isolated_config: dict):
         from helmraiser.pi.adapter import PiJsonAdapter

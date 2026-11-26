@@ -116,6 +116,11 @@ While the PR remains OPEN, `helmraiser rework <run> --note '<feedback>'` restore
 its worktree and hands the same run back for implementation and governed checks;
 subsequent approval updates the original PR. Closed or merged PRs cannot be
 reworked. Plan/scope approvals instead resume work.
+Review each rework's own diff, from the head you reviewed to the new head, before
+approving again: gates and acceptance pass even when an assertion has been deleted.
+Count assertions per test file across that diff (some repos ship a script for this,
+such as `scripts/removed-assertions.sh`), and treat any drop the rework note did not
+ask for as a defect.
 Use `helmraiser land <run>` for governed PR landing.
 See [Policies](../../docs/reference.md#policies) and
 [Reworking a run awaiting merge approval](../../docs/reference.md#reworking-a-run-awaiting-merge-approval).
@@ -167,6 +172,9 @@ How to split:
   not one layer of several.
 - Size each task to fit one implement session.
 - Put a prefactor (the reshaping that makes the change easy) in its own task, first.
+- When a task sets a pattern later tasks will copy, state the target signatures and
+  names in its brief, and have it write the pattern into the repo's design doc so
+  each later brief can cite it.
 - Use `depends_on` only where a later task truly needs the earlier one landed.
 - For a refactor across many files: expand (add the new form beside the old), migrate
   callers in batches, then contract (remove the old form), each as its own task.

@@ -56,8 +56,8 @@ def _baseline_outputs():
 
 EXPECTED_SHA256 = {
     "implement": "9cee10171a94a6a7a7ab9e6027c3ce979f0a4b673306bf356a9d1e633e4d53a3",
-    "plan": "8a0d9e08c95beea209492630def8e662441627f911f927ba0acf85abf8758210",
-    "plan_approval": "c269f2a7c0a83734eaa25cec0e66a8c9fa8f32cbbcfda9a0f2395385e21b401a",
+    "plan": "286e88fb166867cf05b1aa0fb229eeaf3a46e44bac89fe45dc5f8605fcdb8743",
+    "plan_approval": "d9b057b06a3a0395566facec0853e02ee9659620db978629349def1a67510bd2",
     "review": "b630dce1903d04c0e6448e10b79ac05c14f7d9d562b34bd3c838007abe5798a1",
     "review_context": "82628690fdb0df1e278c8bdd6a5182df861e2a0a8bc936b8f674da3c67136701",
     "scout": "0db1b6dbde4aa379c665de4d36ca34381d0757a204c97817f886d9de8fd65ad2",

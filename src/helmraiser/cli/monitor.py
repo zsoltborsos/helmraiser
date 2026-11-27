@@ -884,8 +884,7 @@ def _print_wait_result(row: dict[str, Any]) -> None:
     if pair is not None and not pair["picked"]:
         # An unpicked pair has no run of its own to approve: the next step is the pair's.
         steps = {
-            "awaiting_pick": f"helmraiser pick-packet {row['task_id']}, then helmraiser pick "
-            f'{row["task_id"]} X|Y|tie --reason "<why>" --judge "<who>"',
+            "awaiting_pick": _pick_steps(row["task_id"]),
             "needs_approval": "helmraiser approve <run> (or reject) for the arm that awaits it",
             "failed": f"helmraiser retry {row['task_id']}",
         }
@@ -1180,6 +1179,7 @@ def build_show(
 
     pending = ledger.pending_approval(run_id)
     outside = ledger.events(run_id, types=("landed_outside",))
+    reviews = ledger.events(run_id, types=("review_verdict",))
     worktree = row["worktree_path"]
     return {
         "run_id": run_id,
@@ -1210,6 +1210,14 @@ def build_show(
         "landed_outside": (
             {"commit": outside[-1]["payload"]["commit"], "note": outside[-1]["payload"]["note"]}
             if outside
+            else None
+        ),
+        "review": (
+            {
+                "verdict": reviews[-1]["payload"].get("verdict"),
+                "findings": reviews[-1]["payload"].get("findings") or [],
+            }
+            if reviews
             else None
         ),
         "warnings": [warning] if warning else [],
@@ -1314,6 +1322,16 @@ def _passed(results: list[bool]) -> str | None:
     return "pass" if all(results) else "fail"
 
 
+def _pick_steps(task_id: str) -> str:
+    """The steps for a pair awaiting its pick. ``pick`` delivers the chosen arm, so the
+    queueing session reviews it (blind, from ``diff``) before picking."""
+    return (
+        f"helmraiser pick-packet {task_id}, a blind judge picks, review the chosen arm "
+        f"(helmraiser diff {task_id} X|Y), then helmraiser pick {task_id} X|Y|tie "
+        '--reason "<why>" --judge "<who>" (delivers it: merges, or opens its PR)'
+    )
+
+
 # What ``show <task>`` puts side by side for a pair: the row's name, then its key.
 PAIR_ROWS: tuple[tuple[str, str], ...] = (
     ("run", "run_id"),
@@ -1351,11 +1369,12 @@ def build_pair_show(
     for label, arm in states.items():
         blind = None if reveal else _blind(ledger, arm.run)
         data = build_show(ledger, arm.run, data_dir, now, blind)
-        reviews = ledger.events(arm.run_id, types=("review_verdict",))
+        review = data["review"]
         limits = data["limits"]
         labels[label.lower()] = {
             **{key: data[key] for _name, key in PAIR_ROWS if key in data},
-            "findings": len(reviews[-1]["payload"].get("findings") or []) if reviews else None,
+            "findings": len(review["findings"]) if review else None,
+            "review": review,
             "verify": _passed(
                 [result.passed for result in last_verify_results(ledger.iterations(arm.run_id))]
             ),
@@ -1410,10 +1429,7 @@ def _print_pair_show(data: dict[str, Any]) -> None:
     for label, setup in pair["reveal"].items():
         typer.echo(f"{label}: arm {_arm_text(setup['arm'], setup['overrides'])}")
     if pair["awaiting_pick"]:
-        typer.echo(
-            f"next: helmraiser pick-packet {data['task_id']}, then helmraiser pick "
-            f'{data["task_id"]} X|Y|tie --reason "<why>" --judge "<who>"'
-        )
+        typer.echo(f"next: {_pick_steps(data['task_id'])}")
 
 
 def show(

@@ -296,6 +296,7 @@ def test_show_of_a_task_puts_its_pair_side_by_side(
         "failure_reason": None,
         "verdict": "pass",
         "findings": 0,
+        "review": {"verdict": "pass", "findings": []},
         "verify": "pass",
         "evidence": None,
         "cost_usd": 0.07,
@@ -346,7 +347,8 @@ def test_show_of_a_task_keeps_an_unpicked_pair_blind(
     human = invoke("show", task_id, data_dir=data_dir).output
     assert "pair: unpicked, awaiting pick" in human
     assert "X: arm hidden" in human and "Y: arm hidden" in human
-    assert f"next: helmraiser pick-packet {task_id}, then helmraiser pick {task_id}" in human
+    assert f"next: helmraiser pick-packet {task_id}, a blind judge picks, review" in human
+    assert f"then helmraiser pick {task_id} X|Y|tie" in human and "opens its PR" in human
     for text in (result.stdout, human):
         assert not [name for name in names if name in text]
 

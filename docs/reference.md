@@ -221,6 +221,10 @@ exits 2. Otherwise `pick`, in this order:
 `tie` delivers the cheaper arm (lower `cost_usd`), then the one with fewer iterations,
 then X. The pair's `pick` stays `tie`.
 
+Because `pick` delivers, review the chosen arm against its brief before picking, from
+`diff <task> X|Y` or the [pick packet](#the-pick-packet); both stay blind. The next step
+that `show <task>` and `status` print for a pair awaiting its pick says so.
+
 `--json` prints one object: `picked`, `task_id`, `decided_by`, `reason`, `judge`,
 `delivered` (the delivered label), `winner` (`label`, `run_id`, `status`, `branch_name`,
 `delivery` and `head` or `pr_url`), `loser` (`label`, `run_id`, `status`, `branch_name`,
@@ -428,13 +432,14 @@ pair's runs side by side instead of one run. `--json`:
                      "Y": {"arm": "hidden", "overrides": "hidden"}},
           "x": {"run_id": "…", "status": "awaiting_approval", "stage": null,
                 "pending_approval": "merge", "failure_reason": null, "verdict": "pass",
-                "findings": 0, "verify": "pass", "evidence": null, "cost_usd": 0.7,
+                "findings": 0, "review": {"verdict": "pass", "findings": []},
+                "verify": "pass", "evidence": null, "cost_usd": 0.7,
                 "minutes": 12.5, "iterations": 2, "branch_name": "…", "pr_url": null},
           "y": {"…": "…"}}}
 ```
 
 `state` is as for `wait`. `findings` counts the findings of the run's last review (null
-before a review). `verify` and `evidence` are `pass`, `fail`, or null when no step ran;
+before a review); `review` is that review, as in [Showing one run](#showing-one-run). `verify` and `evidence` are `pass`, `fail`, or null when no step ran;
 `evidence` is `fail` when any step is not ok. `minutes` and `iterations` are the `used`
 values of [Showing one run](#showing-one-run). A picked pair has `pick`, `decided_by`,
 `reason`, `judge`, `picked_at` and the `reveal` of `pick`; an unpicked pair's `reveal`
@@ -1516,7 +1521,9 @@ both list the declared scope.
 **Scope requests.** When the implementer needs a file outside `paths` (often an existing
 test that encodes the old behaviour), the directive tells it not to edit the file, to
 commit its in-scope work and to answer with the first line `SCOPE: <path>[, <path>…] —
-<reason>`. In an implement iteration with no out-of-scope changes, Helmraiser commits any
+<reason>`. With `paths`, the implement and plan directives also say that plan and status
+files (`TASKS.md`, `CURRENT_STATE.md` and the like) belong to the queueing session after
+landing, so the run neither edits them nor requests them. In an implement iteration with no out-of-scope changes, Helmraiser commits any
 uncommitted work, records `scope_requested` (`{n, paths, reason}`) and parks the run as
 `awaiting_approval` with a pending `scope` approval, keeping its worktree and branch. It
 runs no verify and no further iteration. Requested paths that `paths` already covers are
@@ -2077,6 +2084,8 @@ minutes: 12.0 of 53.3
 directory now. `pending_approval` is `plan`, `scope` or `merge` only while an approval is
 pending, otherwise null. `rework_rounds` counts the owner's rework requests.
 `landed_outside` is `{commit, note}` for a run recorded with `record-landed`, otherwise null.
+`review` is the run's last `review_verdict` event as `{verdict, findings}` (findings as the
+reviewer recorded them, `[]` when none), or null before a review; it is JSON only.
 `warnings` lists why a limit is unknown: an unreadable snapshot leaves each `limit` null.
 
 | `limits` key | `used` | `limit` |

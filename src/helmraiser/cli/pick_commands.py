@@ -92,9 +92,10 @@ def pick(
     data_dir: Path | None = typer.Option(None, "--data-dir", help="Override HELMRAISER_DATA_DIR"),
 ) -> None:
     """Decide a pair whose arms both await merge approval or are over: record the pick,
-    reject the other arm (branch kept), deliver the picked arm as ``approve`` does, and
-    reveal which arm each label was. ``tie`` delivers the cheaper arm, then the one
-    with fewer iterations, then X."""
+    reject the other arm (branch kept), deliver the picked arm as ``approve`` does (merge
+    delivery merges it, PR delivery opens its PR), and reveal which arm each label was.
+    Review the chosen arm before picking: this is its last review before delivery.
+    ``tie`` delivers the cheaper arm, then the one with fewer iterations, then X."""
 
     def refuse(message: str, code: int = commands.EXIT_ERROR) -> NoReturn:
         commands._fail(message, as_json=as_json, code=code)

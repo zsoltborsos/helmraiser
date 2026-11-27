@@ -198,11 +198,17 @@ the task and wrote its brief, so you are not a blind judge: do not judge it your
 3. Start a **fresh** sub-agent (in Claude Code the `oracle` agent) with no other context:
    give it the judge prompt below and the packet's path, nothing else. Do not add your
    view of the task, the runs, or which you prefer.
-4. Run `helmraiser pick <task> X|Y|tie --reason "<the judge's reason>" --judge
+4. Review the judge's chosen arm against the brief (§8), from its diff in the packet or
+   `helmraiser diff <task> X|Y`. Both stay blind. `pick` delivers that arm, so this is
+   its last review before it merges (or its PR opens). If it needs work under PR
+   delivery, pick it, then rework it while its PR is open (step 6); under merge delivery
+   the pick merges it at once, so ask the owner before picking.
+5. Run `helmraiser pick <task> X|Y|tie --reason "<the judge's reason>" --judge
    "<harness>/<agent> (<model>, <effort>)"`, copying its choice. Pick rejects the other
-   arm (its branch is kept), delivers the chosen one as `approve` does, and reveals the
-   setups. For PR delivery, then `helmraiser land <run>` as usual.
-5. Rework only the winner, after the pick, if it needs it: that rework counts against it.
+   arm (its branch is kept), delivers the chosen one as `approve` does (merge delivery
+   merges it; PR delivery opens its PR), and reveals the setups. For PR delivery, then
+   `helmraiser land <run>` as usual.
+6. Rework only the winner, after the pick, if it needs it: that rework counts against it.
 
 The judge prompt, given verbatim:
 

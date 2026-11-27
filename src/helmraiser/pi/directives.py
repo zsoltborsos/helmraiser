@@ -200,6 +200,14 @@ def render_implement_directives(
     return text
 
 
+# Repo instructions often ask every agent to update plan/status files per slice; in a run
+# that would only produce scope requests the owner declines.
+STATE_FILES_NOTE = (
+    "Plan/status files (TASKS.md, CURRENT_STATE.md, …) are the queueing session's, "
+    "after landing: never edit them or request scope for them."
+)
+
+
 def _render_path_scope(paths: tuple[str, ...] | None, *, review: bool) -> str:
     if paths is None:
         return ""
@@ -209,7 +217,8 @@ def _render_path_scope(paths: tuple[str, ...] | None, *, review: bool) -> str:
         else "Out-of-scope changes fail before Helmraiser runs verify. Restore/remove forbidden "
         "changes; do not broaden the declaration. If the task needs a file outside them,\n"
         "do not edit it and do not answer `BLOCKED:`: commit your in-scope work and\n"
-        "answer with a first line `SCOPE: <path>[, <path>…] — <reason>`; the owner decides."
+        "answer with a first line `SCOPE: <path>[, <path>…] — <reason>`; the owner decides.\n"
+        + STATE_FILES_NOTE
     )
     return "Allowed paths:\n" + "\n".join(f"- `{p}`" for p in paths) + f"\n{instruction}\n\n"
 
@@ -258,13 +267,14 @@ def render_plan_directives(
     else:
         next_step = (
             "Helmraiser waits for approval from the owner. List needed files outside the allowed "
-            "paths under the plan's open questions, along with other questions for the owner."
+            "paths under the plan's open questions, along with other questions for the owner. "
+            + STATE_FILES_NOTE
             if wait_for_approval
             else "The implementer starts from the plan straight away. If the task needs a file "
             "outside the allowed paths, start the final message with one line "
             "`SCOPE: <path>[, <path>…] — <reason>`, followed by the full plan, written as if "
             "the paths were granted. Resolve other open questions yourself; answer `BLOCKED:` "
-            "only for other blockers."
+            "only for other blockers. " + STATE_FILES_NOTE
         )
     return PLAN_TEMPLATE.format(
         run_id=run_id,

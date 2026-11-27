@@ -12,6 +12,7 @@ from helmraiser.isolation.none import NoIsolation
 from helmraiser.ledger.db import Ledger
 from helmraiser.loop.runner import GovernedRun
 from helmraiser.pi.directives import (
+    STATE_FILES_NOTE,
     render_implement_directives,
     render_plan_directives,
     render_review_directives,
@@ -117,8 +118,9 @@ def test_conditional_path_constraints():
     assert "commit your in-scope work" in text
     assert "`SCOPE: <path>[, <path>…] — <reason>`" in text
     assert "SCOPE:" not in _implement()
+    assert STATE_FILES_NOTE in text and "TASKS.md" not in _implement()
     # The scope section stays short: it is outside the template's 1.5 KB budget.
-    assert len(text.encode()) - len(_implement().encode()) < 400
+    assert len(text.encode()) - len(_implement().encode()) < 520
     args = {"run_id": "r1", "title": "T", "worktree": WORKTREE}
     assert render_review_directives(**args) == render_review_directives(**args, paths=None)
     text = render_review_directives(**args, paths=patterns)
@@ -360,3 +362,16 @@ def test_implement_directive_baseline_keeps_other_repos_unavailable():
     text = _implement()
     assert "Other repos are unavailable." in text
     assert "skip brief and recall steps" not in text
+
+
+@pytest.mark.parametrize("wait_for_approval", [False, True])
+def test_a_plan_with_paths_leaves_plan_and_status_files_to_the_queueing_session(
+    wait_for_approval,
+):
+    args = {"run_id": "r1", "title": "T", "worktree": WORKTREE, "task_id": "abc"}
+    with_paths = render_plan_directives(
+        **args, wait_for_approval=wait_for_approval, paths=("src/",)
+    )
+    without = render_plan_directives(**args, wait_for_approval=wait_for_approval)
+    assert STATE_FILES_NOTE in with_paths
+    assert "TASKS.md" not in without

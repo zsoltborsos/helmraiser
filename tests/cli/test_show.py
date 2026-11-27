@@ -67,6 +67,7 @@ SHOW_KEYS = {
     "pending_approval",
     "rework_rounds",
     "landed_outside",
+    "review",
     "warnings",
     "limits",
 }
@@ -203,6 +204,7 @@ def test_a_fresh_failed_run_reports_its_state_and_limits(
         "pending_approval": None,
         "rework_rounds": 0,
         "landed_outside": None,
+        "review": None,
         "warnings": [],
         "limits": {
             "iterations": {"used": 3, "limit": 4, "limit_source": "max_iterations"},
@@ -506,3 +508,21 @@ def test_a_run_without_a_pending_approval_reports_none_not_merge(
     seed(ledger, data_dir, tmp_path / "project", status="landed")
 
     assert json.loads(show(RUN_ID, "--json", data_dir=data_dir).output)["pending_approval"] is None
+
+
+def test_the_latest_review_verdict_and_findings_are_reported(
+    ledger: Ledger, data_dir: Path, tmp_path: Path
+):
+    seed(ledger, data_dir, tmp_path / "project", status="awaiting_approval")
+    finding = {"severity": "minor", "note": "help line misaligned"}
+    ledger.append_event(RUN_ID, "helmraiser", "review_verdict", {"verdict": "fail", "findings": []})
+    ledger.append_event(
+        RUN_ID,
+        "helmraiser",
+        "review_verdict",
+        {"verdict": "concerns", "findings": [finding], "evidence_checks": []},
+    )
+
+    review = json.loads(show(RUN_ID, "--json", data_dir=data_dir).output)["review"]
+
+    assert review == {"verdict": "concerns", "findings": [finding]}

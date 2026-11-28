@@ -152,10 +152,11 @@ Slices, in order (1, 3 and 4 interactive; 2, 5 and 6 may run as Helmraiser tasks
    - Held-out Standards cases: 0/9 written-rule and 0/6 unwritten-rule hits for both
      variants (derivation: 5/7 written, which those prompts were tuned on). This is the
      case set for the "reviewer passes style and consistency slips" item above.
-   - Clean cases draw severe findings: derivation 4 of 10 cases (`v1-noskills`), 6 of 10
-     (`v5`); held-out 0.67 and 1.67 of 6 per rep. The clean cases were never audited, so
-     next judge those severe findings blind (real defect or false alarm) before reading
-     them as a cost of the model switch.
+   - Clean cases draw severe findings (derivation 4 of 10 cases for `v1-noskills`, 6 of 10
+     for `v5`), but a blind audit judged 19 of the 21 real defects, and two of them were
+     later fixed by hand here (5f027c1, cfc4b2d). The severe-finding rate is not a cost of
+     the model switch. The "clean" set is not clean: relabel those seven cases as positive
+     (or drop them) before the next replay (`NOTES.md`, "Clean-case severe findings audit").
    Remaining after that: the implement-stage pass, first `pi_rpc_implement` on against
    off (a candidate for the next live experiment), which informs item 1.
 5. **Decide on redacting verify output sent to models.** Verify and evidence tails reach

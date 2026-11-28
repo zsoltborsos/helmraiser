@@ -316,6 +316,13 @@ class ProjectScope:
         return sql, params
 
 
+def is_busy(exc: sqlite3.Error) -> bool:
+    """SQLITE_BUSY or SQLITE_LOCKED: another connection held the lock past the busy
+    timeout, so a later attempt can succeed."""
+    code = getattr(exc, "sqlite_errorcode", None)
+    return code is not None and code & 0xFF in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
+
+
 def default_data_dir() -> Path:
     """``$HELMRAISER_DATA_DIR`` (default ``~/.helmraiser``)."""
     return Path(os.environ.get("HELMRAISER_DATA_DIR", "~/.helmraiser")).expanduser()
@@ -378,6 +385,9 @@ class Ledger:
                 conn.execute("PRAGMA query_only=ON")
             else:
                 conn.execute("PRAGMA journal_mode=WAL")
+                # A commit then writes the WAL without fsync; only checkpoints sync. An
+                # fsync stall under heavy disk load no longer holds the write lock.
+                conn.execute("PRAGMA synchronous=NORMAL")
             conn.execute("PRAGMA foreign_keys=ON")
             self._local.conn = conn
         return cast("sqlite3.Connection", self._local.conn)

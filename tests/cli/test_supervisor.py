@@ -38,7 +38,7 @@ from helmraiser.task.loader import render_task
 from helmraiser.task.project import effective_run_limit
 from tests.cli.test_held_base_sync import seed_pr_dependency_chain, stub_sync
 from tests.conftest import FakePi, configured_test_config
-from tests.ledger.test_db import make_spec, run_row
+from tests.ledger.test_db import busy_error, make_spec, run_row
 from tests.loop.test_reconcile import FakeController
 
 runner = CliRunner()
@@ -318,6 +318,65 @@ def events(output: str) -> list[dict[str, Any]]:
 
 def queue(ledger: Ledger, project: Path, task: str, priority: str = "normal") -> str:
     return ledger.upsert_task(make_spec(project, task, priority=priority), "")
+
+
+class TestLedgerBusy:
+    """A ledger held past the busy timeout fails one tick, never the worker."""
+
+    def test_a_busy_status_write_keeps_the_worker(
+        self, ledger, data_dir, harness, tmp_path, monkeypatch, capsys
+    ):
+        queue(ledger, tmp_path / "a", "a1")
+        error = busy_error(tmp_path)
+        calls = []
+
+        def write_status(*args: Any) -> None:
+            calls.append(args)
+            raise error
+
+        monkeypatch.setattr(supervisor, "write_status", write_status)
+
+        result, _ = supervise(ledger, data_dir, harness)
+
+        assert [o["status"] for o in result.outcomes] == ["landed"] and len(calls) > 1
+        busy = [e["ledger_busy"] for e in events(capsys.readouterr().out) if "ledger_busy" in e]
+        assert busy and {b["stage"] for b in busy} == {"status"}
+
+    def test_a_busy_tick_is_tried_again(
+        self, ledger, data_dir, harness, tmp_path, monkeypatch, capsys
+    ):
+        queue(ledger, tmp_path / "a", "a1")
+        error = busy_error(tmp_path)
+        real = ledger.is_paused
+        failures = iter([error, error])
+
+        def is_paused() -> Any:
+            failure = next(failures, None)
+            if failure is not None:
+                raise failure
+            return real()
+
+        monkeypatch.setattr(ledger, "is_paused", is_paused)
+
+        result, _ = supervise(ledger, data_dir, harness)
+
+        assert [o["status"] for o in result.outcomes] == ["landed"]
+        busy = [e["ledger_busy"] for e in events(capsys.readouterr().out) if "ledger_busy" in e]
+        # ``is_paused`` is read by the status write too; each failure costs one attempt.
+        assert len(busy) == 2 and "tick" in {b["stage"] for b in busy}
+
+    def test_any_other_ledger_error_still_stops_the_worker(
+        self, ledger, data_dir, harness, tmp_path, monkeypatch
+    ):
+        queue(ledger, tmp_path / "a", "a1")
+
+        def is_paused() -> Any:
+            raise sqlite3.OperationalError("no such table: queue_state")
+
+        monkeypatch.setattr(ledger, "is_paused", is_paused)
+
+        with pytest.raises(sqlite3.OperationalError, match="no such table"):
+            supervise(ledger, data_dir, harness)
 
 
 class TestSlots:

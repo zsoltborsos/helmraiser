@@ -108,6 +108,10 @@ enabled for the route in `SECURITY.md`. The remaining release item is in `TASKS.
   - A claim refused with `experiment_changed` (the experiment ended between the fork decision and the claim) skips the task for that `work` invocation; under the supervisor its project then waits out the no-run backoff.
   - A dependent task (`depends_on`) of an unpicked pair's task looks at the latest of its two runs.
 - **The 11→12 ledger upgrade counts runs, not processes.** A running scout, a `work --once` child that has not yet recorded its run, or a worker that has not yet restarted onto the new code can still be on version 11 code when the upgrade happens; such a process fails the next time it opens the ledger.
+- **A run's own ledger writes have no retry.** The worker survives a ledger locked past
+  the 30-second busy timeout, but a run child does not: an event or status write that
+  times out fails the run, or ends its process before it records the failure. The
+  worker's next reconcile then marks the run failed (`orphaned`), and `retry` refuses it.
 - **Failed reopened PR runs.** A reopened run that fails (including setup failure) cannot be retried, reworked or landed while its PR stays open; recovery is a hand commit on the PR branch or closing the PR.
 - **Git maintenance needs idle time.** A project that always has a live run never
   receives sweep maintenance. External Git commands in a repository without

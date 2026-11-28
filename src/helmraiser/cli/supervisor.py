@@ -41,6 +41,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import sqlite3
 import subprocess
 import sys
 import time
@@ -65,6 +66,7 @@ from helmraiser.ledger.db import (
     Ledger,
     ProjectScope,
     ScoutRequestUnavailable,
+    is_busy,
 )
 from helmraiser.ledger.rundir import RunDir
 from helmraiser.loop.cleanup import clean_worktrees
@@ -435,38 +437,46 @@ class Supervisor:
         next_code_check = self.clock() + self.poll_s
         try:
             while True:
-                if self._reap() or self._identify_children():
-                    next_check = self.clock()  # a slot opened: look again at once
-                if not self.stopping and self.stop_file.exists():
-                    self.stop_file.unlink(missing_ok=True)
-                    self.stopping = True
-                    self.result.stopped = True
-                    self._say(
-                        {"stopping": True, "running": len(self.children)},
-                        f"stop requested; waiting for {len(self.children)} running run(s)",
-                    )
-                if not self.stopping and self.code is not None and self.restart_to is None:
-                    if self.clock() >= next_code_check:
-                        next_code_check = self.clock() + self.poll_s
-                        self._check_code()
-                if not self.stopping and self.restart_to is not None:
-                    self._restart()  # returns only when the process was not replaced
-                    next_check = self.clock()
-                checked, spawned = False, 0
-                if (
-                    not self.stopping
-                    and self.restart_to is None
-                    and not self._limit_reached()
-                    and self.clock() >= next_check
-                ):
-                    spawned = self._fill()
-                    checked = True
-                    next_check = self.clock() + self.poll_s
-                if not self.children:
-                    if self.stopping or self._limit_reached():
-                        break
-                    if not self.watch and checked and not spawned:
-                        break
+                # A ledger held past the busy timeout (an fsync stall, a long writer)
+                # fails this tick only; the next one tries again, and its reconcile
+                # closes a run whose child died on the same lock.
+                try:
+                    if self._reap() or self._identify_children():
+                        next_check = self.clock()  # a slot opened: look again at once
+                    if not self.stopping and self.stop_file.exists():
+                        self.stop_file.unlink(missing_ok=True)
+                        self.stopping = True
+                        self.result.stopped = True
+                        self._say(
+                            {"stopping": True, "running": len(self.children)},
+                            f"stop requested; waiting for {len(self.children)} running run(s)",
+                        )
+                    if not self.stopping and self.code is not None and self.restart_to is None:
+                        if self.clock() >= next_code_check:
+                            next_code_check = self.clock() + self.poll_s
+                            self._check_code()
+                    if not self.stopping and self.restart_to is not None:
+                        self._restart()  # returns only when the process was not replaced
+                        next_check = self.clock()
+                    checked, spawned = False, 0
+                    if (
+                        not self.stopping
+                        and self.restart_to is None
+                        and not self._limit_reached()
+                        and self.clock() >= next_check
+                    ):
+                        spawned = self._fill()
+                        checked = True
+                        next_check = self.clock() + self.poll_s
+                    if not self.children:
+                        if self.stopping or self._limit_reached():
+                            break
+                        if not self.watch and checked and not spawned:
+                            break
+                except sqlite3.OperationalError as exc:
+                    if not is_busy(exc):
+                        raise
+                    self._ledger_busy("tick", exc)
                 self.sleep(self.tick)
         finally:
             self._publish()
@@ -1160,4 +1170,15 @@ class Supervisor:
                 },
                 self.data_dir,
             )
-        write_status(self.ledger, self.data_dir)
+        try:
+            write_status(self.ledger, self.data_dir)
+        except sqlite3.OperationalError as exc:
+            if not is_busy(exc):
+                raise
+            self._ledger_busy("status", exc)
+
+    def _ledger_busy(self, stage: str, exc: sqlite3.OperationalError) -> None:
+        self._say(
+            {"ledger_busy": {"stage": stage, "error": str(exc)}},
+            f"ledger busy during {stage}: {exc}; trying again next tick",
+        )

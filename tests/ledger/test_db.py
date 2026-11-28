@@ -26,6 +26,7 @@ from helmraiser.ledger.db import (
     RunUnavailable,
     TaskActive,
     default_db_path,
+    is_busy,
 )
 from helmraiser.ledger.rundir import RunDir
 from helmraiser.task.loader import render_task
@@ -165,9 +166,37 @@ def run_row(run_id: str, task_id: str, project: str, status: str = "running") ->
     }
 
 
+def busy_error(tmp_path: Path) -> sqlite3.OperationalError:
+    """The error SQLite raises when another connection holds the write lock."""
+    path = tmp_path / "busy.db"
+    holder = sqlite3.connect(path, isolation_level=None)
+    other = sqlite3.connect(path, timeout=0, isolation_level=None)
+    try:
+        holder.execute("BEGIN IMMEDIATE")
+        with pytest.raises(sqlite3.OperationalError) as caught:
+            other.execute("BEGIN IMMEDIATE")
+        return caught.value
+    finally:
+        other.close()
+        holder.close()
+
+
 @pytest.fixture
 def ledger(tmp_path: Path) -> Ledger:
     return Ledger(tmp_path / "helmraiser.db")
+
+
+class TestConnection:
+    def test_writes_sync_only_at_checkpoints(self, ledger: Ledger):
+        # NORMAL: a commit holding the write lock never waits on fsync.
+        assert ledger._get_conn().execute("PRAGMA synchronous").fetchone()[0] == 1
+
+    def test_is_busy_only_for_a_held_lock(self, tmp_path: Path):
+        assert is_busy(busy_error(tmp_path))
+        assert not is_busy(sqlite3.OperationalError("no such table: runs"))
+        with pytest.raises(sqlite3.OperationalError) as caught:
+            sqlite3.connect(":memory:").execute("SELECT * FROM missing")
+        assert not is_busy(caught.value)
 
 
 class TestSchema:

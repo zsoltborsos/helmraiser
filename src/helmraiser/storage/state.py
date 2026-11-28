@@ -91,6 +91,7 @@ class StateManager:
             conn.row_factory = sqlite3.Row
             conn.execute(f"PRAGMA busy_timeout={int(BUSY_TIMEOUT_S * 1000)}")
             conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")  # see ``Ledger._get_conn``
             conn.execute("PRAGMA foreign_keys=ON")
             self._local.conn = conn
         return cast("sqlite3.Connection", self._local.conn)

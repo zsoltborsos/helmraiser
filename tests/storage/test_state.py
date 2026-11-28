@@ -36,6 +36,10 @@ class TestStateManagerRunLifecycle:
         assert run["topic_id"] == "topic-456"
         assert run["status"] == "starting"
 
+    def test_writes_sync_only_at_checkpoints(self, tmp_path):
+        mgr = StateManager(db_path=tmp_path / "state.db")
+        assert mgr._get_conn().execute("PRAGMA synchronous").fetchone()[0] == 1
+
     def test_fresh_database_has_no_phase_schema(self, tmp_path):
         db = tmp_path / "state.db"
         with StateManager(db) as mgr:

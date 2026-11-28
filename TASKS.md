@@ -92,6 +92,16 @@ Slices, in order (1, 3 and 4 interactive; 2, 5 and 6 may run as Helmraiser tasks
 
 ## Next
 
+- **A run whose child dies leaves its waiter hanging until reconcile** (KosmoSenti report,
+  2026-11-28). On 2026-11-28 an `omarchy-update` slowed fsyncs on the btrfs home volume.
+  It locked the ledger 15:53–15:58 UTC, and pair arm 700d82f0 then died on an event
+  write. The worker died on the same lock, and the run showed `running` for 90 minutes,
+  until the next `worker start` reconciled it as orphaned. The worker now survives a
+  busy ledger and commits without fsync (see CURRENT_STATE). Still open:
+  (a) `wait` polls the run row only, so it does not notice that the run's process and the
+  worker are gone; (b) `retry` refuses an orphaned run (`failed`, reason `orphaned`) even
+  when it made no commits, so a pair arm lost this way cannot be re-armed.
+
 - **The reviewer passes style and consistency slips** (Leeboard retro, 2026-11-25). Runs
   fcc907f1 and 2b29c691 passed with no findings. A coordinator spec/standards review then
   found four real issues that needed rework: a misaligned `--help` line, help text missing

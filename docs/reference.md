@@ -2958,7 +2958,14 @@ Use the global queue pause to stop all starts, including scouts; see also [Leebo
 The background worker never ends silently: when it exits for any reason but `worker
 stop` (an error, SIGTERM, `--max N` done), it records `exit` in `worker.json`, which
 `helmraiser status` shows as `Worker: exited (error: …)`, and sends a desktop
-notification (`worker exited (error: …)`). A SIGKILL cannot be recorded.
+notification (`worker exited (error: …)`). A SIGKILL cannot be recorded. A ledger
+still locked after SQLite's 30-second busy timeout does not end it: the tick or the
+`status.json` rewrite that hit the lock is dropped, the worker prints `ledger_busy`, and
+the next tick tries again; its reconcile closes a run whose child died on the same lock.
+Other SQLite errors still end the worker. The ledger and each project's `state.db` run
+in WAL mode with `synchronous=NORMAL`: a commit does not fsync, so a slow disk does not
+hold the write lock, and a power loss can drop the last commits but cannot corrupt the
+file.
 
 With `--json` the worker prints one line per event: `{"started": {pid, project,
 run_id, kind, started_at}}`, `{"finished": {…, "exit_code", "runs": [outcome…], "output":
@@ -2969,7 +2976,8 @@ run_id, kind, started_at}}`, `{"finished": {…, "exit_code", "runs": [outcome�
 from_commit, to_commit, upstream_commit, …}}` for no-run base attempts (with `detail`
 on failures; foreground `work --json` emits this shape too),
 `{"paused": …}`, `{"reconciled": […]}`, `{"project_error": {project, stage, error,
-since, retry_at}}`, `{"code_snapshot": {commit, path}}`, `{"code_changed": {from, to,
+since, retry_at}}`, `{"ledger_busy": {stage, error}}` (`stage` is `tick` or
+`status`), `{"code_snapshot": {commit, path}}`, `{"code_changed": {from, to,
 running}}`, `{"restarting": {from,
 to}}`, `{"restart_failed": {to, error}}`, `{"stopping": true, "running": N}`, and the
 usual final `{"runs", "paused", "held_providers", "summary"}` object. It sends one

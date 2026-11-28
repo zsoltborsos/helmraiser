@@ -142,13 +142,22 @@ Slices, in order (1, 3 and 4 interactive; 2, 5 and 6 may run as Helmraiser tasks
    (`helmraiser eval review|report`): it reruns past reviews under reviewer variants.
    The first replay moved the review profile to `openai-codex/gpt-6.2-astra:high`: it
    found 13 of 33 held-out misses, where every variant on the previous model found none.
-   After the codex weekly reset (2026-11-26 12:17 UTC), measure:
-   - the stronger model without the review procedure (`v1-noskills`), on the held-out set;
-   - the stronger model on the derivation set, as a regression check;
-   - more held-out Standards cases with a written rule (only one so far), before any
-     two-reviewer slice.
+   Measured 2026-11-28 on that model (`~/.helmraiser/eval/review-replay-1`: `run4-strong`,
+   `heldout/out-strong`, `heldout/out-strong-noskills`; the held-out set gained four
+   Leeboard-retro cases, now 15 misses and 6 clean, 3 reps):
+   - The review procedure (`v5-procedure`) adds little: held-out misses 13/45 against 11/45
+     for `v1-noskills` (the gap is one case), derivation misses 5/12 against 4/12, for
+     about 1.5–2× the cost and more severe findings on clean cases. Keep it out of the
+     live directive.
+   - Held-out Standards cases: 0/9 written-rule and 0/6 unwritten-rule hits for both
+     variants (derivation: 5/7 written, which those prompts were tuned on). This is the
+     case set for the "reviewer passes style and consistency slips" item above.
+   - Clean cases draw severe findings: derivation 4 of 10 cases (`v1-noskills`), 6 of 10
+     (`v5`); held-out 0.67 and 1.67 of 6 per rep. The clean cases were never audited, so
+     next judge those severe findings blind (real defect or false alarm) before reading
+     them as a cost of the model switch.
    Remaining after that: the implement-stage pass, first `pi_rpc_implement` on against
-   off, which informs item 1.
+   off (a candidate for the next live experiment), which informs item 1.
 5. **Decide on redacting verify output sent to models.** Verify and evidence tails reach
    the implementer (`feedback_prompt` in `loop/prompts.py`, the iteration history) and the
    reviewer (`loop/review.py`) verbatim. Service-provided variables such as database URLs

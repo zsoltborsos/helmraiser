@@ -143,20 +143,26 @@ Slices, in order (1, 3 and 4 interactive; 2, 5 and 6 may run as Helmraiser tasks
    The first replay moved the review profile to `openai-codex/gpt-6.2-astra:high`: it
    found 13 of 33 held-out misses, where every variant on the previous model found none.
    Measured 2026-11-28 on that model (`~/.helmraiser/eval/review-replay-1`: `run4-strong`,
-   `heldout/out-strong`, `heldout/out-strong-noskills`; the held-out set gained four
-   Leeboard-retro cases, now 15 misses and 6 clean, 3 reps):
-   - The review procedure (`v5-procedure`) adds little: held-out misses 13/45 against 11/45
-     for `v1-noskills` (the gap is one case), derivation misses 5/12 against 4/12, for
-     about 1.5–2× the cost and more severe findings on clean cases. Keep it out of the
-     live directive.
-   - Held-out Standards cases: 0/9 written-rule and 0/6 unwritten-rule hits for both
-     variants (derivation: 5/7 written, which those prompts were tuned on). This is the
-     case set for the "reviewer passes style and consistency slips" item above.
-   - Clean cases draw severe findings (derivation 4 of 10 cases for `v1-noskills`, 6 of 10
-     for `v5`), but a blind audit judged 19 of the 21 real defects, and two of them were
-     later fixed by hand here (5f027c1, cfc4b2d). The severe-finding rate is not a cost of
-     the model switch. The "clean" set is not clean: relabel those seven cases as positive
-     (or drop them) before the next replay (`NOTES.md`, "Clean-case severe findings audit").
+   `heldout/out-strong`, `heldout/out-strong-noskills`, `heldout/out-strong-v7`). A blind
+   audit judged 18 of 21 severe findings on "clean" cases real, so six clean cases were
+   relabelled as eight misses; clean-case counts below are after that. Held-out: 18 misses
+   (4 of them Leeboard-retro cases) and 4 clean, 3 reps; derivation: 17 misses, 6 clean,
+   1 rep (`NOTES.md`, "Clean-case severe findings audit" and "Relabelled").
+   - Held-out misses, excluding the retro four: `v1-noskills` 12/42, `v5-procedure`
+     19/42, `v7-conventions` (v1 plus a project-conventions block) 18/42. Derivation
+     misses 9, 10 and 11 of 17. Cost, held-out: $25, $36 and $42.
+   - Standards cases stay the weak spot. Held-out non-retro (one written rule, one
+     unwritten): 0 hits for every variant. The retro four, which `v7` was written from:
+     `v7` 6/12 (miss-fcc907f1 and miss-2b29c691-timers 3/3 each, called minor), v1 and v5
+     0/12. Derivation written-rule 6/7 for `v7`, 5/7 for the others.
+   - `v7` doubles minor findings on clean cases (held-out 43 against 30 for v5 and 21 for
+     v1; derivation 18, 9, 6) and drew 2 severe findings on one held-out clean case
+     (clean-e2923a21: tests derive the expected value from the production constant).
+   - Reading: `v7` and `v5` gain on spec misses mainly by reading more (median files
+     read 16–18 against 7.5); `v7`'s conventions step does not carry to Standards cases it
+     was not written from. Neither is a clear win for the live directive over the cost
+     and the extra findings; v5 and v7 are close. Next: a variant that only asks for
+     wider reading (no conventions block), to separate the two effects.
    Remaining after that: the implement-stage pass, first `pi_rpc_implement` on against
    off (a candidate for the next live experiment), which informs item 1.
 5. **Decide on redacting verify output sent to models.** Verify and evidence tails reach

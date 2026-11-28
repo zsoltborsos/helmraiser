@@ -122,11 +122,6 @@ Slices, in order (1, 3 and 4 interactive; 2, 5 and 6 may run as Helmraiser tasks
   (`tests/cli/test_leeboard_hold_skip.py`) gives a fake `lb` a 0.2 s timeout against a 1 s
   sleep and expects one warning. In run a07bc610's 22-minute full suite it saw none; it
   passes alone. Find what makes the timeout path skip the warning under load.
-0. **Make the suite independent of the working directory.** Run from the primary
-   checkout, 16 doctor and no-Leeboard tests fail: doctor reads the untracked
-   `.helmraiser/project.toml` there (`delivery = "pr"`), adds the `gh` check, and the
-   suite's fake `gh` reports not ready. From a clean worktree the suite passes. Point
-   those tests at a temporary project instead of the current directory.
 1. **Decide how to roll out RPC implement sessions.** `pi_rpc_implement` is off by
    default. One dogfood run matched json mode in events, per-message usage, iteration cost
    and `agent_settled`; RPC mode emits no `session` header event, which nothing reads.

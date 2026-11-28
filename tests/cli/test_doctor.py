@@ -30,7 +30,9 @@ runner = CliRunner()
 
 
 @pytest.fixture(autouse=True)
-def ready_checks(monkeypatch: pytest.MonkeyPatch) -> None:
+def ready_checks(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # doctor reads the current directory's project: never the checkout the suite runs from.
+    monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(monitor, "load_config", configured_test_config)
     monkeypatch.setattr(monitor, "pi_version", lambda pi_bin="pi": "0.87.1")
     monkeypatch.setattr(monitor, "check_auth", lambda model, pi_bin="pi": None)

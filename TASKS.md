@@ -148,21 +148,24 @@ Slices, in order (1, 3 and 4 interactive; 2, 5 and 6 may run as Helmraiser tasks
    relabelled as eight misses; clean-case counts below are after that. Held-out: 18 misses
    (4 of them Leeboard-retro cases) and 4 clean, 3 reps; derivation: 17 misses, 6 clean,
    1 rep (`NOTES.md`, "Clean-case severe findings audit" and "Relabelled").
-   - Held-out misses, excluding the retro four: `v1-noskills` 12/42, `v5-procedure`
-     19/42, `v7-conventions` (v1 plus a project-conventions block) 18/42. Derivation
-     misses 9, 10 and 11 of 17. Cost, held-out: $25, $36 and $42.
+   - Held-out misses, on the 11 cases neither written from nor relabelled by a variant's
+     own findings (3 reps): `v1-noskills` 11/33, `v5-procedure` 13/33,
+     `v7-conventions` (v1 plus a project-conventions block) 15/33, `v8-reading` (v1 plus
+     "read changed files, callers and tests in full") 10/33. Counting all non-retro
+     misses: 12, 19, 18 and 16 of 42, but v5 leads there because two relabelled cases
+     came from v5's own findings (941995f3, afd919b5). Derivation misses: 9, 10, 11, 10
+     of 17. Held-out cost: $25, $36, $42, $60.
    - Standards cases stay the weak spot. Held-out non-retro (one written rule, one
      unwritten): 0 hits for every variant. The retro four, which `v7` was written from:
-     `v7` 6/12 (miss-fcc907f1 and miss-2b29c691-timers 3/3 each, called minor), v1 and v5
-     0/12. Derivation written-rule 6/7 for `v7`, 5/7 for the others.
-   - `v7` doubles minor findings on clean cases (held-out 43 against 30 for v5 and 21 for
-     v1; derivation 18, 9, 6) and drew 2 severe findings on one held-out clean case
-     (clean-e2923a21: tests derive the expected value from the production constant).
-   - Reading: `v7` and `v5` gain on spec misses mainly by reading more (median files
-     read 16–18 against 7.5); `v7`'s conventions step does not carry to Standards cases it
-     was not written from. Neither is a clear win for the live directive over the cost
-     and the extra findings; v5 and v7 are close. Next: a variant that only asks for
-     wider reading (no conventions block), to separate the two effects.
+     `v7` 6/12 (miss-fcc907f1 and miss-2b29c691-timers 3/3 each, called minor), others 0.
+     Derivation written-rule 6/7 for `v7`, 5/7 for the others.
+   - Clean cases, held-out findings/severe: v1 22/0, v5 30/0, v7 48/2 (clean-e2923a21,
+     tests derive the expected value from the production constant; not audited), v8 24/0.
+   - Reading alone is not the lever: `v8` reads as much as v5 and v7 (median 16 files
+     against 7) at the highest cost and catches the fewest. The differences between
+     variants are two to four hits on 11 cases, too few to pick one. Keep the live
+     directive as is; the next gain needs more held-out cases (Standards ones above all),
+     not more variants.
    Remaining after that: the implement-stage pass, first `pi_rpc_implement` on against
    off (a candidate for the next live experiment), which informs item 1.
 5. **Decide on redacting verify output sent to models.** Verify and evidence tails reach

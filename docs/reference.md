@@ -2221,6 +2221,7 @@ Other variants ignore `--skill`.
 | `v4-twoaxis-skills` | v3 with v2's skills |
 | `v5-procedure` | v1 with a four-step review procedure (`REVIEW_PROCEDURE` in `loop/eval_review.py`) appended to the directives |
 | `v6-twoaxis-procedure` | v3 with the same procedure appended to the Spec directives only |
+| `v7-conventions` | v1 with a project-conventions section (`REVIEW_CONVENTIONS` in `loop/eval_review.py`) appended: read the project's convention files, compare added lines with their neighbours, check help, docs and errors against changed commands and values, and keep added setup scoped |
 
 Sessions run one at a time under the scout's read-only process isolation, with
 `allowRead` carve-outs for skill paths that the other-project denial hides. A two-axis

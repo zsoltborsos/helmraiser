@@ -897,6 +897,12 @@ def test_procedure_variants(fixture, tmp_path):
     (single,) = plans("v5-procedure")
     (plain,) = plans("v1-noskills")
     assert single.directives == plain.directives.rstrip("\n") + "\n" + procedure
+    (conventions,) = plans("v7-conventions")
+    assert conventions.directives == (
+        plain.directives.rstrip("\n") + "\n" + eval_review.REVIEW_CONVENTIONS
+    )
+    assert "Review procedure" not in conventions.directives
+    assert "check that the help or usage text" in eval_review.REVIEW_CONVENTIONS
     spec, standards = plans("v6-twoaxis-procedure")
     spec3, standards3 = plans("v3-twoaxis")
     assert spec.directives == spec3.directives + procedure

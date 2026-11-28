@@ -71,6 +71,8 @@ class Variant:
     skills: bool
     # Append REVIEW_PROCEDURE to the (Spec) reviewer's directive.
     procedure: bool = False
+    # Append REVIEW_CONVENTIONS to a single reviewer's directive.
+    conventions: bool = False
 
 
 VARIANTS: dict[str, Variant] = {
@@ -85,6 +87,7 @@ VARIANTS: dict[str, Variant] = {
         Variant(
             "v6-twoaxis-procedure", two_axis=True, no_skills=True, skills=False, procedure=True
         ),
+        Variant("v7-conventions", two_axis=False, no_skills=True, skills=False, conventions=True),
     )
 }
 
@@ -99,6 +102,17 @@ Before you give a verdict:
 2. Read what the change depends on and feeds. Open the code that consumes, parses or validates what the diff produces (callers, parsers, regexes, schemas, sibling modules), even when the diff does not name it. Read every changed test file in full, including its fixtures and mocks.
 3. Try to break it. For any requirement phrased as "any", "all", "never", "only" or "exactly", build concrete counter-examples: look-alike or unusual inputs, repeated or concurrent calls, old or stale state. Name the ones you tried.
 4. Check admitted limits. Compare every limitation the diff admits (in comments, docs or the PR text) against the task's requirements. An admitted gap that breaks a requirement is a severe finding.
+"""  # noqa: E501
+
+REVIEW_CONVENTIONS = """
+## Project conventions
+
+Also review the diff against how this project writes code:
+1. Read its conventions before the verdict: AGENTS.md, CLAUDE.md and CONTRIBUTING* at the root and in the directories the diff touches, and the documents they point to about how code is written.
+2. Compare each added or changed line with its neighbours in the same file: layout and alignment, naming, and the idioms the surrounding code uses for the same job. A line that breaks the pattern of its neighbours is a minor finding; cite the neighbour.
+3. When the diff adds or changes a command, flag, option, accepted value or output, check that the help or usage text, the docs and the error messages that describe it match.
+4. Check that setup the diff adds (test hooks, fake clocks, environment, globals, module state) reaches only the code that needs it.
+Cite the rule (file:line, quoted) when a documented convention applies. A convention breach is minor unless the rule says it blocks merging.
 """  # noqa: E501
 
 SPEC_AXIS = """
@@ -688,8 +702,9 @@ def variant_sessions(
     directives = relocate(replay.directives, replay, worktree, run_dir)
     procedure = REVIEW_PROCEDURE if variant.procedure else ""
     if not variant.two_axis:
-        if procedure:
-            directives = directives.rstrip("\n") + "\n" + procedure
+        addenda = procedure + (REVIEW_CONVENTIONS if variant.conventions else "")
+        if addenda:
+            directives = directives.rstrip("\n") + "\n" + addenda
         return [SessionPlan("review", directives, prompt, extra_args)]
     standards = render_standards_directives(
         run_id=replay.case.run_id,

@@ -903,6 +903,10 @@ def test_procedure_variants(fixture, tmp_path):
     )
     assert "Review procedure" not in conventions.directives
     assert "check that the help or usage text" in eval_review.REVIEW_CONVENTIONS
+    (reading,) = plans("v8-reading")
+    assert reading.directives == plain.directives.rstrip("\n") + "\n" + eval_review.REVIEW_READING
+    assert "Review procedure" not in reading.directives
+    assert "Project conventions" not in reading.directives
     spec, standards = plans("v6-twoaxis-procedure")
     spec3, standards3 = plans("v3-twoaxis")
     assert spec.directives == spec3.directives + procedure

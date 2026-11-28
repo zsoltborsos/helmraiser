@@ -73,6 +73,8 @@ class Variant:
     procedure: bool = False
     # Append REVIEW_CONVENTIONS to a single reviewer's directive.
     conventions: bool = False
+    # Append REVIEW_READING to a single reviewer's directive.
+    reading: bool = False
 
 
 VARIANTS: dict[str, Variant] = {
@@ -88,6 +90,7 @@ VARIANTS: dict[str, Variant] = {
             "v6-twoaxis-procedure", two_axis=True, no_skills=True, skills=False, procedure=True
         ),
         Variant("v7-conventions", two_axis=False, no_skills=True, skills=False, conventions=True),
+        Variant("v8-reading", two_axis=False, no_skills=True, skills=False, reading=True),
     )
 }
 
@@ -113,6 +116,15 @@ Also review the diff against how this project writes code:
 3. When the diff adds or changes a command, flag, option, accepted value or output, check that the help or usage text, the docs and the error messages that describe it match.
 4. Check that setup the diff adds (test hooks, fake clocks, environment, globals, module state) reaches only the code that needs it.
 Cite the rule (file:line, quoted) when a documented convention applies. A convention breach is minor unless the rule says it blocks merging.
+"""  # noqa: E501
+
+REVIEW_READING = """
+## Reading
+
+Before you give a verdict, read beyond the diff hunks:
+1. Read every file the diff changes in full, not only the changed lines.
+2. Open the code that calls, consumes, parses or validates what the diff changes (callers, parsers, regexes, schemas, sibling modules), even when the diff does not name it.
+3. Read every changed test file in full, including its fixtures and mocks.
 """  # noqa: E501
 
 SPEC_AXIS = """
@@ -702,7 +714,11 @@ def variant_sessions(
     directives = relocate(replay.directives, replay, worktree, run_dir)
     procedure = REVIEW_PROCEDURE if variant.procedure else ""
     if not variant.two_axis:
-        addenda = procedure + (REVIEW_CONVENTIONS if variant.conventions else "")
+        addenda = (
+            procedure
+            + (REVIEW_CONVENTIONS if variant.conventions else "")
+            + (REVIEW_READING if variant.reading else "")
+        )
         if addenda:
             directives = directives.rstrip("\n") + "\n" + addenda
         return [SessionPlan("review", directives, prompt, extra_args)]
